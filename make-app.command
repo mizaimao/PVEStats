@@ -1,13 +1,13 @@
 #!/bin/bash
-# Double-click to build ~/Applications/PVEStats.app.
+# Double-click to build PVEStats.app inside this project directory.
 #
-# The bundle is a thin wrapper around launch.command with this repo's path
-# baked in, so the app keeps working from the Dock or /Applications.
-# Re-run it if you ever move the repo.
+# The bundle is a thin wrapper around launch.command. It stays in the repo and
+# writes nothing anywhere else on the system — drag it to the Dock from here if
+# you want it there.
 
 set -e
 REPO="$(cd "$(dirname "$0")" && pwd)"
-APP="$HOME/Applications/PVEStats.app"
+APP="$REPO/PVEStats.app"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
@@ -42,6 +42,6 @@ chmod +x "$APP/Contents/MacOS/PVEStats" "$REPO/launch.command"
 
 echo "Built $APP"
 echo
-echo "Open it once from ~/Applications, then keep it in the Dock."
+echo "Double-click it here in the project folder."
 echo "Re-run this script if you move the repo."
 read -r -p "Press return to close."

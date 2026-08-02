@@ -11,5 +11,8 @@ __pycache__/
 .venv/
 venv/
 
+# Generated app bundle — build it with make-app.command
+PVEStats.app/
+
 # macOS
 .DS_Store
