@@ -26,6 +26,27 @@ the PVE token and TrueNAS API key.
     pip install -r requirements.txt
     cp .env.example .env      # then fill it in
 
+## Running it
+
+Double-click `make-app.command` once. It builds `~/Applications/PVEStats.app`
+with this repo's path baked in — open that from Finder and keep it in the Dock.
+
+Launching it starts the collector, opens the dashboard in a chrome-less
+window, and shuts the collector down when you close that window. It is not a
+launch agent and not a daemon; nothing runs when the window is shut.
+
+`launch.command` does the same thing and is double-clickable on its own if you
+would rather skip the app bundle. Re-run `make-app.command` if you move the
+repo.
+
+Without Google Chrome the dashboard opens as an ordinary tab in your default
+browser instead — Safari has no app-window mode — and the Terminal window has
+to stay open to keep the collector alive.
+
+To run it in a terminal instead:
+
+    .venv/bin/python run.py        # http://127.0.0.1:8080
+
 ## Probe first
 
 Parsing is written against real captured responses, not against field names in
