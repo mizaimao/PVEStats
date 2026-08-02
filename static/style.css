@@ -144,6 +144,9 @@ body {
 .meter {
   height: 8px;
   border-radius: 4px;
+  /* Plain fallback first, for webviews without color-mix (older WebKitGTK) —
+     without it the track renders transparent and the meter loses its scale. */
+  background: #23262b;
   /* Track is a dimmed step of the fill's own ramp, so the bar reads as one
      object rather than a fill sitting on unrelated grey. */
   background: color-mix(in oklab, var(--meter-color, var(--series-1)) 22%, var(--surface));

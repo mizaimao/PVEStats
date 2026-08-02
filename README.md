@@ -28,22 +28,31 @@ the PVE token and TrueNAS API key.
 
 ## Running it
 
-Double-click `make-app.command` once. It builds `~/Applications/PVEStats.app`
-with this repo's path baked in — open that from Finder and keep it in the Dock.
+    .venv/bin/python app.py
 
-Launching it starts the collector, opens the dashboard in a chrome-less
-window, and shuts the collector down when you close that window. It is not a
-launch agent and not a daemon; nothing runs when the window is shut.
+Opens the dashboard in a native window and stops the collector when you close
+it. Not a launch agent, not a daemon — nothing runs when the window is shut.
 
-`launch.command` does the same thing and is double-clickable on its own if you
-would rather skip the app bundle. Re-run `make-app.command` if you move the
-repo.
+The window uses whatever webview the OS already provides — WKWebView on macOS,
+WebView2 on Windows, WebKitGTK on Linux. No browser engine is bundled and no
+particular browser needs to be installed.
 
-Without Google Chrome the dashboard opens as an ordinary tab in your default
-browser instead — Safari has no app-window mode — and the Terminal window has
-to stay open to keep the collector alive.
+**macOS.** Double-click `make-app.command` once to build
+`~/Applications/PVEStats.app` with this repo's path baked in, then keep it in
+the Dock. `launch.command` does the same without the bundle. Re-run
+`make-app.command` if you move the repo.
 
-To run it in a terminal instead:
+**Windows.** `python app.py`. WebView2 ships with Windows 11 and current
+Windows 10; otherwise install the Evergreen runtime from Microsoft.
+
+**Linux.** Needs the WebKitGTK bindings, which pip cannot supply:
+
+    sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1   # Debian/Ubuntu
+    sudo dnf install python3-gobject webkit2gtk4.1                    # Fedora
+
+Create the venv with `--system-site-packages` so it can see them.
+
+To serve to an ordinary browser instead of a window:
 
     .venv/bin/python run.py        # http://127.0.0.1:8080
 

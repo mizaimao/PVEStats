@@ -4,3 +4,8 @@
 aiohttp>=3.9
 PyYAML>=6.0
 python-dotenv>=1.0
+
+# Desktop window (app.py). Uses the OS's own webview — WKWebView on macOS,
+# WebView2 on Windows, WebKitGTK on Linux — so no browser engine is bundled.
+# Linux additionally needs system packages; see README.
+pywebview>=5.0
