@@ -1,0 +1,15 @@
+# Credentials — never committed (spec §6)
+.env
+
+# Raw source captures. No tokens in these, but they do contain homelab
+# topology: hostnames, pool names, disk serials, guest inventory.
+captures/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
