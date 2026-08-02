@@ -8,6 +8,11 @@ passthrough and therefore invisible to the hypervisor (spec §3.2).
 
 ## Deploy
 
+Debian and Ubuntu ship `ensurepip` separately, so `python3 -m venv` fails on a
+stock install. Match the version to the system Python:
+
+    sudo apt install -y python3-venv     # or python3.13-venv, etc.
+
 Copy `agent.py` and `requirements.txt` to ml60 under `/opt/pvestats-agent/`,
 then:
 
@@ -34,6 +39,20 @@ Set the unit's `User=`/`Group=` to match, or use `root`.
 
 `/opt` matters too: the unit sets `ProtectHome=true`, so installing under a
 home directory will not start.
+
+## Troubleshooting
+
+`systemctl status` showing `Main PID: NNNN ((python))` — name in double
+parentheses — means systemd could not execute the interpreter at all, usually
+a missing or half-built venv. With `Restart=always` the unit flaps rather than
+failing outright, so `active (running)` with an uptime of milliseconds is the
+same symptom. `journalctl -u pvestats-agent -n 30` has the real error.
+
+Empty `procs[]` with every other field populated means the unit's `User=` does
+not match Ollama's. NVML cannot see other users' compute processes.
+
+Success on ml60's own `curl` but a timeout from the Mac is a firewall; the
+agent binds `0.0.0.0`, so open 9836 to the LAN.
 
 ## Configuration
 

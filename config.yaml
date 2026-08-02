@@ -6,7 +6,7 @@ hosts:
   - vmid: 100
     name: ml60
     view: gpu
-    agent_url: http://ml60:9836/
+    agent_url: http://ml60.lan:9836/
 
   - vmid: 101
     name: truenas
