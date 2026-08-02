@@ -1,0 +1,273 @@
+/* Dark only, by design — this sits on a second monitor for long periods
+   (spec §7). Colour tokens are the validated dark-mode palette; the two
+   series hues clear CVD separation at ΔE 26.8 (protan). */
+
+:root {
+  --plane:      #0d0d0d;   /* page */
+  --surface:    #1a1a19;   /* card */
+  --ink:        #ffffff;
+  --ink-2:      #c3c2b7;
+  --ink-muted:  #898781;
+  --grid:       #2c2c2a;
+  --baseline:   #383835;
+  --hairline:   rgba(255, 255, 255, 0.10);
+
+  --series-1:   #3987e5;   /* blue   — primary metric */
+  --series-2:   #d95926;   /* orange — second metric in a pair */
+
+  --good:       #0ca30c;
+  --warning:    #fab219;
+  --critical:   #d03b3b;
+
+  --radius: 10px;
+  --gap: 14px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: var(--gap);
+  background: var(--plane);
+  color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  margin-bottom: var(--gap);
+}
+.topbar h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin: 0;
+  color: var(--ink-2);
+}
+.sources { display: flex; gap: 14px; flex-wrap: wrap; }
+.src {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+/* Status never rides on colour alone — every dot has its label beside it. */
+.src .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--good);
+  flex: none;
+}
+.src.is-stale .dot { background: var(--warning); }
+.src.is-down  .dot { background: var(--critical); }
+.src .age { color: var(--baseline); }
+
+/* ---------- cards ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.card h2 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 2px;
+  letter-spacing: 0.01em;
+}
+.card .sub {
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-bottom: 12px;
+}
+
+/* A source that has gone quiet recedes; it never blanks (spec §2, §7). */
+.card.is-stale { opacity: 0.55; }
+.card .card-error {
+  font-size: 11px;
+  color: var(--warning);
+  margin-top: 10px;
+  word-break: break-word;
+}
+
+.card-node { margin-bottom: var(--gap); }
+.feature {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  align-items: start;   /* cards size to content rather than stretching */
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+.grid-basic {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: var(--gap);
+}
+
+/* ---------- stat tiles ---------- */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 16px 20px;
+}
+.tile .label {
+  font-size: 11px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+/* Proportional figures — tabular-nums makes large numbers look loose. */
+.tile .value {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.tile .value .unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-muted);
+  margin-left: 2px;
+}
+
+/* Exactly one hero figure on the page: ml60's GPU utilisation, which §4.2
+   asks to be large and prominent. Same sans as everything else. */
+.hero .value { font-size: 52px; line-height: 1; font-weight: 600; }
+.hero .label { font-size: 12px; }
+
+/* ---------- meter ---------- */
+
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  /* Track is a dimmed step of the fill's own ramp, so the bar reads as one
+     object rather than a fill sitting on unrelated grey. */
+  background: color-mix(in oklab, var(--meter-color, var(--series-1)) 22%, var(--surface));
+  overflow: hidden;
+  margin-top: 6px;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  background: var(--meter-color, var(--series-1));
+  /* Square at the baseline, 4px rounded at the data end. */
+  border-radius: 0 4px 4px 0;
+  transition: width 0.4s ease;
+}
+.meter-row { margin-top: 10px; }
+.meter-row .caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.meter-row .caption b { color: var(--ink-2); font-weight: 500; }
+
+/* ---------- sparkline ---------- */
+
+.spark { position: relative; margin-top: 8px; }
+.spark svg { display: block; width: 100%; height: 38px; }
+/* Caption and peak sit above the plot. Auto-scaled sparklines print their
+   peak so the scale is readable without a y-axis; fixed-domain ones show
+   gridlines instead. */
+.spark-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-bottom: 2px;
+}
+.spark .peak { color: var(--ink-muted); white-space: nowrap; }
+.meter-row.is-compact { margin-top: 0; min-width: 70px; }
+.meter-row.is-compact .meter { margin-top: 0; height: 6px; }
+.spark .tip {
+  position: absolute;
+  top: -6px;
+  transform: translate(-50%, -100%);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 11px;
+  color: var(--ink-2);
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.spark:hover .tip { opacity: 1; }
+
+/* ---------- legend ---------- */
+
+.legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-top: 8px;
+}
+.legend i {
+  display: inline-block;
+  width: 9px; height: 2px;
+  vertical-align: middle;
+  margin-right: 5px;
+}
+
+/* ---------- tables ---------- */
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+table.data caption {
+  text-align: left;
+  font-size: 11px;
+  color: var(--ink-muted);
+  padding-bottom: 4px;
+}
+table.data th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--grid);
+  padding: 3px 8px 3px 0;
+}
+table.data td {
+  padding: 3px 8px 3px 0;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--grid);
+}
+table.data td.num, table.data th.num { text-align: right; padding-right: 0; }
+table.data tr:last-child td { border-bottom: none; }
+table.data .name { color: var(--ink); }
+
+.pool-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pool-status .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+.empty { font-size: 11px; color: var(--ink-muted); padding: 6px 0; }
+
+.offline {
+  position: fixed;
+  left: 50%; bottom: 16px;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--critical);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 0;
+}

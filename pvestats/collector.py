@@ -82,12 +82,17 @@ class Collector:
             guest = guests.get(vmid)
             if guest is None:
                 continue
-            if host.get("view") == "gpu" and agent.data:
-                guest["gpu"] = agent.data
+            # The status always travels, even with no data yet — otherwise the
+            # card has no way to say *why* it is empty, and a dead source looks
+            # identical to one that simply reads zero (spec §7).
+            if host.get("view") == "gpu":
                 guest["gpu_status"] = agent.status()
-            elif host.get("view") == "nas" and nas.data:
-                guest["nas"] = nas.data
+                if agent.data:
+                    guest["gpu"] = agent.data
+            elif host.get("view") == "nas":
                 guest["nas_status"] = nas.status()
+                if nas.data:
+                    guest["nas"] = nas.data
 
         return {
             "sources": {name: source.status() for name, source in self.sources.items()},
