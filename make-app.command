@@ -1,0 +1,46 @@
+#!/bin/bash
+# Double-click to build ~/Applications/PVEStats.app.
+#
+# The bundle is a thin wrapper around launch.command with this repo's path
+# baked in, so the app keeps working from the Dock or /Applications.
+# Re-run it if you ever move the repo.
+
+set -e
+REPO="$(cd "$(dirname "$0")" && pwd)"
+APP="$HOME/Applications/PVEStats.app"
+
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS"
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>PVEStats</string>
+  <key>CFBundleDisplayName</key><string>PVEStats</string>
+  <key>CFBundleIdentifier</key><string>net.local.pvestats</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>PVEStats</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <!-- No Dock icon for the wrapper itself; the dashboard window is the app. -->
+  <key>LSUIElement</key><true/>
+</dict>
+</plist>
+PLIST
+
+cat > "$APP/Contents/MacOS/PVEStats" <<LAUNCHER
+#!/bin/bash
+exec "$REPO/launch.command"
+LAUNCHER
+
+chmod +x "$APP/Contents/MacOS/PVEStats" "$REPO/launch.command"
+
+echo "Built $APP"
+echo
+echo "Open it once from ~/Applications, then keep it in the Dock."
+echo "Re-run this script if you move the repo."
+read -r -p "Press return to close."
