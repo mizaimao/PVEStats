@@ -1,0 +1,18 @@
+# Card layout. `view` selects the panel set; VMIDs returned by PVE but absent
+# from this file default to `basic` (spec §4.5).
+#
+# Placeholder VMIDs — corrected once probe.py has dumped the real guest list.
+hosts:
+  - vmid: 100
+    name: ml60
+    view: gpu
+    agent_url: http://ml60:9836/
+
+  - vmid: 101
+    name: truenas
+    view: nas
+    api_url: https://truenas.lan/api/v2.0
+
+  - vmid: 102
+    name: hermes
+    view: basic
