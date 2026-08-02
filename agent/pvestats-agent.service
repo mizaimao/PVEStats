@@ -1,0 +1,29 @@
+[Unit]
+Description=PVEStats GPU agent (NVML + Ollama)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Must match the user Ollama runs as, or be root. Otherwise NVML cannot see
+# other users' compute processes and procs[] comes back empty (spec §3.2).
+User=ollama
+Group=ollama
+
+ExecStart=/opt/pvestats-agent/.venv/bin/python /opt/pvestats-agent/agent.py
+Restart=always
+RestartSec=5
+
+# No socket activation, deliberately: NVML re-initialisation on each wake
+# costs more than the ~20 MB this process idles at (spec §3.2).
+
+# Enforces the no-writes-to-homelab-disk constraint at the kernel level rather
+# than trusting the code. The whole filesystem is read-only to this unit.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# PrivateDevices is NOT set — NVML needs /dev/nvidia*.
+
+[Install]
+WantedBy=multi-user.target

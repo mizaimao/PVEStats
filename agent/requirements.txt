@@ -1,0 +1,6 @@
+# Installed on ml60, not on the Mac.
+#
+# The official NVIDIA binding. NOT the abandoned `pynvml` package on PyPI —
+# that is a different project with a drifted API (spec §3.2). Both import as
+# `pynvml`, so installing the wrong one fails at runtime, not at import.
+nvidia-ml-py>=12.535
