@@ -159,8 +159,109 @@ def probe_pve(env):
 
 
 # --------------------------------------------------------------------------
-# TrueNAS (spec §3.3) — endpoint discovery, not hardcoded paths
+# TrueNAS (spec §3.3) — JSON-RPC 2.0 over WebSocket
+#
+# Not REST, despite what §3.3 assumes. TrueNAS never tied its role-based
+# access control into the REST framework, so a READONLY_ADMIN key gets 403 on
+# every REST endpoint no matter how it is configured — only full-admin
+# credentials work there, which constraint 4 rules out. WebSocket honours
+# roles correctly, and REST is removed entirely in TrueNAS 26.
+#
+# This is the one source that needs aiohttp; PVE and the agent stay stdlib.
 # --------------------------------------------------------------------------
+
+TRUENAS_METHODS = [
+    ("system_info", "system.info", []),
+    ("pool", "pool.query", []),
+    ("disk", "disk.query", []),
+    ("interface", "interface.query", []),
+    ("netdata_graphs", "reporting.netdata_graphs", []),
+]
+
+
+async def _truenas_rpc(host, key):
+    import aiohttp
+
+    url = f"wss://{host}/api/current"
+    out = {"_endpoint": url}
+    counter = [0]
+
+    session_timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=session_timeout) as session:
+        # ssl=False: the appliance certificate is self-signed (spec §3.1's
+        # reasoning applies here too).
+        async with session.ws_connect(url, ssl=False, max_msg_size=0) as ws:
+
+            async def call(method, params):
+                counter[0] += 1
+                mid = counter[0]
+                started = time.monotonic()
+                await ws.send_json({"jsonrpc": "2.0", "id": mid,
+                                    "method": method, "params": params})
+                while True:
+                    msg = await ws.receive(timeout=30)
+                    if msg.type is not aiohttp.WSMsgType.TEXT:
+                        return {"error": f"unexpected frame {msg.type}"}
+                    data = json.loads(msg.data)
+                    # Notifications carry no id; ignore anything not ours.
+                    if data.get("id") != mid:
+                        continue
+                    elapsed = round((time.monotonic() - started) * 1000)
+                    if "error" in data:
+                        return {"error": data["error"], "elapsed_ms": elapsed}
+                    return {"result": data.get("result"), "elapsed_ms": elapsed}
+
+            auth = await call("auth.login_with_api_key", [key])
+            out["auth"] = auth
+            if auth.get("result") is not True:
+                summarise("auth.login_with_api_key", {"error": auth.get("error")})
+                return out
+            print("  auth.login_with_api_key: ok")
+
+            for name, method, params in TRUENAS_METHODS:
+                record = await call(method, params)
+                out[name] = record
+                if record.get("error"):
+                    print(f"  {method}: FAILED — "
+                          f"{str(record['error'])[:120]}")
+                else:
+                    result = record.get("result")
+                    size = len(result) if isinstance(result, list) else "dict"
+                    print(f"  {method}: ok ({record['elapsed_ms']} ms, {size})")
+
+            # A real reporting payload, using identifiers taken from the live
+            # graph list rather than invented. Disk identifiers are full
+            # descriptive strings ("sdb | Type: HDD | Model: … | Serial: …"),
+            # not bare device names — passing "sdb" returns no series at all,
+            # silently, with no error.
+            targets = []
+            for graph in (out.get("netdata_graphs", {}).get("result") or []):
+                if graph.get("name") in ("interface", "disk"):
+                    for ident in (graph.get("identifiers") or [])[:2]:
+                        targets.append({"name": graph["name"], "identifier": ident})
+            if targets:
+                now = int(time.time())
+                sample = await call("reporting.netdata_get_data",
+                                    [targets, {"start": now - 10, "end": now}])
+                out["netdata_sample"] = sample
+                series = sample.get("result") or []
+                print(f"  reporting.netdata_get_data: ok "
+                      f"({len(series)}/{len(targets)} series)")
+                for entry in series:
+                    print(f"      {entry.get('name')}/{str(entry.get('identifier'))[:12]} "
+                          f"legend={entry.get('legend')} "
+                          f"points={len(entry.get('data') or [])}")
+
+            # Definitive list of what this release actually exposes, rather
+            # than a path guessed from documentation (spec §3.3).
+            methods = await call("core.get_methods", [])
+            names = methods.get("result")
+            if isinstance(names, dict):
+                out["_reporting_methods"] = sorted(
+                    n for n in names if n.startswith("reporting.")
+                )
+    return out
+
 
 def probe_truenas(env):
     host = env.get("TRUENAS_HOST")
@@ -168,49 +269,19 @@ def probe_truenas(env):
     if not (host and key):
         print("  skipped: TRUENAS_HOST / TRUENAS_API_KEY not both set")
         return
+    try:
+        import aiohttp  # noqa: F401
+    except ImportError:
+        print("  skipped: this source needs aiohttp — run it as "
+              ".venv/bin/python probe.py truenas")
+        return
 
-    base = f"https://{host}/api/v2.0"
-    headers = {"Authorization": f"Bearer {key}"}
-    out = {}
-
-    # The OpenAPI spec is the authority on where reporting lives in *this*
-    # release. Spec §3.3: do not hardcode a path from memory.
-    for label, url in [
-        ("openapi_v2", f"https://{host}/api/docs/restful"),
-        ("openapi_root", f"https://{host}/api/v2.0/openapi.json"),
-    ]:
-        record = fetch(url, headers)
-        out[label] = record
-        summarise(label, record)
-        if record.get("status") == 200 and isinstance(record.get("body"), dict):
-            break
-
-    out["system_info"] = fetch(f"{base}/system/info", headers)
-    summarise("/system/info", out["system_info"])
-
-    # Stable across releases; the reporting namespace is what moves.
-    for name, path in [
-        ("pool", "/pool"),
-        ("disk", "/disk"),
-        ("interface", "/interface"),
-    ]:
-        out[name] = fetch(f"{base}{path}", headers)
-        summarise(path, out[name])
-
+    import asyncio
+    out = asyncio.run(_truenas_rpc(host, key))
     save("truenas", out)
 
-    # Surface every reporting path the live spec advertises.
-    paths = set()
-    for record in out.values():
-        body = record.get("body") if isinstance(record, dict) else None
-        if isinstance(body, dict) and isinstance(body.get("paths"), dict):
-            paths |= {p for p in body["paths"] if "reporting" in p.lower()}
-    if paths:
-        print("\n  reporting endpoints advertised by this release:")
-        for path in sorted(paths):
-            print(f"    {path}")
-    else:
-        print("\n  no OpenAPI spec captured — check captures/truenas.json by hand")
+    for name in out.get("_reporting_methods", []):
+        print(f"    {name}")
 
 
 # --------------------------------------------------------------------------
