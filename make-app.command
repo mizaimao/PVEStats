@@ -10,7 +10,14 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 APP="$REPO/PVEStats.app"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+# Regenerate the icon if it is missing; otherwise reuse the committed one, so
+# building the app does not require Pillow.
+if [ ! -f "$REPO/assets/AppIcon.icns" ] && [ -x "$REPO/.venv/bin/python" ]; then
+  "$REPO/.venv/bin/python" "$REPO/tools/render_icon.py" --icns || true
+fi
+cp "$REPO/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -25,6 +32,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>PVEStats</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <!-- The dashboard window belongs to this process, so the app needs a normal
        Dock icon and menu bar. Do not set LSUIElement here — without a Dock
