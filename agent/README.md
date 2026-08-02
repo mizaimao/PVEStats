@@ -48,6 +48,11 @@ a missing or half-built venv. With `Restart=always` the unit flaps rather than
 failing outright, so `active (running)` with an uptime of milliseconds is the
 same symptom. `journalctl -u pvestats-agent -n 30` has the real error.
 
+`ModuleNotFoundError: No module named 'pynvml'` means the venv exists but is
+empty — `python3 -m venv` builds its directory structure before running
+`ensurepip`, so a failure there leaves a working `bin/python` with no `pip`
+and no packages. Delete the venv and rebuild it; do not try to repair it.
+
 Empty `procs[]` with every other field populated means the unit's `User=` does
 not match Ollama's. NVML cannot see other users' compute processes.
 
