@@ -37,10 +37,10 @@ The window uses whatever webview the OS already provides — WKWebView on macOS,
 WebView2 on Windows, WebKitGTK on Linux. No browser engine is bundled and no
 particular browser needs to be installed.
 
-**macOS.** Double-click `make-app.command` once to build
-`~/Applications/PVEStats.app` with this repo's path baked in, then keep it in
-the Dock. `launch.command` does the same without the bundle. Re-run
-`make-app.command` if you move the repo.
+**macOS.** Double-click `launch.command`. Or run `make-app.command` once to
+build `PVEStats.app` in this folder, and double-click that instead — it is
+git-ignored and nothing is written outside the project. Re-run it if you move
+the repo.
 
 **Windows.** `python app.py`. WebView2 ships with Windows 11 and current
 Windows 10; otherwise install the Evergreen runtime from Microsoft.
