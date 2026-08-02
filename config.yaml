@@ -1,18 +1,17 @@
 # Card layout. `view` selects the panel set; VMIDs returned by PVE but absent
-# from this file default to `basic` (spec §4.5).
-#
-# Placeholder VMIDs — corrected once probe.py has dumped the real guest list.
+# from this file default to `basic` (spec §4.5), so only the special cases are
+# listed here. VMIDs confirmed against captures/pve.json.
 hosts:
-  - vmid: 100
+  - vmid: 222
     name: ml60
     view: gpu
     agent_url: http://ml60.lan:9836/
 
-  - vmid: 101
-    name: truenas
+  - vmid: 100
+    name: FreeNAS
     view: nas
-    api_url: https://truenas.lan/api/v2.0
-
-  - vmid: 102
-    name: hermes
-    view: basic
+    # JSON-RPC over WebSocket, not REST. TrueNAS never wired RBAC into the
+    # REST framework, so a READONLY_ADMIN key gets 403 there regardless of
+    # configuration; only full-admin credentials work over REST. WebSocket
+    # honours roles correctly, and REST is removed entirely in TrueNAS 26.
+    api_url: wss://nas.lan/api/current
