@@ -26,8 +26,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>PVEStats</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <!-- No Dock icon for the wrapper itself; the dashboard window is the app. -->
-  <key>LSUIElement</key><true/>
+  <!-- The dashboard window belongs to this process, so the app needs a normal
+       Dock icon and menu bar. Do not set LSUIElement here — without a Dock
+       presence there is no way to ⌘Q it. -->
 </dict>
 </plist>
 PLIST
