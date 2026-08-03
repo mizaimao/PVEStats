@@ -108,6 +108,33 @@ initAppearance();
 
 /* Keyboard: `s` toggles settings, 1-8 pick a theme. Ignored while a control
    has focus, so typing in the panel does not fire them. */
+/* Focus mode: collapse to the GPU card, which is what this dashboard exists
+   for. Session-only — a launch always starts on the full view. */
+const focusToggle = document.getElementById("focus-toggle");
+
+function setFocus(on) {
+  const root = document.documentElement;
+  const apply = () => {
+    if (on) root.dataset.focus = "gpu";
+    else delete root.dataset.focus;
+    if (focusToggle) focusToggle.setAttribute("aria-pressed", String(on));
+  };
+  // View Transitions morphs the pane between layouts for free; without it the
+  // switch is instant, which is fine.
+  if (document.startViewTransition
+      && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.startViewTransition(apply);
+  } else {
+    apply();
+  }
+}
+
+function toggleFocus() {
+  setFocus(document.documentElement.dataset.focus !== "gpu");
+}
+
+if (focusToggle) focusToggle.addEventListener("click", toggleFocus);
+
 /* Keys the browser and assistive tech need; everything else is swallowed.
 
    An unconsumed key event travels up to AppKit, which beeps when nothing in
@@ -127,6 +154,8 @@ document.addEventListener("keydown", event => {
 
   if (event.key === "s") {
     document.getElementById("settings").click();
+  } else if (event.key === "f") {
+    toggleFocus();
   } else {
     const index = "12345678".indexOf(event.key);
     if (index !== -1 && THEMES_ORDERED[index]) selectTheme(THEMES_ORDERED[index]);

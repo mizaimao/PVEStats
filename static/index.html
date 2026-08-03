@@ -11,6 +11,12 @@
 <header class="topbar">
   <h1>PVEStats</h1>
   <div class="sources" id="sources"></div>
+  <!-- The dead space in the title bar is the toggle. Labelled on hover so it
+       is discoverable without cluttering the bar. -->
+  <button type="button" class="focus-toggle" id="focus-toggle"
+          aria-pressed="false" aria-label="Show only ml60">
+    <span data-on="Show everything" data-off="Focus ml60"></span>
+  </button>
   <!-- Icon: Lucide (https://lucide.dev), ISC licensed. Inlined rather than
        loaded from a CDN — the page has no network access beyond localhost. -->
   <button type="button" class="settings" id="settings"
@@ -88,8 +94,8 @@
       vision for hours.</p>
   </div>
 
-  <p class="panel-note"><b>s</b> opens this panel, <b>1</b>–<b>8</b> switch the
-    first eight themes. All of the above save to <code>ui.json</code> beside
+  <p class="panel-note"><b>s</b> opens this panel, <b>f</b> focuses ml60,
+    <b>1</b>–<b>8</b> switch the first eight themes. All of the above save to <code>ui.json</code> beside
     config.yaml. The rest is not wired up yet — these show the intended
     controls and which of them a source can actually honour.</p>
 
