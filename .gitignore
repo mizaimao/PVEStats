@@ -14,5 +14,8 @@ venv/
 # Generated app bundle — build it with make-app.command
 PVEStats.app/
 
+# Appearance settings written by the settings panel
+ui.json
+
 # macOS
 .DS_Store

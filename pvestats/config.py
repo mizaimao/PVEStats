@@ -4,13 +4,29 @@ Credentials are read once at startup and never leave the collector — they are
 not in the served page and not in /api/state (spec §6).
 """
 
+import json
 import os
+import tempfile
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Appearance defaults live in config.yaml where they can be hand-edited with
+# comments intact. Changes made in the UI are written here instead, because
+# round-tripping config.yaml through PyYAML would strip every comment in it.
+UI_STATE = ROOT / "ui.json"
+
+UI_DEFAULTS = {
+    "theme": "ice",
+    "glow": 1.0,
+    # Textural overlays, each independently switchable.
+    "scanlines": False,
+    "grain": False,
+    "aurora": False,
+}
 
 
 class Config:
@@ -30,6 +46,34 @@ class Config:
 
         raw = yaml.safe_load((config_path or ROOT / "config.yaml").read_text())
         self.hosts = {int(h["vmid"]): h for h in (raw or {}).get("hosts", [])}
+        self.ui_defaults = {**UI_DEFAULTS, **((raw or {}).get("ui") or {})}
+
+    def ui(self):
+        """Appearance settings: config.yaml defaults, overridden by ui.json."""
+        settings = dict(self.ui_defaults)
+        try:
+            settings.update(json.loads(UI_STATE.read_text()))
+        except (OSError, ValueError):
+            pass        # absent or unreadable — defaults stand
+        return settings
+
+    def save_ui(self, changes):
+        """Persist appearance settings, keeping unknown keys out.
+
+        Written atomically so a crash mid-write cannot leave a truncated file
+        that would then be silently ignored on next start.
+        """
+        settings = {**self.ui(), **{k: v for k, v in changes.items()
+                                    if k in UI_DEFAULTS}}
+        handle, temporary = tempfile.mkstemp(dir=str(ROOT), suffix=".tmp")
+        try:
+            with os.fdopen(handle, "w") as fh:
+                json.dump(settings, fh, indent=2)
+            os.replace(temporary, UI_STATE)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+        return settings
 
     @property
     def pve_auth_header(self):

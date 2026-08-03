@@ -30,6 +30,10 @@
   --glow-wide: 0px;
   --glow-text: 0px;
   --glow-text-soft: 0px;
+  --glow-text-faint: 0px;
+  /* Scales every glow at once. Set from the settings panel, so a theme
+     supplies the character and this supplies the volume. */
+  --glow-scale: 1;
   --glow-spread: 0px;
 
   /* Surface gradient: themes set a second tone to blend toward. Defaults to
@@ -65,6 +69,9 @@
   --glow-wide:  26px;
   --glow-text:  16px;
   --glow-text-soft: 7px;
+  --glow-text-faint: 4px;
+  --glow-text-faint: 4px;
+  --glow-text-faint: 4px;
   --glow-spread: 1px;
 }
 
@@ -85,6 +92,7 @@
   --glow-wide:  20px;
   --glow-text:  12px;
   --glow-text-soft: 5px;
+  --glow-text-faint: 3px;
   --glow-spread: 0px;
 }
 
@@ -105,6 +113,7 @@
   --glow-wide:  28px;
   --glow-text:  18px;
   --glow-text-soft: 8px;
+  --glow-text-faint: 5px;
   --glow-spread: 1px;
 }
 
@@ -148,6 +157,7 @@
   --glow-wide:  24px;
   --glow-text:  14px;
   --glow-text-soft: 6px;
+  --glow-text-faint: 3px;
   --glow-spread: 0px;
 }
 
@@ -579,6 +589,17 @@ table.data .name { color: var(--ink); }
 .applies.ok { color: var(--good); border: 1px solid color-mix(in oklab, var(--good) 45%, transparent); }
 .applies.capped { color: var(--warning); border: 1px solid color-mix(in oklab, var(--warning) 45%, transparent); }
 .applies.auto { color: var(--ink-muted); border: 1px solid var(--hairline); }
+.toggles { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.toggle input { accent-color: var(--series-1); margin: 0; }
+
 .derived {
   font-size: 11px;
   color: var(--ink-2);
@@ -717,9 +738,10 @@ table.data.divided {
 
 .meter > span {
   box-shadow:
-    0 0 var(--glow-blur) var(--glow-spread) var(--meter-color, var(--series-1)),
-    0 0 var(--glow-wide) color-mix(in oklab,
-         var(--meter-color, var(--series-1)) 55%, transparent);
+    0 0 calc(var(--glow-blur) * var(--glow-scale)) var(--glow-spread)
+      var(--meter-color, var(--series-1)),
+    0 0 calc(var(--glow-wide) * var(--glow-scale)) color-mix(in oklab,
+      var(--meter-color, var(--series-1)) 55%, transparent);
 }
 /* drop-shadow with no colour argument uses the element's own `color`, which
    the chart sets to the series hue — so each mark glows in its own colour.
@@ -735,21 +757,37 @@ table.data.divided {
 .spark svg .glowable,
 .arc svg .glowable {
   filter:
-    drop-shadow(0 0 calc(var(--glow-blur) * 0.3))
-    drop-shadow(0 0 calc(var(--glow-blur) * 0.3))
-    drop-shadow(0 0 var(--glow-blur))
-    drop-shadow(0 0 var(--glow-wide));
+    drop-shadow(0 0 calc(var(--glow-blur) * 0.3 * var(--glow-scale)))
+    drop-shadow(0 0 calc(var(--glow-blur) * 0.3 * var(--glow-scale)))
+    drop-shadow(0 0 calc(var(--glow-blur) * var(--glow-scale)))
+    drop-shadow(0 0 calc(var(--glow-wide) * var(--glow-scale)));
 }
 /* The figures the eye lands on first pick up the light too. */
-/* Two tiers: the label carries a hint, the figure it labels carries more, so
-   the eye lands on the number rather than the caption. */
+/* Three tiers, brightest on the figures the eye should land on first. Chrome
+   and captions still catch a little so nothing looks unlit beside them. */
+.card .sub,
+.legend,
+.src,
+.pair-note,
+.panel,
+.demo-note,
+.spark .peak,
+table.data th {
+  text-shadow: 0 0 calc(var(--glow-text-faint) * var(--glow-scale)) currentColor;
+}
+.card h2,
+.topbar h1,
+table.data td,
+.panel-head h2 {
+  text-shadow: 0 0 calc(var(--glow-text-soft) * var(--glow-scale)) currentColor;
+}
 .tile .label,
 .pair-title,
 .arc-label,
 .spark-head,
 .meter-row .caption > span,
 table.data caption {
-  text-shadow: 0 0 var(--glow-text-soft) currentColor;
+  text-shadow: 0 0 calc(var(--glow-text-soft) * var(--glow-scale)) currentColor;
 }
 .tile .value,
 .hero .value,
@@ -757,7 +795,7 @@ table.data caption {
 .pair-value,
 .pair-row b,
 .meter-row .caption b {
-  text-shadow: 0 0 var(--glow-text) currentColor;
+  text-shadow: 0 0 calc(var(--glow-text) * var(--glow-scale)) currentColor;
 }
 /* ---------- surfaces, hover, frosted panel ---------- */
 
@@ -791,4 +829,77 @@ table.data caption {
 @media (prefers-reduced-motion: reduce) {
   .src .dot { animation: none; }
   .meter > span { transition: none; }
+}
+
+/* ---------- textural overlays ----------
+   Each is opt-in from the settings panel and renders nothing when off. They
+   sit above the page but take no pointer events, so nothing below them
+   becomes unclickable. */
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background-image: var(--fx-scanlines, none), var(--fx-grain, none);
+  background-size: auto, 180px 180px;
+  opacity: var(--fx-opacity, 0);
+  mix-blend-mode: soft-light;
+}
+:root[data-scanlines="on"] {
+  --fx-scanlines: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.055) 0px,
+    rgba(255, 255, 255, 0.055) 1px,
+    transparent 1px,
+    transparent 3px);
+  --fx-opacity: 1;
+}
+/* Static SVG turbulence: one decode, no animation, and it kills the banding
+   that shows up on the card gradients. */
+:root[data-grain="on"] {
+  --fx-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.34'/%3E%3C/svg%3E");
+  --fx-opacity: 1;
+}
+
+/* Aurora: a slow hue drift along the card edge. Deliberately 24s — anything
+   quicker becomes a distraction in peripheral vision on an always-on screen. */
+@keyframes pvestats-aurora {
+  0%   { border-color: color-mix(in oklab, var(--series-1) 42%, var(--hairline)); }
+  50%  { border-color: color-mix(in oklab, var(--series-2) 42%, var(--hairline)); }
+  100% { border-color: color-mix(in oklab, var(--series-1) 42%, var(--hairline)); }
+}
+:root[data-aurora="on"] .card {
+  animation: pvestats-aurora 24s ease-in-out infinite;
+}
+:root[data-aurora="on"] .card:nth-child(even) { animation-delay: -12s; }
+
+/* ---------- threshold flare ----------
+   Fires once when a graded value crosses into a worse band, then settles. A
+   steady-state animation would just become wallpaper. */
+@keyframes pvestats-flare {
+  0%   { box-shadow: 0 0 0 0 var(--meter-color, var(--series-1)); }
+  35%  { box-shadow: 0 0 16px 4px var(--meter-color, var(--series-1)); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.meter.flare > span { animation: pvestats-flare 1.1s ease-out 2; }
+
+/* ---------- settings gear ---------- */
+.settings svg { transition: transform 0.35s cubic-bezier(0.34, 1.3, 0.64, 1); }
+.settings[aria-expanded="true"] svg { transform: rotate(120deg); }
+
+/* ---------- theme crossfade ----------
+   Only while switching: a permanent transition would make every live value
+   update lag behind its own colour. */
+:root.theming, :root.theming * {
+  transition: background-color 0.35s ease, color 0.35s ease,
+              border-color 0.35s ease, fill 0.35s ease, stroke 0.35s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-aurora="on"] .card { animation: none; }
+  .meter.flare > span { animation: none; }
+  .settings svg { transition: none; }
+  :root.theming, :root.theming * { transition: none; }
 }
