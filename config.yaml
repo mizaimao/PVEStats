@@ -15,3 +15,8 @@ hosts:
     # configuration; only full-admin credentials work over REST. WebSocket
     # honours roles correctly, and REST is removed entirely in TrueNAS 26.
     api_url: wss://nas.lan/api/current
+    # Override the auto-derived interface label. Detection reads the Proxmox
+    # virtio MAC prefix and the reported media subtype, which cannot know what
+    # hardware backs a virtual NIC.
+    nic_labels:
+      ens18: virtual (E610)

@@ -92,7 +92,15 @@ class Collector:
             elif host.get("view") == "nas":
                 guest["nas_status"] = nas.status()
                 if nas.data:
-                    guest["nas"] = nas.data
+                    data = dict(nas.data)
+                    labels = host.get("nic_labels") or {}
+                    if labels:
+                        data["interfaces"] = {
+                            name: ({**nic, "label": labels[name]} if name in labels
+                                   else nic)
+                            for name, nic in (data.get("interfaces") or {}).items()
+                        }
+                    guest["nas"] = data
 
         return {
             "sources": {name: source.status() for name, source in self.sources.items()},

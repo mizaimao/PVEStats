@@ -84,14 +84,17 @@
 </div>
 
 <main>
-  <section id="node-card" class="card card-node" hidden></section>
-  <section id="feature" class="feature"></section>
+  <!-- Row 1: host + NAS stacked on the left, ml60 filling the right. -->
+  <div class="row-top">
+    <div class="col" id="col-left">
+      <section id="node-card" class="card card-node" hidden></section>
+    </div>
+    <div class="col" id="col-right"></div>
+  </div>
+
+  <!-- Row 2: every other guest, uniform cards. -->
   <section id="basics" class="grid-basic"></section>
 
-  <!-- TEMPORARY: six ways of showing a capped resource, all driven by ml60's
-       live VRAM. Delete this section and demoPanels() in app.js once chosen. -->
-  <h2 class="demo-heading">Capped-resource treatments — ml60 VRAM, live. Temporary.</h2>
-  <section id="demo" class="grid-demo"></section>
 </main>
 
 <p class="offline" id="offline" hidden>

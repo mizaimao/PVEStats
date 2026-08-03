@@ -102,9 +102,23 @@ def gpu_stats():
             "vram": used if isinstance(used, int) and used < 2**63 else None,
         })
 
+    # PCIe link state and throughput. Throughput counters are KB/s over the
+    # last sampling interval, not cumulative, so they need no rate maths.
+    pcie = {
+        "gen": attempt(lambda: nvml.nvmlDeviceGetCurrPcieLinkGeneration(handle)),
+        "width": attempt(lambda: nvml.nvmlDeviceGetCurrPcieLinkWidth(handle)),
+        "max_gen": attempt(lambda: nvml.nvmlDeviceGetMaxPcieLinkGeneration(handle)),
+        "max_width": attempt(lambda: nvml.nvmlDeviceGetMaxPcieLinkWidth(handle)),
+        "tx_kbps": attempt(lambda: nvml.nvmlDeviceGetPcieThroughput(
+            handle, nvml.NVML_PCIE_UTIL_TX_BYTES)),
+        "rx_kbps": attempt(lambda: nvml.nvmlDeviceGetPcieThroughput(
+            handle, nvml.NVML_PCIE_UTIL_RX_BYTES)),
+    }
+
     return {
         "util": util.gpu if util else None,
         "mem_util": util.memory if util else None,
+        "pcie": pcie,
         "vram_used": mem.used if mem else None,
         "vram_total": mem.total if mem else None,
         "temp": attempt(
