@@ -426,11 +426,13 @@ table.data .name { color: var(--ink); }
   margin: 0;
 }
 
-/* Uptime line on the compact guest cards. */
-.card-uptime {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--grid);
-  font-size: 11px;
-  color: var(--ink-muted);
+/* Breathing room under a chart before the next block of figures. */
+.after-chart { margin-top: 18px; }
+
+/* Visible section dividers on the ml60 card. Swap the border for extra
+   margin if these read as too heavy. */
+table.data.divided {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--baseline);
 }

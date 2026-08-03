@@ -78,8 +78,13 @@ function tile(label, { hero = false, unit = "" } = {}) {
     const u = el("span", "unit", unit);
     value.appendChild(u);
   }
-  root.append(el("div", "label", label), value);
-  return { el: root, set: v => { number.nodeValue = v; } };
+  const caption = el("div", "label", label);
+  root.append(caption, value);
+  return {
+    el: root,
+    set: v => { number.nodeValue = v; },
+    setLabel: text => { caption.textContent = text; },
+  };
 }
 
 /* ---------------- meter ---------------- */
@@ -190,7 +195,8 @@ class Spark {
      natural ceiling (throughput) auto-scale and print their peak instead, so
      the scale is still readable. */
   constructor(series, { height = 38, format = fmt.pct, unit = "",
-                        domain = null, caption = "", axis = false } = {}) {
+                        domain = null, caption = "", axis = false,
+                        xTicks = false, secondsPerSample = 1 } = {}) {
     this.series = series;                 // [{key, color, label}]
     this.height = height;
     this.format = format;
@@ -200,6 +206,10 @@ class Spark {
     // Right-hand gutter reserved for axis labels, sized to the unit — a fixed
     // 46px clipped " MiB/s" to " MiB/".
     this.gutter = axis ? 44 + unit.length * 4 : 0;
+    this.xTicks = xTicks;
+    this.secondsPerSample = secondsPerSample;
+    // Room under the plot for the time labels.
+    this.footer = xTicks ? 15 : 0;
     this.width = 240;
     this.data = [];
 
@@ -241,6 +251,10 @@ class Spark {
           return text;
         })
       : [];
+
+    // Vertical time ticks. Built lazily on first draw, since how many there
+    // are depends on the buffer capacity the server reports.
+    this.xTickNodes = [];
 
     this.parts = series.map(s => {
       // Taller charts cover far more area, so the same opacity reads as a
@@ -291,10 +305,12 @@ class Spark {
     const h = this.height;
     const w = this.width;
     const plot = Math.max(20, w - this.gutter);   // trace area, minus axis gutter
+    const body = h - this.footer;                 // plot area, minus time labels
     this.svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     this.svg.setAttribute("height", h);
     const max = this.scale();
     const pad = 3;
+    this.drawTimeTicks(plot, body, h);
     // The peak duplicates the topmost axis label, so only show it when there
     // is no axis to read the scale from.
     if (!this.domain && !this.axis) {
@@ -302,7 +318,7 @@ class Spark {
     }
     this.gridlines.forEach((line, i) => {
       const frac = this.gridFractions[i];
-      const y = (h - pad - frac * (h - pad * 2)).toFixed(1);
+      const y = (body - pad - frac * (body - pad * 2)).toFixed(1);
       line.setAttribute("x1", 0); line.setAttribute("x2", plot);
       line.setAttribute("y1", y); line.setAttribute("y2", y);
       const text = this.axisLabels[i];
@@ -310,7 +326,7 @@ class Spark {
         text.setAttribute("x", plot + 6);
         // Keep the label inside the box — the topmost gridline sits at y=pad,
         // and a centred label there is half clipped by the svg edge.
-        text.setAttribute("y", Math.min(Math.max(+y, 7), h - 5));
+        text.setAttribute("y", Math.min(Math.max(+y, 7), body - 5));
         text.textContent = `${this.format(max * frac)}${this.unit}`;
       }
     });
@@ -329,15 +345,54 @@ class Spark {
       const span = Math.max(this.capacity || values.length, values.length);
       const step = plot / (span - 1);
       const x0 = plot - (values.length - 1) * step;
-      const y = v => h - pad - (v / max) * (h - pad * 2);
+      const y = v => body - pad - (v / max) * (body - pad * 2);
       const points = values.map((v, j) =>
         `${(x0 + j * step).toFixed(1)},${y(v).toFixed(1)}`);
       line.setAttribute("points", points.join(" "));
       area.setAttribute("d",
-        `M${x0.toFixed(1)},${h} L${points.join(" L")} L${plot.toFixed(1)},${h} Z`);
+        `M${x0.toFixed(1)},${body} L${points.join(" L")} L${plot.toFixed(1)},${body} Z`);
       dot.setAttribute("r", "4");
       dot.setAttribute("cx", plot.toFixed(1));
       dot.setAttribute("cy", y(values[values.length - 1]).toFixed(1));
+    });
+  }
+
+  /* Time ticks along the bottom: the x-axis spans the whole ring buffer, so
+     the span is capacity x sample interval. Without these a flat trace gives
+     no sense of how far back it reaches. */
+  drawTimeTicks(plot, body, h) {
+    if (!this.xTicks || !this.capacity) return;
+    const spanMin = (this.capacity * this.secondsPerSample) / 60;
+    const step = spanMin <= 5 ? 1 : spanMin <= 15 ? 2 : 5;
+    const marks = [];
+    for (let t = 0; t <= spanMin + 0.001; t += step) marks.push(t);
+
+    while (this.xTickNodes.length < marks.length) {
+      const line = svgEl("line", { stroke: "var(--grid)", "stroke-width": "1" });
+      const text = svgEl("text", {
+        "text-anchor": "middle", fill: "var(--ink-muted)", "font-size": "10",
+      });
+      // Behind the data: inserted before the series parts.
+      this.svg.insertBefore(line, this.svg.firstChild);
+      this.svg.appendChild(text);
+      this.xTickNodes.push({ line, text });
+    }
+    this.xTickNodes.forEach((node, i) => {
+      if (i >= marks.length) {
+        node.line.setAttribute("stroke-opacity", "0");
+        node.text.textContent = "";
+        return;
+      }
+      const minutesAgo = marks[i];
+      const x = plot * (1 - minutesAgo / spanMin);
+      node.line.setAttribute("stroke-opacity", "1");
+      node.line.setAttribute("x1", x.toFixed(1));
+      node.line.setAttribute("x2", x.toFixed(1));
+      node.line.setAttribute("y1", 0);
+      node.line.setAttribute("y2", body);
+      node.text.setAttribute("x", Math.min(Math.max(x, 12), plot - 8).toFixed(1));
+      node.text.setAttribute("y", h - 3);
+      node.text.textContent = minutesAgo === 0 ? "now" : `-${minutesAgo}m`;
     });
   }
 
@@ -450,16 +505,15 @@ function basicCard(guest) {
   // the two metrics read the same way.
   const cpu = meter("CPU");
   const mem = meter("Memory");
-  const up = el("div", "card-uptime");
-  shell.el.append(cpu.el, mem.el, up);
+  shell.el.append(cpu.el, mem.el);
 
   return {
     el: shell.el,
     update(g, history, status) {
+      shell.sub.textContent = `vmid ${g.vmid} · up ${fmt.uptime(g.uptime)}`;
       cpu.set(g.cpu_pct || 0, 100, `${fmt.pct(g.cpu_pct)}%`);
       mem.set(g.mem, g.maxmem,
         `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
-      up.textContent = `up ${fmt.uptime(g.uptime)}`;
       applyStale(shell, status);
     },
   };
@@ -481,7 +535,8 @@ function gpuCard(guest) {
     { key: "gpu.vram_pct", color: "var(--series-2)", label: "VRAM used" },
   ];
   const spark = new Spark(gpuSeries,
-    { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 104,
+    { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 312,
+      xTicks: true, secondsPerSample: 1,
       caption: "GPU and VRAM, last 10 minutes" });
   const gpuLegend = legend(gpuSeries);
 
@@ -493,11 +548,10 @@ function gpuCard(guest) {
   const fan = tile("Fan", { unit: "%" });
   const clock = tile("SM clock", { unit: "MHz" });
   const cpu = tile("CPU", { unit: "%" });
-  const up = tile("Uptime");
   const pcieLink = tile("PCIe link");
-  const pcieRate = tile("PCIe rx/tx", { unit: " MiB/s" });
+  const pcieRate = tile("PCIe rx/tx MiB/s");
   tiles.append(temp.el, power.el, fan.el, clock.el,
-               pcieLink.el, pcieRate.el, cpu.el, up.el);
+               pcieLink.el, pcieRate.el, cpu.el);
 
   const mem = meter("Memory");
 
@@ -508,6 +562,9 @@ function gpuCard(guest) {
     { label: "Process" }, { label: "PID", num: true }, { label: "VRAM", num: true },
   ]);
 
+  vramNow.el.classList.add("after-chart");
+  models.el.classList.add("divided");
+  procs.el.classList.add("divided");
   shell.el.append(heroWrap, spark.el, gpuLegend, vramNow.el, tiles, mem.el,
                   models.el, procs.el);
 
@@ -517,7 +574,7 @@ function gpuCard(guest) {
       // PVE panels (10s) update regardless of the agent's state, and the
       // agent panels (1s) never wait on PVE — §4.2.
       cpu.set(fmt.pct(g.cpu_pct));
-      up.set(fmt.uptime(g.uptime));
+      shell.sub.textContent = `vmid ${g.vmid} · GPU · up ${fmt.uptime(g.uptime)}`;
       mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
 
       const gpu = g.gpu;
@@ -529,9 +586,14 @@ function gpuCard(guest) {
         clock.set(fmt.int(gpu.clock_sm));
         vramNow.set(`${fmt.gib(gpu.vram_used)} / ${fmt.gib(gpu.vram_total)}`);
         const pcie = gpu.pcie || {};
-        pcieLink.set(pcie.gen ? `gen${pcie.gen} x${pcie.width}` : "–");
+        // One string, e.g. "1.0 x16". NVIDIA parks the link at Gen1 when idle
+        // and renegotiates under load, so a low current generation is normal
+        // — the ceiling goes in the label rather than being flagged as a fault.
+        pcieLink.set(pcie.gen ? `${pcie.gen}.0 x${pcie.width}` : "–");
+        pcieLink.setLabel(pcie.max_gen ? `PCIe · max ${pcie.max_gen}.0` : "PCIe");
+        // One decimal: the link idles well under 1 MiB/s, which rounded to "1".
         pcieRate.set(pcie.rx_kbps == null ? "–"
-          : `${(pcie.rx_kbps / 1024).toFixed(0)} / ${(pcie.tx_kbps / 1024).toFixed(0)}`);
+          : `${(pcie.rx_kbps / 1024).toFixed(1)} / ${(pcie.tx_kbps / 1024).toFixed(1)}`);
         models.set((gpu.models || []).map(m => [
           m.name || "?", `${fmt.gib(m.size_vram)} GiB`, fmt.countdown(m.unload_in),
         ]));
@@ -561,8 +623,7 @@ function nasCard(guest) {
   const row = el("div", "arc-row");
   const cpu = arcGauge("CPU");
   const mem = arcGauge("Memory");
-  const up = tile("Uptime");
-  row.append(cpu.el, mem.el, up.el);
+  row.append(cpu.el, mem.el);
   shell.el.append(row);
 
   // Interface throughput is read from inside TrueNAS, never from PVE's
@@ -591,7 +652,7 @@ function nasCard(guest) {
       mem.set(g.maxmem ? g.mem / g.maxmem : 0,
               `${fmt.pct(g.maxmem ? (g.mem / g.maxmem) * 100 : null)}%`,
               null, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
-      up.set(fmt.uptime(g.uptime));
+      shell.sub.textContent = `vmid ${g.vmid} · NAS · up ${fmt.uptime(g.uptime)}`;
 
       const nas = g.nas;
       if (nas) {
@@ -608,6 +669,7 @@ function nasCard(guest) {
           }));
           spark = new Spark(ifSeries, {
             format: fmt.rate, unit: " MiB/s", height: 96, axis: true,
+            xTicks: true, secondsPerSample: 5,
             caption: "Receive throughput, last 10 minutes",
           });
           ifSpark.append(spark.el, legend(ifSeries));
