@@ -21,6 +21,63 @@
 
   --radius: 10px;
   --gap: 14px;
+
+  /* Glow is a token, not a separate stylesheet: 0 means the shadows render
+     nothing. Themes that want it just raise the blur. */
+  --glow-blur: 0px;
+  --glow-spread: 0px;
+}
+
+/* ---------- themes ----------
+   Surfaces, ink and the two series hues change; the status palette does not.
+   good/warning/critical mean the same thing in every theme, so theming them
+   would make a colour stop being a fixed signal.
+
+   Every series pair below passes the CVD validator against its own surface:
+     midnight  ΔE 26.8   neon  ΔE 11.0   amber  ΔE 12.5   nord  ΔE 26.8
+   (worst adjacent pair, OKLab x100, protan/deutan; gate is 8.) */
+
+:root[data-theme="neon"] {
+  --plane:      #07070b;
+  --surface:    #101018;
+  --ink:        #f2f5ff;
+  --ink-2:      #a9b2cc;
+  --ink-muted:  #6f7794;
+  --grid:       #1d1d2b;
+  --baseline:   #2a2a3d;
+  --hairline:   rgba(150, 180, 255, 0.14);
+  --series-1:   #19a3c9;
+  --series-2:   #cf3d80;
+  --glow-blur:  9px;
+  --glow-spread: 1px;
+}
+
+:root[data-theme="amber"] {
+  --plane:      #0d0b06;
+  --surface:    #17130b;
+  --ink:        #fdf3e0;
+  --ink-2:      #cbb894;
+  --ink-muted:  #8b7c60;
+  --grid:       #2a2113;
+  --baseline:   #3a2f1c;
+  --hairline:   rgba(255, 215, 150, 0.13);
+  --series-1:   #bd8400;
+  --series-2:   #0e9488;
+  --glow-blur:  7px;
+  --glow-spread: 0px;
+}
+
+:root[data-theme="nord"] {
+  --plane:      #242933;
+  --surface:    #2e3440;
+  --ink:        #eceff4;
+  --ink-2:      #d8dee9;
+  --ink-muted:  #8f9bb0;
+  --grid:       #3b4252;
+  --baseline:   #4c566a;
+  --hairline:   rgba(216, 222, 233, 0.12);
+  --series-1:   #3987e5;
+  --series-2:   #d95926;
 }
 
 * { box-sizing: border-box; }
@@ -545,4 +602,19 @@ table.data.divided {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
+}
+
+/* ---------- glow ----------
+   Applied only to marks that carry data, never to tracks or chrome. With
+   --glow-blur at 0 these render nothing, so the rules are inert by default. */
+
+.meter > span {
+  box-shadow: 0 0 var(--glow-blur) var(--glow-spread)
+              var(--meter-color, var(--series-1));
+}
+/* drop-shadow with no colour argument uses the element's own `color`, which
+   the chart sets to the series hue — so each line glows in its own colour. */
+.spark svg .glowable,
+.arc svg .glowable {
+  filter: drop-shadow(0 0 var(--glow-blur));
 }

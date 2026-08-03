@@ -7,6 +7,7 @@
 import { el } from "./dom.js";
 import { basicCard, gpuCard, nasCard, nodeCard } from "./cards.js";
 import { initSettings } from "./settings.js";
+import { initTheme } from "./theme.js";
 
 const POLL_MS = 1000;
 
@@ -95,6 +96,7 @@ async function tick() {
   }
 }
 
+initTheme();
 initSettings();
 /* Polls regardless of focus. Pausing while hidden saved a little CPU but the
    window is meant to be glanceable from across the room, and coming back to a

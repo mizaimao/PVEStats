@@ -78,6 +78,9 @@ export function arcRing(svg, radius, width, colour) {
   });
   const fill = svgEl("circle", {
     ...common, stroke: colour, "stroke-dasharray": `0 ${circumference}`,
+    // `color` feeds drop-shadow() so the glow matches the mark; the class
+    // keeps the effect off the dim track behind it.
+    class: "glowable", style: `color: ${colour}`,
     // Butt, not round: a round cap paints a full-width dot even at near-zero
     // length, so an idle guest at 0.3% grew a blob that read as a real value.
     // Square at the origin is also the correct treatment for a value scale.
@@ -239,11 +242,13 @@ export class Spark {
       const line = svgEl("path", {
         fill: "none", stroke: s.color, "stroke-width": "2",
         "stroke-linejoin": "round", "stroke-linecap": "round",
+        class: "glowable", style: `color: ${s.color}`,
       });
       // 2px ring in the surface colour keeps the end dot legible where it
       // crosses another line.
       const dot = svgEl("circle", {
         r: "4", fill: s.color, stroke: "var(--surface)", "stroke-width": "2",
+        class: "glowable", style: `color: ${s.color}`,
       });
       this.svg.append(area, line, dot);
       return { area, line, dot };
