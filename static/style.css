@@ -131,7 +131,9 @@ body {
   gap: var(--gap);
   min-width: 0;
 }
-@media (max-width: 1100px) {
+/* Two columns are the point of the layout, so they hold down to ~660px —
+   half of a 14" or 13" Mac screen. Only below that does stacking win. */
+@media (max-width: 660px) {
   .row-top { grid-template-columns: 1fr; }
 }
 
@@ -300,9 +302,10 @@ table.data {
 }
 table.data caption {
   text-align: left;
-  font-size: 11px;
-  color: var(--ink-muted);
-  padding-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  padding-bottom: 6px;
 }
 table.data th {
   text-align: left;
@@ -435,4 +438,59 @@ table.data.divided {
   margin-top: 18px;
   padding-top: 14px;
   border-top: 1px solid var(--baseline);
+}
+
+/* ml60 headline: utilization, VRAM and PCIe throughput on one line. */
+.gpu-headline {
+  display: flex;
+  align-items: flex-end;
+  gap: 34px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.gpu-headline .tile { flex: none; }
+
+/* Two bars side by side, equal width. */
+.bar-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: end;
+}
+
+/* ---------- narrow: half-screen on a 13"/14" Mac ----------
+   Everything here is compression, not removal — the same panels stay on
+   screen, just tighter. */
+@media (max-width: 1000px) {
+  :root { --gap: 10px; }
+  body { padding: 10px; }
+  .card { padding: 11px 12px; }
+  .card h2 { font-size: 15px; }
+
+  .arc { width: 86px; }
+  .arc-value { font-size: 16px; }
+  .arc-row { gap: 14px; }
+
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(74px, 1fr)); gap: 12px 14px; }
+  .tile .value { font-size: 16px; }
+  .hero .value { font-size: 36px; }
+  .gpu-headline { gap: 18px; }
+
+  .grid-basic { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+
+  table.data { font-size: 11px; }
+  table.data caption { font-size: 12px; }
+  table.data th, table.data td { padding-right: 6px; }
+  /* Long role strings would otherwise force the table wider than its column. */
+  table.data td.name { overflow-wrap: anywhere; }
+
+  .bar-pair { gap: 12px; }
+  .panel { width: calc(100vw - 28px); right: 14px; }
+}
+
+/* Very narrow: single column, and the tallest chart comes down so the page
+   does not become one endless scroll. */
+@media (max-width: 660px) {
+  .gpu-headline { gap: 14px; }
+  .bar-pair { grid-template-columns: 1fr; }
 }
