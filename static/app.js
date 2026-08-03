@@ -196,13 +196,17 @@ class Spark {
      the scale is still readable. */
   constructor(series, { height = 38, format = fmt.pct, unit = "",
                         domain = null, caption = "", axis = false,
-                        xTicks = false, secondsPerSample = 1 } = {}) {
+                        xTicks = false, secondsPerSample = 1,
+                        minScale = 0 } = {}) {
     this.series = series;                 // [{key, color, label}]
     this.height = height;
     this.format = format;
     this.unit = unit;
     this.domain = domain;
     this.axis = axis;
+    // Floor for the auto-scale. Without it an idle series collapses to a
+    // 1-byte range and both axis labels round to the same "0.0".
+    this.minScale = minScale;
     // Right-hand gutter reserved for axis labels, sized to the unit — a fixed
     // 46px clipped " MiB/s" to " MiB/".
     this.gutter = axis ? 44 + unit.length * 4 : 0;
@@ -298,7 +302,7 @@ class Spark {
     if (this.domain) return this.domain[1];
     let max = 0;
     for (const values of this.data) for (const v of values) if (v > max) max = v;
-    return max || 1;
+    return Math.max(max, this.minScale) || 1;
   }
 
   draw() {
@@ -524,14 +528,17 @@ function basicCard(guest) {
 function gpuCard(guest) {
   const shell = cardShell(guest.name, `vmid ${guest.vmid} · GPU`);
 
-  const heroWrap = el("div", "tiles");
-  const util = tile("GPU utilisation", { hero: true, unit: "%" });
-  heroWrap.appendChild(util.el);
+  // Headline row: the three figures worth reading first, side by side.
+  const heroWrap = el("div", "gpu-headline");
+  const util = tile("GPU utilization", { hero: true, unit: "%" });
+  const vramNow = tile("VRAM in use", { unit: " GiB" });
+  const pcieRate = tile("PCIe rx/tx MiB/s");
+  heroWrap.append(util.el, vramNow.el, pcieRate.el);
 
-  // One plot for both, nvtop style: utilisation and VRAM share a 0-100 scale,
+  // One plot for both, nvtop style: utilization and VRAM share a 0-100 scale,
   // so they belong on the same axis instead of two stacked charts.
   const gpuSeries = [
-    { key: "gpu.util", color: "var(--series-1)", label: "GPU utilisation" },
+    { key: "gpu.util", color: "var(--series-1)", label: "GPU utilization" },
     { key: "gpu.vram_pct", color: "var(--series-2)", label: "VRAM used" },
   ];
   const spark = new Spark(gpuSeries,
@@ -540,20 +547,19 @@ function gpuCard(guest) {
       caption: "GPU and VRAM, last 10 minutes" });
   const gpuLegend = legend(gpuSeries);
 
-  const vramNow = tile("VRAM in use", { unit: " GiB" });
-
   const tiles = el("div", "tiles");
   const temp = tile("Temp", { unit: "°C" });
   const power = tile("Power", { unit: "W" });
   const fan = tile("Fan", { unit: "%" });
   const clock = tile("SM clock", { unit: "MHz" });
-  const cpu = tile("CPU", { unit: "%" });
   const pcieLink = tile("PCIe link");
-  const pcieRate = tile("PCIe rx/tx MiB/s");
-  tiles.append(temp.el, power.el, fan.el, clock.el,
-               pcieLink.el, pcieRate.el, cpu.el);
+  tiles.append(temp.el, power.el, fan.el, clock.el, pcieLink.el);
 
+  // Guest CPU and memory side by side, both as bars so they read the same way.
+  const usage = el("div", "bar-pair");
+  const cpu = meter("CPU");
   const mem = meter("Memory");
+  usage.append(cpu.el, mem.el);
 
   const models = dataTable("Loaded models", [
     { label: "Model" }, { label: "VRAM", num: true }, { label: "Unloads in", num: true },
@@ -562,10 +568,10 @@ function gpuCard(guest) {
     { label: "Process" }, { label: "PID", num: true }, { label: "VRAM", num: true },
   ]);
 
-  vramNow.el.classList.add("after-chart");
+  tiles.classList.add("after-chart");
   models.el.classList.add("divided");
   procs.el.classList.add("divided");
-  shell.el.append(heroWrap, spark.el, gpuLegend, vramNow.el, tiles, mem.el,
+  shell.el.append(heroWrap, spark.el, gpuLegend, tiles, usage,
                   models.el, procs.el);
 
   return {
@@ -573,7 +579,7 @@ function gpuCard(guest) {
     update(g, history, status) {
       // PVE panels (10s) update regardless of the agent's state, and the
       // agent panels (1s) never wait on PVE — §4.2.
-      cpu.set(fmt.pct(g.cpu_pct));
+      cpu.set(g.cpu_pct || 0, 100, `${fmt.pct(g.cpu_pct)}%`);
       shell.sub.textContent = `vmid ${g.vmid} · GPU · up ${fmt.uptime(g.uptime)}`;
       mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
 
@@ -606,6 +612,7 @@ function gpuCard(guest) {
         // whatever was last drawn — the card must not imply live readings.
         [util, temp, power, fan, clock, vramNow, pcieLink, pcieRate]
           .forEach(t => t.set("–"));
+        cpu.set(0, 100, "–");
         models.set([]);
         procs.set([]);
       }
@@ -669,7 +676,7 @@ function nasCard(guest) {
           }));
           spark = new Spark(ifSeries, {
             format: fmt.rate, unit: " MiB/s", height: 96, axis: true,
-            xTicks: true, secondsPerSample: 5,
+            xTicks: true, secondsPerSample: 5, minScale: 2 * MiB,
             caption: "Receive throughput, last 10 minutes",
           });
           ifSpark.append(spark.el, legend(ifSeries));

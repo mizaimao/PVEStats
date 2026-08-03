@@ -135,9 +135,9 @@ def main():
     webview.create_window(
         "PVEStats", url,
         width=width, height=height,
-        # Hard floor for drag-resizing. Below this the guest grid drops to two
-        # columns and the NAS tables start truncating.
-        min_size=(1040, 720),
+        # Hard floor for drag-resizing. 700px still shows both columns — the
+        # layout compresses rather than dropping panels down to ~660px.
+        min_size=(700, 640),
         background_color="#0d0d0d",   # matches the page, so no white flash
     )
     try:
