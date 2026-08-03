@@ -37,8 +37,22 @@
     </button>
   </div>
 
-  <p class="panel-note">Not wired up yet — these show the intended controls and
-    which of them a source can actually honour.</p>
+  <div class="setting">
+    <label for="set-theme">Theme</label>
+    <select id="set-theme">
+      <option value="midnight">Midnight</option>
+      <option value="neon">Neon — glow</option>
+      <option value="amber">Amber — glow</option>
+      <option value="nord">Nord</option>
+    </select>
+    <span class="applies ok">Live</span>
+    <p>Changes surfaces, ink and the two series colours. Status colours
+      (good / warning / critical) stay fixed in every theme, so a colour never
+      stops meaning what it meant. Remembered between launches.</p>
+  </div>
+
+  <p class="panel-note">The rest is not wired up yet — these show the intended
+    controls and which of them a source can actually honour.</p>
 
   <div class="setting">
     <label for="set-agent">ml60 GPU agent</label>
