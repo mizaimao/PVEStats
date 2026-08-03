@@ -197,9 +197,9 @@ class Spark {
     this.unit = unit;
     this.domain = domain;
     this.axis = axis;
-    // Right-hand gutter reserved for axis labels, so the trace never runs
-    // underneath them.
-    this.gutter = axis ? 46 : 0;
+    // Right-hand gutter reserved for axis labels, sized to the unit — a fixed
+    // 46px clipped " MiB/s" to " MiB/".
+    this.gutter = axis ? 44 + unit.length * 4 : 0;
     this.width = 240;
     this.data = [];
 
@@ -222,14 +222,16 @@ class Spark {
     // labels when `axis` is on — otherwise a flat trace is unreadable, since
     // nothing says what the height means.
     this.gridFractions = [0.5, 1];
-    this.gridlines = domain
+    // Gridlines whenever an axis is wanted, not only for fixed domains — an
+    // auto-scaled throughput chart is just as unreadable without them.
+    this.gridlines = (domain || axis)
       ? this.gridFractions.map(() => {
           const line = svgEl("line", { stroke: "var(--grid)", "stroke-width": "1" });
           this.svg.appendChild(line);
           return line;
         })
       : [];
-    this.axisLabels = (domain && axis)
+    this.axisLabels = axis
       ? this.gridFractions.map(() => {
           const text = svgEl("text", {
             "text-anchor": "start", "dominant-baseline": "middle",
@@ -241,7 +243,11 @@ class Spark {
       : [];
 
     this.parts = series.map(s => {
-      const area = svgEl("path", { fill: s.color, "fill-opacity": "0.10" });
+      // Taller charts cover far more area, so the same opacity reads as a
+      // solid block rather than a wash.
+      const area = svgEl("path", {
+        fill: s.color, "fill-opacity": height > 60 ? "0.06" : "0.10",
+      });
       const line = svgEl("polyline", {
         fill: "none", stroke: s.color, "stroke-width": "2",
         "stroke-linejoin": "round", "stroke-linecap": "round",
@@ -289,7 +295,9 @@ class Spark {
     this.svg.setAttribute("height", h);
     const max = this.scale();
     const pad = 3;
-    if (!this.domain) {
+    // The peak duplicates the topmost axis label, so only show it when there
+    // is no axis to read the scale from.
+    if (!this.domain && !this.axis) {
       this.peak.textContent = `peak ${this.format(max)}${this.unit}`;
     }
     this.gridlines.forEach((line, i) => {
@@ -300,7 +308,9 @@ class Spark {
       const text = this.axisLabels[i];
       if (text) {
         text.setAttribute("x", plot + 6);
-        text.setAttribute("y", y);
+        // Keep the label inside the box — the topmost gridline sits at y=pad,
+        // and a centred label there is half clipped by the svg edge.
+        text.setAttribute("y", Math.min(Math.max(+y, 7), h - 5));
         text.textContent = `${this.format(max * frac)}${this.unit}`;
       }
     });
@@ -436,20 +446,20 @@ function applyStale(shell, status) {
 
 function basicCard(guest) {
   const shell = cardShell(guest.name, `vmid ${guest.vmid}`);
-  const row = el("div", "arc-row");
-  const cpu = arcGauge("CPU");
-  const up = tile("Uptime");
-  row.append(cpu.el, up.el);
+  // Two bars rather than arcs: aligned baselines make the grid scannable, and
+  // the two metrics read the same way.
+  const cpu = meter("CPU");
   const mem = meter("Memory");
-  shell.el.append(row, mem.el);
+  const up = el("div", "card-uptime");
+  shell.el.append(cpu.el, mem.el, up);
 
   return {
     el: shell.el,
     update(g, history, status) {
-      cpu.set((g.cpu_pct || 0) / 100, `${fmt.pct(g.cpu_pct)}%`);
-      up.set(fmt.uptime(g.uptime));
+      cpu.set(g.cpu_pct || 0, 100, `${fmt.pct(g.cpu_pct)}%`);
       mem.set(g.mem, g.maxmem,
         `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
+      up.textContent = `up ${fmt.uptime(g.uptime)}`;
       applyStale(shell, status);
     },
   };
@@ -464,17 +474,18 @@ function gpuCard(guest) {
   const util = tile("GPU utilisation", { hero: true, unit: "%" });
   heroWrap.appendChild(util.el);
 
-  const spark = new Spark([{ key: "gpu.util", color: "var(--series-1)", label: "GPU" }],
-    { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 84,
-      caption: "GPU utilisation, last 10 minutes" });
+  // One plot for both, nvtop style: utilisation and VRAM share a 0-100 scale,
+  // so they belong on the same axis instead of two stacked charts.
+  const gpuSeries = [
+    { key: "gpu.util", color: "var(--series-1)", label: "GPU utilisation" },
+    { key: "gpu.vram_pct", color: "var(--series-2)", label: "VRAM used" },
+  ];
+  const spark = new Spark(gpuSeries,
+    { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 104,
+      caption: "GPU and VRAM, last 10 minutes" });
+  const gpuLegend = legend(gpuSeries);
 
-  // VRAM as history against its ceiling, plus the current figure — the value
-  // alone hides whether it is climbing.
   const vramNow = tile("VRAM in use", { unit: " GiB" });
-  const vram = new Spark(
-    [{ key: "gpu.vram_used", color: "var(--series-1)", label: "VRAM" }],
-    { format: fmt.gib, unit: " GiB", domain: [0, 1], axis: true, height: 84,
-      caption: "VRAM against card total" });
 
   const tiles = el("div", "tiles");
   const temp = tile("Temp", { unit: "°C" });
@@ -483,7 +494,10 @@ function gpuCard(guest) {
   const clock = tile("SM clock", { unit: "MHz" });
   const cpu = tile("CPU", { unit: "%" });
   const up = tile("Uptime");
-  tiles.append(temp.el, power.el, fan.el, clock.el, cpu.el, up.el);
+  const pcieLink = tile("PCIe link");
+  const pcieRate = tile("PCIe rx/tx", { unit: " MiB/s" });
+  tiles.append(temp.el, power.el, fan.el, clock.el,
+               pcieLink.el, pcieRate.el, cpu.el, up.el);
 
   const mem = meter("Memory");
 
@@ -494,7 +508,7 @@ function gpuCard(guest) {
     { label: "Process" }, { label: "PID", num: true }, { label: "VRAM", num: true },
   ]);
 
-  shell.el.append(heroWrap, spark.el, vramNow.el, vram.el, tiles, mem.el,
+  shell.el.append(heroWrap, spark.el, gpuLegend, vramNow.el, tiles, mem.el,
                   models.el, procs.el);
 
   return {
@@ -514,8 +528,10 @@ function gpuCard(guest) {
         fan.set(gpu.fan == null ? "–" : fmt.pct(gpu.fan));
         clock.set(fmt.int(gpu.clock_sm));
         vramNow.set(`${fmt.gib(gpu.vram_used)} / ${fmt.gib(gpu.vram_total)}`);
-        vram.domain = [0, gpu.vram_total || 1];
-        vram.update(history.agent, g.gpu_status && g.gpu_status.capacity);
+        const pcie = gpu.pcie || {};
+        pcieLink.set(pcie.gen ? `gen${pcie.gen} x${pcie.width}` : "–");
+        pcieRate.set(pcie.rx_kbps == null ? "–"
+          : `${(pcie.rx_kbps / 1024).toFixed(0)} / ${(pcie.tx_kbps / 1024).toFixed(0)}`);
         models.set((gpu.models || []).map(m => [
           m.name || "?", `${fmt.gib(m.size_vram)} GiB`, fmt.countdown(m.unload_in),
         ]));
@@ -526,7 +542,8 @@ function gpuCard(guest) {
       } else {
         // Agent unreachable. Clear its panels explicitly rather than leaving
         // whatever was last drawn — the card must not imply live readings.
-        [util, temp, power, fan, clock, vramNow].forEach(t => t.set("–"));
+        [util, temp, power, fan, clock, vramNow, pcieLink, pcieRate]
+          .forEach(t => t.set("–"));
         models.set([]);
         procs.set([]);
       }
@@ -557,7 +574,8 @@ function nasCard(guest) {
     { label: "RX MiB/s", num: true }, { label: "TX MiB/s", num: true },
   ]);
   const disks = dataTable("Disks", [
-    { label: "Disk" }, { label: "Read MiB/s", num: true }, { label: "Write MiB/s", num: true },
+    { label: "Disk" }, { label: "Size", num: true },
+    { label: "Read MiB/s", num: true }, { label: "Write MiB/s", num: true },
   ]);
   const pools = dataTable("Pools", [
     { label: "Pool" }, { label: "Status" }, { label: "Capacity" }, { label: "Used", num: true },
@@ -585,10 +603,11 @@ function nasCard(guest) {
             key: `if.${name}.rx`, color: colours[i],
             // Role travels in the legend, so the two lines are identifiable
             // without cross-referencing the table.
-            label: `${name} (${(nas.interfaces[name] || {}).role || "?"})`,
+            label: `${name} · ${(nas.interfaces[name] || {}).label
+                || (nas.interfaces[name] || {}).role || "?"}`,
           }));
           spark = new Spark(ifSeries, {
-            format: fmt.rate, unit: " MiB/s", height: 96,
+            format: fmt.rate, unit: " MiB/s", height: 96, axis: true,
             caption: "Receive throughput, last 10 minutes",
           });
           ifSpark.append(spark.el, legend(ifSeries));
@@ -597,13 +616,16 @@ function nasCard(guest) {
 
         ifTable.set(names.map(n => {
           const nic = nas.interfaces[n];
-          const role = nic.role === "virtual" ? "virtual (virtio)"
-                     : nic.role === "physical" ? `physical · ${nic.media || "passthrough"}`
-                     : "unknown";
+          const role = nic.label
+                     || (nic.role === "virtual" ? "virtual (virtio)"
+                       : nic.role === "physical" ? `physical · ${nic.media || "passthrough"}`
+                       : "unknown");
           return [n, role, fmt.rate(nic.rx_bps), fmt.rate(nic.tx_bps)];
         }));
         disks.set(Object.entries(nas.disks || {}).map(([n, d]) => [
-          n, fmt.rate(d.read_bps), fmt.rate(d.write_bps),
+          n,
+          d.size ? `${(d.size / 1024 ** 4).toFixed(1)} TiB` : "–",
+          fmt.rate(d.read_bps), fmt.rate(d.write_bps),
         ]));
         pools.set((nas.pools || []).map(p => {
           const badge = el("span", "pool-status");
@@ -718,7 +740,8 @@ function render(state) {
   if (derived) derived.textContent = `${refreshInterval(state.sources)}s`;
   nodeCard(state.node, state.history.pve, state.sources.pve);
 
-  const feature = document.getElementById("feature");
+  const left = document.getElementById("col-left");
+  const right = document.getElementById("col-right");
   const basics = document.getElementById("basics");
   const seen = new Set();
 
@@ -728,7 +751,11 @@ function render(state) {
     if (!card) {
       card = controllerFor(guest);
       cards.set(guest.vmid, card);
-      (guest.view === "basic" ? basics : feature).appendChild(card.el);
+      // NAS joins the host in the left column; the GPU card owns the right.
+      const host = guest.view === "gpu" ? right
+                 : guest.view === "nas" ? left
+                 : basics;
+      host.appendChild(card.el);
     }
     card.update(guest, state.history, state.sources.pve);
   }
@@ -737,9 +764,6 @@ function render(state) {
   for (const [vmid, card] of cards) {
     if (!seen.has(vmid)) { card.el.remove(); cards.delete(vmid); }
   }
-
-  // TEMPORARY — remove with the #demo section.
-  demoPanels(state.guests);
 }
 
 async function tick() {
@@ -756,40 +780,6 @@ async function tick() {
     document.body.style.opacity = "0.6";
   }
 }
-
-/* ---------------- TEMPORARY: nested arc ----------------
- * One glyph carrying two ratios — CPU on the outer ring, memory on the inner.
- * Answers "can we nest them"; delete with the #demo markup once decided.
- */
-
-const demoPanels = (() => {
-  const host = document.getElementById("demo");
-  let built = null;
-
-  return function update(guests) {
-    if (!host) return;
-    if (!built) {
-      built = guests.slice(0, 4).map(g => {
-        const card = el("section", "card demo-card");
-        card.appendChild(el("h3", "demo-title", g.name));
-        const gauge = arcGauge("CPU / RAM", { nested: true });
-        card.appendChild(gauge.el);
-        host.appendChild(card);
-        return { vmid: g.vmid, gauge };
-      });
-    }
-    for (const entry of built) {
-      const g = guests.find(x => x.vmid === entry.vmid);
-      if (!g) continue;
-      const memRatio = g.maxmem ? g.mem / g.maxmem : 0;
-      entry.gauge.set(
-        (g.cpu_pct || 0) / 100,
-        `${fmt.pct(g.cpu_pct)}%`,
-        memRatio,
-        `outer CPU ${fmt.pct(g.cpu_pct)}%  ·  inner RAM ${fmt.pct(memRatio * 100)}%`);
-    }
-  };
-})();
 
 /* ---------------- settings panel ----------------
  * Opens and closes only. Every control inside is disabled until there is

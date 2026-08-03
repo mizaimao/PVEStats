@@ -189,6 +189,11 @@ class AgentSource:
 
         self.source.push("gpu.util", gpu.get("util"))
         self.source.push("gpu.vram_used", gpu.get("vram_used"))
+        # VRAM as a percentage too, so utilisation and memory can share one
+        # 0-100 plot the way nvtop draws them.
+        if gpu.get("vram_total"):
+            self.source.push("gpu.vram_pct",
+                             gpu["vram_used"] / gpu["vram_total"] * 100)
         self.source.push("gpu.power", gpu.get("power"))
         self.source.push("gpu.temp", gpu.get("temp"))
 
@@ -227,6 +232,7 @@ class TrueNasSource:
         self.counter = 0
         self.identifiers = {}   # graph name -> [identifier, ...]
         self.nics = {}          # interface name -> {role, media, addresses}
+        self.disk_sizes = {}    # device name -> bytes
 
     async def call(self, method, params):
         self.counter += 1
@@ -282,6 +288,10 @@ class TrueNasSource:
                               if a.get("type") == "INET"],
             }
 
+        # Disk capacities, joined onto the throughput rows by device name.
+        self.disk_sizes = {d.get("name"): d.get("size")
+                           for d in await self.call("disk.query", [])}
+
     async def poll(self, session):
         if self.ws is None or self.ws.closed:
             await self.connect(session)
@@ -312,7 +322,8 @@ class TrueNasSource:
             else:
                 # netdata reports Kibibytes/s; normalise to bytes/sec.
                 disks[label] = {"read_bps": latest[1] * 1024,
-                                "write_bps": latest[2] * 1024}
+                                "write_bps": latest[2] * 1024,
+                                "size": self.disk_sizes.get(label)}
 
         for name, value in interfaces.items():
             self.source.push(f"if.{name}.rx", value["rx_bps"])
@@ -320,7 +331,9 @@ class TrueNasSource:
 
         self.source.succeed({
             "interfaces": interfaces,
-            "disks": disks,
+            # netdata returns identifiers newest-first; sort so sdb..sdf reads
+            # in the order the drives are actually labelled.
+            "disks": dict(sorted(disks.items())),
             "pools": [{
                 "name": p.get("name"),
                 "status": p.get("status"),
@@ -328,7 +341,7 @@ class TrueNasSource:
                 "size": p.get("size"),
                 "allocated": p.get("allocated"),
                 "free": p.get("free"),
-            } for p in pools or []],
+            } for p in reversed(pools or [])],
         })
 
     async def close(self):
