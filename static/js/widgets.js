@@ -117,6 +117,39 @@ export function arcGauge(label, { nested = false, sublabel = "" } = {}) {
   };
 }
 
+/* ---------------- paired readout ----------------
+ * Two related figures stacked — read/write, in/out. Kept as plain numbers:
+ * these are rates with no ceiling, so a bar would need an arbitrary scale.
+ */
+
+export function statPair(title, firstLabel, secondLabel, unit = "") {
+  const root = el("div", "pair");
+  root.appendChild(el("div", "pair-title", `${title}${unit ? ` ${unit}` : ""}`));
+  const rows = [firstLabel, secondLabel].map(name => {
+    const row = el("div", "pair-row");
+    const value = el("b", null, "–");
+    row.append(el("span", null, name), value);
+    root.appendChild(row);
+    return value;
+  });
+  return {
+    el: root,
+    set(a, b) {
+      rows[0].textContent = a;
+      rows[1].textContent = b;
+    },
+  };
+}
+
+/* A title over a single line of text. */
+export function statLine(title) {
+  const root = el("div", "pair");
+  root.appendChild(el("div", "pair-title", title));
+  const value = el("div", "pair-value", "–");
+  root.appendChild(value);
+  return { el: root, set: text => { value.textContent = text; } };
+}
+
 /* ---------------- sparkline ----------------
  * Rendered in real pixel coordinates rather than a stretched viewBox, so the
  * 2px stroke and the end dot stay circular at any width.
