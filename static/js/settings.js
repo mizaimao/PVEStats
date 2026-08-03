@@ -19,7 +19,9 @@ export function initSettings() {
   button.addEventListener("click", () => setOpen(panel.hidden));
   close.addEventListener("click", () => setOpen(false));
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") setOpen(false);
+    if (e.key !== "Escape") return;
+    setOpen(false);
+    e.preventDefault();     // otherwise AppKit beeps at the unconsumed Escape
   });
   document.addEventListener("click", e => {
     if (!panel.hidden && !panel.contains(e.target) && !button.contains(e.target)) {

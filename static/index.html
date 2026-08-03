@@ -39,17 +39,21 @@
 
   <div class="setting">
     <label for="set-theme">Theme</label>
-    <select id="set-theme">
-      <option value="ice">Ice — glow</option>
-      <option value="midnight">Midnight</option>
-      <option value="neon">Neon — glow</option>
-      <option value="amber">Amber — glow</option>
-      <option value="synthwave">Synthwave — glow</option>
-      <option value="matrix">Matrix — glow</option>
-      <option value="ember">Ember — glow</option>
-      <option value="nord">Nord</option>
-    </select>
     <span class="applies ok">Live</span>
+    <div class="chips" id="set-theme" role="radiogroup" aria-label="Theme">
+      <button type="button" role="radio" value="ice">Ice</button>
+      <button type="button" role="radio" value="midnight">Midnight</button>
+      <button type="button" role="radio" value="neon">Neon</button>
+      <button type="button" role="radio" value="amber">Amber</button>
+      <button type="button" role="radio" value="synthwave">Synthwave</button>
+      <button type="button" role="radio" value="matrix">Matrix</button>
+      <button type="button" role="radio" value="ember">Ember</button>
+      <button type="button" role="radio" value="glass">Glass</button>
+      <button type="button" role="radio" value="vista">Vista</button>
+      <button type="button" role="radio" value="win7">Windows 7</button>
+      <button type="button" role="radio" value="snowleopard">Snow Leopard</button>
+      <button type="button" role="radio" value="nord">Nord</button>
+    </div>
     <p>Changes surfaces, ink and the two series colours. Status colours
       (good / warning / critical) stay fixed in every theme, so a colour never
       stops meaning what it meant.</p>
@@ -57,14 +61,14 @@
 
   <div class="setting">
     <label for="set-glow">Glow</label>
-    <select id="set-glow">
-      <option value="0">Off</option>
-      <option value="0.5">Subtle</option>
-      <option value="1">Normal</option>
-      <option value="1.6">Strong</option>
-      <option value="2.5">Maximum</option>
-    </select>
     <span class="applies ok">Live</span>
+    <div class="chips" id="set-glow" role="radiogroup" aria-label="Glow">
+      <button type="button" role="radio" value="0">Off</button>
+      <button type="button" role="radio" value="0.5">Subtle</button>
+      <button type="button" role="radio" value="1">Normal</button>
+      <button type="button" role="radio" value="1.6">Strong</button>
+      <button type="button" role="radio" value="2.5">Max</button>
+    </div>
     <p>Scales every glow at once — arcs, bars, chart lines and text. The theme
       sets the character, this sets the volume. Themes without glow are
       unaffected.</p>
@@ -84,13 +88,14 @@
       vision for hours.</p>
   </div>
 
-  <p class="panel-note">All of the above save to <code>ui.json</code> beside
+  <p class="panel-note"><b>s</b> opens this panel, <b>1</b>–<b>8</b> switch the
+    first eight themes. All of the above save to <code>ui.json</code> beside
     config.yaml. The rest is not wired up yet — these show the intended
     controls and which of them a source can actually honour.</p>
 
   <div class="setting">
     <label for="set-agent">ml60 GPU agent</label>
-    <select id="set-agent" disabled><option>1s</option></select>
+    <span class="derived">1s</span>
     <span class="applies ok">Applies</span>
     <p>NVML reads take microseconds, so this is genuinely real-time and can be
       raised or lowered freely.</p>
@@ -98,7 +103,7 @@
 
   <div class="setting">
     <label for="set-truenas">TrueNAS</label>
-    <select id="set-truenas" disabled><option>5s</option></select>
+    <span class="derived">5s</span>
     <span class="applies ok">Applies</span>
     <p>Netdata keeps per-second samples, so a faster poll returns real data.
       Each poll is a round trip over the WebSocket.</p>
@@ -106,7 +111,7 @@
 
   <div class="setting">
     <label for="set-pve">Proxmox VE</label>
-    <select id="set-pve" disabled><option>10s</option></select>
+    <span class="derived">10s</span>
     <span class="applies capped">Floor 10s</span>
     <p>Ignored below 10s. <code>pvestatd</code> recomputes guest statistics on
       its own 10s cycle, so polling faster returns the same numbers and only
@@ -114,11 +119,18 @@
   </div>
 
   <div class="setting">
-    <label>History window</label>
-    <select disabled><option>10 minutes</option></select>
-    <span class="applies ok">Applies</span>
-    <p>Length of the in-memory ring buffers behind the sparklines. Memory only,
-      discarded on restart.</p>
+    <label for="set-window">History window</label>
+    <span class="applies ok">Live</span>
+    <div class="chips" id="set-window" role="radiogroup" aria-label="History window">
+      <button type="button" role="radio" value="60">1m</button>
+      <button type="button" role="radio" value="180">3m</button>
+      <button type="button" role="radio" value="300">5m</button>
+      <button type="button" role="radio" value="600">10m</button>
+      <button type="button" role="radio" value="1800">30m</button>
+    </div>
+    <p>Span of every chart, and the length of the in-memory ring buffers behind
+      them. Memory only, discarded on restart — shortening it drops the oldest
+      samples immediately.</p>
   </div>
 
   <div class="setting">

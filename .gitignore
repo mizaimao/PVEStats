@@ -17,5 +17,8 @@ PVEStats.app/
 # Appearance settings written by the settings panel
 ui.json
 
+# Reference wallpapers — sampled for theme colours, not shipped
+*.jpg
+
 # macOS
 .DS_Store

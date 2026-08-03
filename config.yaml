@@ -2,10 +2,12 @@
 # ui.json instead, so the comments in this file survive.
 #   theme: ice | midnight | neon | amber | synthwave | matrix | ember | nord
 #   glow:  0 = off, 1 = normal, 2.5 = maximum
+#   window: seconds of history behind every chart
 #   scanlines / grain / aurora: textural overlays, on or off
 ui:
   theme: ice
   glow: 1.0
+  window: 180
   scanlines: false
   grain: false
   aurora: false

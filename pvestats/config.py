@@ -22,6 +22,8 @@ UI_STATE = ROOT / "ui.json"
 UI_DEFAULTS = {
     "theme": "ice",
     "glow": 1.0,
+    # Seconds of history kept per source, and so the span of every chart.
+    "window": 180,
     # Textural overlays, each independently switchable.
     "scanlines": False,
     "grain": False,

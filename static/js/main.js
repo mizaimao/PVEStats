@@ -7,7 +7,7 @@
 import { el } from "./dom.js";
 import { basicCard, gpuCard, nasCard, nodeCard } from "./cards.js";
 import { initSettings } from "./settings.js";
-import { initAppearance } from "./theme.js";
+import { initAppearance, selectTheme, THEMES_ORDERED } from "./theme.js";
 
 const POLL_MS = 1000;
 
@@ -105,6 +105,35 @@ async function tick() {
 }
 
 initAppearance();
+
+/* Keyboard: `s` toggles settings, 1-8 pick a theme. Ignored while a control
+   has focus, so typing in the panel does not fire them. */
+/* Keys the browser and assistive tech need; everything else is swallowed.
+
+   An unconsumed key event travels up to AppKit, which beeps when nothing in
+   the responder chain wants it — that is the click heard on every keystroke
+   in the window. There are no text fields here, so absorbing the rest costs
+   nothing and silences it. */
+const PASS_THROUGH = new Set([
+  "Tab", "Enter", " ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "Home", "End", "PageUp", "PageDown",
+]);
+
+document.addEventListener("keydown", event => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const tag = (event.target.tagName || "").toLowerCase();
+  if (["input", "select", "textarea"].includes(tag)) return;
+  if (PASS_THROUGH.has(event.key)) return;
+
+  if (event.key === "s") {
+    document.getElementById("settings").click();
+  } else {
+    const index = "12345678".indexOf(event.key);
+    if (index !== -1 && THEMES_ORDERED[index]) selectTheme(THEMES_ORDERED[index]);
+  }
+  // Consumed either way — an unhandled key is exactly what causes the beep.
+  event.preventDefault();
+});
 initSettings();
 /* Polls regardless of focus. Pausing while hidden saved a little CPU but the
    window is meant to be glanceable from across the room, and coming back to a

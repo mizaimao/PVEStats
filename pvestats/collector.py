@@ -26,6 +26,7 @@ class Collector:
 
     async def start(self):
         self.session = aiohttp.ClientSession()
+        self.set_history_window(self.config.ui().get("window", 180))
 
         if self.config.pve_configured:
             pve = sources.PveSource(self.config, self.sources["pve"])
@@ -62,6 +63,11 @@ class Collector:
             await self._truenas.close()
         if self.session is not None:
             await self.session.close()
+
+    def set_history_window(self, seconds):
+        """Re-length every ring buffer. Charts derive their span from this."""
+        for source in self.sources.values():
+            source.resize(max(30, min(3600, int(seconds))))
 
     def snapshot(self):
         """The whole state, as served by GET /api/state.
