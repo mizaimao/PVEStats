@@ -22,8 +22,13 @@ function renderSources(sources) {
     else if (status.stale) item.classList.add("is-stale");
     const dot = el("span", "dot");
     const label = el("span", null, name);
+    // Counting down to the next poll reads as "something is about to happen";
+    // counting up just says how stale things are.
+    const remaining = status.age == null || !status.interval
+      ? null
+      : Math.max(0, Math.ceil(status.interval - status.age));
     const age = el("span", "age",
-      status.age == null ? "never" : `${status.age.toFixed(0)}s`);
+      status.age == null ? "never" : `${remaining}s`);
     item.append(dot, label, age);
     host.appendChild(item);
   }
@@ -32,6 +37,7 @@ function renderSources(sources) {
 /* ---------------- main loop ---------------- */
 
 const cards = new Map();
+let entered = 0;
 
 function controllerFor(guest) {
   if (guest.view === "gpu") return gpuCard(guest);
@@ -70,6 +76,8 @@ function render(state) {
       const host = guest.view === "gpu" ? right
                  : guest.view === "nas" ? left
                  : basics;
+      // Position in the arrival order drives the entrance stagger.
+      card.el.style.setProperty("--enter", String(entered++));
       host.appendChild(card.el);
     }
     card.update(guest, state.history, state.sources.pve);
