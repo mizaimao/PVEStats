@@ -24,6 +24,15 @@ class Source:
         self.series = {}
         self._last_poll = None
 
+    def resize(self, history_seconds):
+        """Change how much history is kept, preserving the newest samples."""
+        maxlen = max(2, round(history_seconds / self.interval))
+        if maxlen == self.maxlen:
+            return
+        self.maxlen = maxlen
+        for key, buf in self.series.items():
+            self.series[key] = deque(buf, maxlen=maxlen)
+
     def push(self, key, value):
         """Append one sample to a named ring buffer."""
         if value is None:

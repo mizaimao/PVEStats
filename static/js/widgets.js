@@ -219,7 +219,9 @@ export class Spark {
     // top of the data is unreadable the moment the series climbs.
     this.head = el("div", "spark-head");
     this.peak = el("span", "peak");
-    this.head.append(el("span", null, caption), this.peak);
+    this.captionNode = el("span", null, caption);
+    this.baseCaption = caption;
+    this.head.append(this.captionNode, this.peak);
     if (caption || !domain) this.el.appendChild(this.head);
 
     this.svg = svgEl("svg", { preserveAspectRatio: "none" });
@@ -263,6 +265,18 @@ export class Spark {
     this.svg.appendChild(defs);
 
     this.parts = series.map((s, i) => {
+      /* The glow is drawn, not filtered.
+
+         CSS filter on SVG children proved unreliable: the filter region comes
+         from the element's bounding box, which is zero-height for a flat
+         trace, and WebKit and Blink disagree about the rest. So the halo is
+         three real strokes of the same path at increasing width and falling
+         opacity, sitting under the line. No filters, no bounding boxes, and it
+         renders identically in every engine. Widths and opacities come from
+         the glow tokens, so a scale of 0 collapses them to nothing. */
+      const halo = ["halo-a", "halo-b", "halo-c"].map(name =>
+        svgEl("path", { class: `halo ${name}`, fill: "none", stroke: s.color }));
+
       // Taller charts cover far more area, so the same opacity reads as a
       // solid block rather than a wash.
       const area = svgEl("path", {
@@ -274,13 +288,11 @@ export class Spark {
       const line = svgEl("path", {
         fill: "none", stroke: s.color, "stroke-width": "2",
         "stroke-linejoin": "round", "stroke-linecap": "round",
-        class: "glowable", style: `color: ${s.color}`,
       });
       // 2px ring in the surface colour keeps the end dot legible where it
       // crosses another line.
       const dot = svgEl("circle", {
         r: "4", fill: s.color, stroke: "var(--surface)", "stroke-width": "2",
-        class: "glowable", style: `color: ${s.color}`,
       });
       // Comet trail: the last stretch of the line redrawn over itself with a
       // gradient that fades to nothing, so the eye is pulled to `now`.
@@ -301,11 +313,11 @@ export class Spark {
       const comet = svgEl("path", {
         fill: "none", stroke: `url(#${gradientId})`, "stroke-width": "2",
         "stroke-linecap": "round", "stroke-linejoin": "round",
-        class: "glowable", style: `color: ${s.color}`,
       });
 
-      this.svg.append(area, line, comet, dot);
-      return { area, line, comet, dot };
+      // Order matters: wash, then halo widest-first, then the crisp line.
+      this.svg.append(area, halo[2], halo[1], halo[0], line, comet, dot);
+      return { halo, area, line, comet, dot, stopFrom, stopTo };
     });
 
     this.tip = el("div", "tip");
@@ -316,6 +328,21 @@ export class Spark {
       const w = Math.max(40, Math.round(entries[0].contentRect.width));
       if (w !== this.width) { this.width = w; this.draw(); }
     }).observe(this.el);
+  }
+
+  /* Recolour a series in place — used when a value crosses into a status
+     band, so the trace itself carries the warning rather than only a figure
+     elsewhere on the card. */
+  setSeriesColor(index, colour) {
+    const series = this.series[index];
+    const part = this.parts[index];
+    if (!series || !part || series.color === colour) return;
+    series.color = colour;
+    part.line.setAttribute("stroke", colour);
+    part.halo.forEach(h => h.setAttribute("stroke", colour));
+    part.area.setAttribute("fill", colour);
+    part.dot.setAttribute("fill", colour);
+    part.stopFrom.setAttribute("stop-color", colour);
   }
 
   /* Draw-in: the line sweeps on once, the first time there is anything to
@@ -346,6 +373,15 @@ export class Spark {
     // so far. Without this the line stretches as history accumulates and the
     // same reading appears to move.
     if (capacity) this.capacity = capacity;
+    // The caption states the real span rather than a baked-in figure, so it
+    // stays true when the history window changes.
+    if (this.baseCaption && this.capacity) {
+      const minutes = (this.capacity * this.secondsPerSample) / 60;
+      const span = minutes >= 1
+        ? `${minutes % 1 ? minutes.toFixed(1) : minutes} min`
+        : `${Math.round(minutes * 60)}s`;
+      this.captionNode.textContent = `${this.baseCaption}, last ${span}`;
+    }
     this.draw();
     this.playDrawIn();
   }
@@ -390,11 +426,12 @@ export class Spark {
     });
 
     this.data.forEach((values, i) => {
-      const { area, line, comet, dot } = this.parts[i];
+      const { area, line, comet, dot, halo } = this.parts[i];
       if (values.length < 2) {
         line.setAttribute("d", "");
         area.setAttribute("d", "");
         comet.setAttribute("d", "");
+        halo.forEach(h => h.setAttribute("d", ""));
         dot.setAttribute("r", "0");
         return;
       }
@@ -419,6 +456,7 @@ export class Spark {
       const stroke = runs.map(r =>
         "M" + r.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" L")).join(" ");
       line.setAttribute("d", stroke);
+      halo.forEach(h => h.setAttribute("d", stroke));
       // One closed shape per run, so the wash does not span a gap either.
       area.setAttribute("d", runs.map(r =>
         `M${r[0][0].toFixed(1)},${body} `
@@ -507,13 +545,19 @@ export class Spark {
 
 export function legend(series) {
   const root = el("div", "legend");
-  for (const s of series) {
+  const swatches = series.map(s => {
     const item = el("span");
     const swatch = el("i");
     swatch.style.background = s.color;
     item.append(swatch, document.createTextNode(s.label));
     root.appendChild(item);
-  }
+    return swatch;
+  });
+  // The legend is the dependable identity channel, so it has to track a
+  // recoloured series rather than keep pointing at the old hue.
+  root.setColor = (index, colour) => {
+    if (swatches[index]) swatches[index].style.background = colour;
+  };
   return root;
 }
 

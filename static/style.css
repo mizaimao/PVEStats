@@ -15,6 +15,9 @@
   --series-1:   #3987e5;   /* blue   — primary metric */
   --series-2:   #d95926;   /* orange — second metric in a pair */
 
+  /* Status stays in its hue families — green means good, amber means warning,
+     red means critical, in every theme. What each theme adjusts is the step,
+     so the signal harmonises with its surface instead of looking pasted on. */
   --good:       #0ca30c;
   --warning:    #fab219;
   --critical:   #d03b3b;
@@ -53,6 +56,9 @@
    (worst adjacent pair, OKLab x100, protan/deutan; gate is 8.) */
 
 :root[data-theme="neon"] {
+  --good:       #1fd6a2;
+  --warning:    #ffcc33;
+  --critical:   #ff456f;
   --surface-2:  #161626;
   --panel-blur: 18px;
   --plane:      #07070b;
@@ -76,6 +82,9 @@
 }
 
 :root[data-theme="amber"] {
+  --good:       #12a06a;
+  --warning:    #e8a317;
+  --critical:   #e05a3c;
   --surface-2:  #171008;
   --panel-blur: 18px;
   --plane:      #060402;
@@ -97,6 +106,9 @@
 }
 
 :root[data-theme="synthwave"] {
+  --good:       #28d6a4;
+  --warning:    #ffc857;
+  --critical:   #ff4f81;
   --surface-2:  #1d0f36;
   --panel-blur: 18px;
   --plane:      #0b0518;
@@ -118,6 +130,9 @@
 }
 
 :root[data-theme="matrix"] {
+  --good:       #35d15a;
+  --warning:    #cbd422;
+  --critical:   #e0483f;
   --surface-2:  #0c140c;
   --panel-blur: 18px;
   --plane:      #030503;
@@ -141,6 +156,9 @@
 }
 
 :root[data-theme="ice"] {
+  --good:       #12b981;
+  --warning:    #f5a524;
+  --critical:   #ef4c4c;
   --surface-2:  #0e1622;
   --panel-blur: 18px;
   --plane:      #04070d;
@@ -162,6 +180,9 @@
 }
 
 :root[data-theme="ember"] {
+  --good:       #2fae8f;
+  --warning:    #f0a73a;
+  --critical:   #f05a33;
   --surface-2:  #1a0c08;
   --panel-blur: 18px;
   --plane:      #070302;
@@ -181,7 +202,194 @@
   --glow-spread: 1px;
 }
 
+/* Glass: translucent cards over a lit backdrop. Needs something behind them
+   worth blurring, so the plane carries two soft pools of colour — over a flat
+   fill a backdrop blur produces nothing. Series hues are Ice's, already
+   validated. */
+:root[data-theme="glass"] {
+  --good:       #19c58e;
+  --warning:    #f7b02c;
+  --critical:   #f25555;
+  --surface-2:  rgba(120, 170, 255, 0.10);
+  --panel-blur: 26px;
+  --card-blur:  26px;
+  --plane:      #050912;
+  /* Genuinely transparent, not merely dark: at 55% the cards still read as
+     solid panels. The backdrop has to show through for the blur to register
+     as glass at all. */
+  --surface:    rgba(26, 40, 62, 0.30);
+  --ink:        #eef5ff;
+  --ink-2:      #aebfd4;
+  --ink-muted:  #74869c;
+  --grid:       #1b2534;
+  --baseline:   #2a3648;
+  --hairline:   rgba(190, 220, 255, 0.16);
+  --series-1:   #3987e5;
+  --series-2:   #12a594;
+  --glow-blur:  9px;
+  --glow-wide:  22px;
+  --glow-text:  12px;
+  --glow-text-soft: 5px;
+  --glow-text-faint: 3px;
+  --glow-spread: 0px;
+}
+/* Blurring a flat fill produces nothing, so the plane carries strong pools of
+   colour for the cards to smear. These are what make the effect legible. */
+:root[data-theme="glass"] body {
+  background-image:
+    radial-gradient(48vw 46vh at 12% 8%,  rgba(64, 132, 255, 0.55), transparent 68%),
+    radial-gradient(44vw 42vh at 88% 26%, rgba(18, 190, 170, 0.42), transparent 68%),
+    radial-gradient(52vw 48vh at 68% 92%, rgba(140, 92, 255, 0.38), transparent 70%),
+    radial-gradient(40vw 40vh at 26% 78%, rgba(220, 90, 160, 0.26), transparent 70%);
+  background-attachment: fixed;
+}
+:root[data-theme="vista"] .card,
+:root[data-theme="win7"] .card,
+:root[data-theme="snowleopard"] .card,
+:root[data-theme="glass"] .card {
+  backdrop-filter: blur(var(--card-blur)) saturate(180%) brightness(1.08);
+  -webkit-backdrop-filter: blur(var(--card-blur)) saturate(180%) brightness(1.08);
+  /* A bright top edge and a dark underside is what sells a pane of glass:
+     light catches the upper bevel and the lower edge falls into shadow. */
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.30),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 10px 34px rgba(0, 0, 0, 0.42);
+}
+:root[data-theme="vista"] .card::before,
+:root[data-theme="win7"] .card::before,
+:root[data-theme="snowleopard"] .card::before,
+:root[data-theme="glass"] .card::before {
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02) 38%, transparent 62%);
+}
+/* Tables and gridlines need to be lighter here — dark rules vanish against a
+   translucent surface with colour coming through it. */
+:root[data-theme="glass"] { --grid: rgba(255, 255, 255, 0.13);
+                            --baseline: rgba(255, 255, 255, 0.22);
+                            --hairline: rgba(255, 255, 255, 0.20); }
+
+/* --- glass family ---------------------------------------------------------
+   Three period desktops, all translucent. Each needs strong colour on the
+   plane: a backdrop blur over a flat fill produces nothing to look at.
+   Series pairs validated against each surface — Vista and Win7 ΔE 16.1,
+   Snow Leopard ΔE 17.2 (gate 8). */
+
+/* Vista Aero — colours sampled from the Aurora wallpaper itself: teal and
+   cyan through the ribbon (#077275, #0c8f8b, #1b9da5), green in its lower
+   sweep (#338159), and the gold flare at its base (#dfdd43). */
+:root[data-theme="vista"] {
+  --good:       #2fbf8a;
+  --warning:    #dfdd43;
+  --critical:   #e8624a;
+  --surface-2:  rgba(120, 235, 225, 0.10);
+  --panel-blur: 26px;
+  --card-blur:  26px;
+  --plane:      #03181a;
+  --surface:    rgba(14, 62, 62, 0.32);
+  --ink:        #e8fbfa;
+  --ink-2:      #a2cfcd;
+  --ink-muted:  #6b9694;
+  --grid:       rgba(255, 255, 255, 0.12);
+  --baseline:   rgba(255, 255, 255, 0.20);
+  --hairline:   rgba(180, 245, 240, 0.22);
+  --series-1:   #1b9da5;
+  --series-2:   #c98500;
+  --glow-blur:  9px;
+  --glow-wide:  20px;
+  --glow-text:  11px;
+  --glow-text-soft: 5px;
+  --glow-text-faint: 3px;
+  --glow-spread: 0px;
+}
+:root[data-theme="vista"] body {
+  background-image:
+    radial-gradient(58vw 42vh at 14% 4%,   rgba(7, 114, 117, 0.72), transparent 66%),
+    radial-gradient(52vw 38vh at 78% 20%,  rgba(27, 157, 165, 0.52), transparent 66%),
+    radial-gradient(46vw 34vh at 30% 88%,  rgba(51, 129, 89, 0.50), transparent 68%),
+    radial-gradient(30vw 24vh at 62% 100%, rgba(223, 221, 67, 0.26), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* Windows 7 — sampled from the official wallpaper, which is almost entirely
+   blue: #158ce7 through #0c57b5, with cyan highlights at #38c3f5 and #65ddf8.
+   The second series is gold because the wallpaper offers no second hue far
+   enough away to stay distinguishable. */
+:root[data-theme="win7"] {
+  --good:       #1fbf90;
+  --warning:    #f2b32c;
+  --critical:   #ef5a5a;
+  --surface-2:  rgba(150, 220, 255, 0.12);
+  --panel-blur: 24px;
+  --card-blur:  24px;
+  --plane:      #04182f;
+  --surface:    rgba(18, 62, 108, 0.30);
+  --ink:        #f0faff;
+  --ink-2:      #aed2ec;
+  --ink-muted:  #7098b8;
+  --grid:       rgba(255, 255, 255, 0.13);
+  --baseline:   rgba(255, 255, 255, 0.22);
+  --hairline:   rgba(190, 232, 255, 0.24);
+  --series-1:   #158ce7;
+  --series-2:   #c98500;
+  --glow-blur:  9px;
+  --glow-wide:  20px;
+  --glow-text:  11px;
+  --glow-text-soft: 5px;
+  --glow-text-faint: 3px;
+  --glow-spread: 0px;
+}
+:root[data-theme="win7"] body {
+  background-image:
+    radial-gradient(56vw 44vh at 24% 6%,  rgba(21, 140, 231, 0.70), transparent 66%),
+    radial-gradient(48vw 38vh at 82% 26%, rgba(101, 221, 248, 0.48), transparent 66%),
+    radial-gradient(62vw 46vh at 46% 98%, rgba(12, 87, 181, 0.62), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* Snow Leopard: the purple-indigo aurora desktop over graphite window chrome,
+   with Aqua blue as the accent. Colours sampled from Aurora.jpg: #6f3784 and
+   #9058a2 through the plume, #4d3173 and #331d5a in its indigo body, over
+   #040310. The second series is magenta rather than the wallpaper's violet —
+   blue against violet measures ΔE 6.6 under deuteranopia, below the gate. */
+:root[data-theme="snowleopard"] {
+  --good:       #2ec4a0;
+  --warning:    #e8b13a;
+  --critical:   #e8557f;
+  --surface-2:  rgba(200, 200, 215, 0.09);
+  --panel-blur: 24px;
+  --card-blur:  24px;
+  --plane:      #040310;
+  --surface:    rgba(48, 40, 66, 0.34);
+  --ink:        #f4f0fa;
+  --ink-2:      #c6bcd6;
+  --ink-muted:  #8a7ea0;
+  --grid:       rgba(255, 255, 255, 0.11);
+  --baseline:   rgba(255, 255, 255, 0.19);
+  --hairline:   rgba(230, 230, 245, 0.20);
+  --series-1:   #3987e5;
+  --series-2:   #cf3d80;
+  --glow-blur:  8px;
+  --glow-wide:  18px;
+  --glow-text:  10px;
+  --glow-text-soft: 4px;
+  --glow-text-faint: 3px;
+  --glow-spread: 0px;
+}
+:root[data-theme="snowleopard"] body {
+  background-image:
+    radial-gradient(52vw 42vh at 30% 8%,  rgba(199, 89, 181, 0.52), transparent 64%),
+    radial-gradient(58vw 46vh at 52% 34%, rgba(144, 88, 162, 0.58), transparent 66%),
+    radial-gradient(46vw 38vh at 76% 14%, rgba(77, 49, 115, 0.62), transparent 68%),
+    radial-gradient(60vw 44vh at 40% 96%, rgba(51, 29, 90, 0.60), transparent 70%);
+  background-attachment: fixed;
+}
+
 :root[data-theme="nord"] {
+  --good:       #a3be8c;
+  --warning:    #ebcb8b;
+  --critical:   #bf616a;
   --surface-2:  #353c4a;
   --panel-blur: 18px;
   --plane:      #242933;
@@ -589,6 +797,34 @@ table.data .name { color: var(--ink); }
 .applies.ok { color: var(--good); border: 1px solid color-mix(in oklab, var(--good) 45%, transparent); }
 .applies.capped { color: var(--warning); border: 1px solid color-mix(in oklab, var(--warning) 45%, transparent); }
 .applies.auto { color: var(--ink-muted); border: 1px solid var(--hairline); }
+/* Chips instead of <select>: macOS plays its menu click when a native select
+   popup opens, and there is no way to suppress that from the page. Buttons
+   are silent, and a radiogroup keeps the semantics. */
+.chips {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.chips button {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.chips button:hover { color: var(--ink-2); border-color: var(--baseline); }
+.chips button[aria-checked="true"] {
+  color: var(--ink);
+  border-color: color-mix(in oklab, var(--series-1) 60%, var(--hairline));
+  background: color-mix(in oklab, var(--series-1) 18%, transparent);
+}
+.chips button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+
 .toggles { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .toggle {
   display: inline-flex;
@@ -761,15 +997,25 @@ table.data.divided {
     drop-shadow(0 0 calc(var(--glow-blur) * var(--glow-scale)))
     drop-shadow(0 0 calc(var(--glow-wide) * var(--glow-scale)));
 }
-/* Chart strokes are 2px against a large dark field, so they need more passes
-   than an 8px arc to read as lit rather than merely soft-edged. */
-.spark svg .glowable {
-  filter:
-    drop-shadow(0 0 calc(var(--glow-blur) * 0.22 * var(--glow-scale)))
-    drop-shadow(0 0 calc(var(--glow-blur) * 0.22 * var(--glow-scale)))
-    drop-shadow(0 0 calc(var(--glow-blur) * 0.5 * var(--glow-scale)))
-    drop-shadow(0 0 calc(var(--glow-blur) * var(--glow-scale)))
-    drop-shadow(0 0 calc(var(--glow-wide) * var(--glow-scale)));
+/* Chart glow is drawn rather than filtered — see widgets.js. Three strokes of
+   the same path under the line, widening and fading. Width and opacity both
+   scale from the glow tokens, so a scale of 0 leaves nothing visible. */
+.spark svg .halo {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+.spark svg .halo-a {
+  stroke-width: calc(2px + var(--glow-blur) * 0.20 * var(--glow-scale));
+  opacity: calc(0.22 * var(--glow-scale));
+}
+.spark svg .halo-b {
+  stroke-width: calc(2px + var(--glow-blur) * 0.45 * var(--glow-scale));
+  opacity: calc(0.10 * var(--glow-scale));
+}
+.spark svg .halo-c {
+  stroke-width: calc(2px + var(--glow-blur) * 0.9 * var(--glow-scale));
+  opacity: calc(0.045 * var(--glow-scale));
 }
 /* The figures the eye lands on first pick up the light too. */
 /* Three tiers, brightest on the figures the eye should land on first. Chrome
@@ -986,3 +1232,10 @@ body::before {
   .card { animation: none; }
   .meter > span > i::after { animation: none; opacity: 0; }
 }
+
+/* Status on a stat tile. Paired with a written label on the tile itself, so
+   the colour reinforces rather than carries the meaning. */
+.tile.is-warning .value { color: var(--warning); }
+.tile.is-critical .value { color: var(--critical); }
+.tile.is-warning .label,
+.tile.is-critical .label { color: var(--ink-2); }

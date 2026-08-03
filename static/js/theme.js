@@ -7,10 +7,13 @@
  */
 
 const CACHE = "pvestats.appearance";
-const DEFAULTS = { theme: "ice", glow: 1,
+const DEFAULTS = { theme: "ice", glow: 1, window: 180,
                    scanlines: false, grain: false, aurora: false };
-const THEMES = new Set(["midnight", "neon", "amber", "synthwave",
-                        "matrix", "ice", "ember", "nord"]);
+// Keyboard 1-8 map to these, in order. The rest are dropdown-only.
+export const THEMES_ORDERED = ["ice", "midnight", "neon", "amber",
+                               "synthwave", "matrix", "ember", "glass"];
+const THEMES = new Set([...THEMES_ORDERED,
+                        "vista", "win7", "snowleopard", "nord"]);
 
 function cached() {
   try {
@@ -64,10 +67,60 @@ async function save(settings) {
   }
 }
 
+/* A chip group behaves like a <select> for our purposes: read the checked
+   value, mark one checked, and call back on click. */
+function group(id, onPick) {
+  const root = document.getElementById(id);
+  if (!root) return null;
+  const buttons = [...root.querySelectorAll("button")];
+  const api = {
+    get value() {
+      const on = buttons.find(b => b.getAttribute("aria-checked") === "true");
+      return on ? on.value : buttons[0] && buttons[0].value;
+    },
+    set(value) {
+      const wanted = String(value);
+      buttons.forEach(b =>
+        b.setAttribute("aria-checked", String(b.value === wanted)));
+    },
+  };
+  buttons.forEach(b => b.addEventListener("click", () => {
+    api.set(b.value);
+    onPick();
+  }));
+  return api;
+}
+
+let groups = {};
+
+/* Set the theme from outside the panel — used by the keyboard shortcuts. */
+export function selectTheme(name) {
+  if (groups.theme) {
+    groups.theme.set(name);
+    save(readAll());
+  } else {
+    apply({ ...cached(), theme: name });
+  }
+}
+
+function readAll() {
+  return {
+    theme: groups.theme ? groups.theme.value : cached().theme,
+    glow: groups.glow ? +groups.glow.value : cached().glow,
+    window: groups.window ? +groups.window.value : cached().window,
+    scanlines: !!(groups.scanlines && groups.scanlines.checked),
+    grain: !!(groups.grain && groups.grain.checked),
+    aurora: !!(groups.aurora && groups.aurora.checked),
+  };
+}
+
 export async function initAppearance() {
-  const controls = {
-    theme: document.getElementById("set-theme"),
-    glow: document.getElementById("set-glow"),
+  const onPick = () => save(readAll());
+
+  groups = {
+    theme: group("set-theme", onPick),
+    glow: group("set-glow", onPick),
+    window: group("set-window", onPick),
     scanlines: document.getElementById("fx-scanlines"),
     grain: document.getElementById("fx-grain"),
     aurora: document.getElementById("fx-aurora"),
@@ -87,20 +140,14 @@ export async function initAppearance() {
     // Offline or starting up — the cached values stand.
   }
 
-  const read = () => ({
-    theme: controls.theme ? controls.theme.value : settings.theme,
-    glow: controls.glow ? +controls.glow.value : settings.glow,
-    scanlines: !!(controls.scanlines && controls.scanlines.checked),
-    grain: !!(controls.grain && controls.grain.checked),
-    aurora: !!(controls.aurora && controls.aurora.checked),
-  });
-
-  if (controls.theme) controls.theme.value = document.documentElement.dataset.theme;
-  if (controls.glow) controls.glow.value = String(settings.glow ?? 1);
+  if (groups.theme) groups.theme.set(document.documentElement.dataset.theme);
+  if (groups.glow) groups.glow.set(settings.glow ?? 1);
+  if (groups.window) groups.window.set(settings.window ?? 180);
   for (const name of ["scanlines", "grain", "aurora"]) {
-    if (controls[name]) controls[name].checked = !!settings[name];
-  }
-  for (const node of Object.values(controls)) {
-    if (node) node.addEventListener("change", () => save(read()));
+    const box = groups[name];
+    if (box) {
+      box.checked = !!settings[name];
+      box.addEventListener("change", onPick);
+    }
   }
 }

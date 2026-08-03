@@ -86,10 +86,15 @@ async def handle_ui_post(request):
         raise web.HTTPBadRequest(text="expected a JSON object")
     if not isinstance(changes, dict):
         raise web.HTTPBadRequest(text="expected a JSON object")
+    collector = request.app["collector"]
     try:
-        saved = request.app["collector"].config.save_ui(changes)
+        saved = collector.config.save_ui(changes)
     except OSError as exc:
         raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+    # The history window is the one appearance setting with a server-side
+    # effect: it re-lengths the ring buffers the charts read from.
+    if "window" in changes:
+        collector.set_history_window(saved.get("window", 180))
     return web.json_response(saved)
 
 

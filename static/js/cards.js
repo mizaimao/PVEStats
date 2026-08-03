@@ -121,6 +121,7 @@ export function gpuCard(guest) {
   const heroWrap = el("div", "gpu-headline");
   const util = tile("GPU utilization", { hero: true, unit: "%" });
   const vramNow = tile("VRAM in use", { unit: " GiB" });
+  let vramBand = null;
   const pcieRate = tile("PCIe rx/tx MiB/s");
   heroWrap.append(util.el, vramNow.el, pcieRate.el);
 
@@ -133,7 +134,7 @@ export function gpuCard(guest) {
   const spark = new Spark(gpuSeries,
     { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 312,
       xTicks: true, secondsPerSample: 1,
-      caption: "GPU and VRAM, last 10 minutes" });
+      caption: "GPU and VRAM" });
   const gpuLegend = legend(gpuSeries);
 
   const tiles = el("div", "tiles");
@@ -185,6 +186,23 @@ export function gpuCard(guest) {
         fan.set(gpu.fan == null ? "–" : fmt.pct(gpu.fan));
         clock.set(fmt.int(gpu.clock_sm));
         vramNow.set(`${fmt.gib(gpu.vram_used)} / ${fmt.gib(gpu.vram_total)}`);
+
+        // VRAM filling up is the failure that actually bites on this box: a
+        // model that no longer fits gets evicted or spills to host memory.
+        const vramRatio = gpu.vram_total ? gpu.vram_used / gpu.vram_total : 0;
+        const band = vramRatio >= 0.9 ? "critical"
+                   : vramRatio >= 0.8 ? "warning" : "ok";
+        if (band !== vramBand) {
+          vramBand = band;
+          const colour = band === "critical" ? "var(--critical)"
+                       : band === "warning" ? "var(--warning)"
+                       : "var(--series-2)";
+          vramNow.el.classList.toggle("is-critical", band === "critical");
+          vramNow.el.classList.toggle("is-warning", band === "warning");
+          // The VRAM trace changes with it, so the chart agrees with the tile.
+          spark.setSeriesColor(1, colour);
+          gpuLegend.setColor(1, colour);
+        }
         const pcie = gpu.pcie || {};
         // One string, e.g. "1.0 x16". NVIDIA parks the link at Gen1 when idle
         // and renegotiates under load, so a low current generation is normal
@@ -272,7 +290,7 @@ export function nasCard(guest) {
           spark = new Spark(ifSeries, {
             format: fmt.rate, unit: " MiB/s", height: 96, axis: true,
             xTicks: true, secondsPerSample: 5, minScale: 2 * MiB,
-            caption: "Receive throughput, last 10 minutes",
+            caption: "Receive throughput",
           });
           ifSpark.append(spark.el, legend(ifSeries));
         }
@@ -339,7 +357,9 @@ export const nodeCard = (() => {
       const spark = new Spark(
         [{ key: "node.cpu", color: "var(--series-1)", label: "CPU" }],
         { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 84,
-          caption: "Host CPU, last 10 minutes" });
+          // PVE polls every 10s; without this the caption and any time ticks
+          // would read the buffer as one sample per second.
+          xTicks: true, secondsPerSample: 10, caption: "Host CPU" });
 
       const error = el("div", "card-error");
       error.hidden = true;
