@@ -22,6 +22,33 @@ VIRTUAL_NIC = re.compile(r"^(lo|docker|br-|veth|virbr|cni|kube|flannel|tap)")
 # backstop catches a DHCP lease change on a guest that never restarts.
 IP_BACKSTOP_EVERY = 90      # x PVE_INTERVAL = every 15 minutes
 
+# Filesystem usage also comes from the guest agent, one call per guest. It
+# moves slowly, so it refreshes on its own slow cycle.
+FS_REFRESH_EVERY = 30       # x PVE_INTERVAL = every 5 minutes
+
+# Pseudo-filesystems that would otherwise crowd out the real ones.
+SKIP_FS = {"tmpfs", "devtmpfs", "overlay", "squashfs", "efivarfs", "ramfs"}
+
+# PVE proxies disk IO only for storage it manages. A guest with passed-through
+# storage reports a handful of bytes since boot while doing real work, so the
+# counters are worse than useless — they read as an idle disk. Anything under
+# this after an hour of uptime is treated as "not visible to the host".
+DISK_IO_FLOOR = 16 * 1024 ** 2      # 16 MiB since boot
+
+
+def _disk_io_visible(guest):
+    """False when PVE's disk counters are not measuring this guest.
+
+    Storage passed straight through to a guest bypasses the hypervisor, so its
+    counters sit near zero however busy the disk actually is. Plotting that
+    would show a permanently idle disk, which is worse than showing nothing.
+    """
+    uptime = guest.get("uptime") or 0
+    total = (guest.get("diskread") or 0) + (guest.get("diskwrite") or 0)
+    if uptime < 3600:
+        return True         # too early to judge
+    return total >= DISK_IO_FLOOR
+
 
 class PveSource:
     def __init__(self, config, source):
@@ -32,6 +59,8 @@ class PveSource:
         self.ips = {}           # vmid -> [address, ...]
         self.seen_uptime = {}   # vmid -> last uptime, for reboot detection
         self._backstop = 0
+        self.filesystems = {}   # vmid -> {"used": int, "total": int, "mount": str}
+        self._fs_countdown = 0
 
     async def refresh_ips(self, session, guests, headers, base):
         """Ask each running guest's agent for its addresses.
@@ -63,6 +92,42 @@ class PveSource:
                         found.append(address)
             if found:
                 self.ips[vmid] = found
+
+        await asyncio.gather(*(one(g) for g in guests), return_exceptions=True)
+
+    async def refresh_filesystems(self, session, guests, headers, base):
+        """Read in-guest filesystem usage from the agent.
+
+        `/cluster/resources` reports `disk` as 0 for every guest, so the agent
+        is the only source of real usage. Best effort per guest.
+        """
+        async def one(guest):
+            vmid, kind = guest.get("vmid"), guest.get("type", "qemu")
+            if vmid is None or kind != "qemu":
+                return
+            url = f"{base}/nodes/{self.node}/{kind}/{vmid}/agent/get-fsinfo"
+            try:
+                async with session.get(url, headers=headers, ssl=False,
+                                       timeout=PVE_TIMEOUT) as response:
+                    if response.status != 200:
+                        return
+                    payload = (await response.json()).get("data") or {}
+            except Exception:
+                return
+            # The largest real filesystem stands in for "the guest's disk" —
+            # on these guests that is always root.
+            best = None
+            for fs in payload.get("result") or []:
+                total, used = fs.get("total-bytes"), fs.get("used-bytes")
+                if not total or fs.get("type") in SKIP_FS:
+                    continue
+                if best is None or total > best["total"]:
+                    best = {"used": used, "total": total,
+                            "mount": fs.get("mountpoint")}
+            if best:
+                self.filesystems[vmid] = best
+            else:
+                self.filesystems.pop(vmid, None)
 
         await asyncio.gather(*(one(g) for g in guests), return_exceptions=True)
 
@@ -111,10 +176,17 @@ class PveSource:
         if stale:
             await self.refresh_ips(session, stale, headers, base)
 
+        self._fs_countdown -= 1
+        if self._fs_countdown <= 0:
+            await self.refresh_filesystems(session, running_raw, headers, base)
+            self._fs_countdown = FS_REFRESH_EVERY
+
         # Forget guests that are no longer running, so a later start re-reads.
         live_ids = {g.get("vmid") for g in running_raw}
         for gone in [v for v in self.ips if v not in live_ids]:
             del self.ips[gone]
+        for gone in [v for v in self.filesystems if v not in live_ids]:
+            del self.filesystems[gone]
 
         now = time.monotonic()
         guests = {}
@@ -139,6 +211,9 @@ class PveSource:
                 "memhost": guest.get("memhost"),
                 "view": self.config.view_for(vmid),
                 "addresses": self.ips.get(vmid) or [],
+                "filesystem": self.filesystems.get(vmid),
+                # Whether the host can actually see this guest's disk traffic.
+                "disk_io_visible": _disk_io_visible(guest),
                 # Cumulative counters converted to bytes/sec. None until the
                 # second poll, since a rate needs two samples.
                 "net_in_bps": self.rates.rate(f"{key}.netin", guest.get("netin"), now),

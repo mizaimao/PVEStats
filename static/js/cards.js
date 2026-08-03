@@ -1,6 +1,7 @@
 import { fmt, GiB, MiB } from "./format.js";
 import { el, svgEl } from "./dom.js";
-import { tile, meter, arcGauge, Spark, legend, dataTable } from "./widgets.js";
+import { tile, meter, arcGauge, Spark, legend, dataTable, statPair, statLine }
+  from "./widgets.js";
 
 /* ---------------- cards ---------------- */
 
@@ -54,6 +55,38 @@ export function applyStale(shell, status) {
   }
 }
 
+/* Third row shared by every guest card except the NAS, whose own card reads
+   these from inside TrueNAS instead. */
+function ioRow({ diskIo = true } = {}) {
+  const root = el("div", "trio");
+  const disk = diskIo ? statPair("Disk IO", "read", "write", "MiB/s") : null;
+  const net = statPair("Network", "in", "out", "MiB/s");
+  const usage = statLine("Disk usage");
+  if (disk) root.appendChild(disk.el);
+  root.append(net.el, usage.el);
+
+  return {
+    el: root,
+    update(g) {
+      if (disk) {
+        // Storage passed through to a guest bypasses the hypervisor, so its
+        // counters sit near zero however busy the disk is. Drop the panel
+        // rather than show numbers that mean nothing.
+        const usable = g.disk_io_visible !== false;
+        disk.el.hidden = !usable;
+        if (usable) disk.set(fmt.rate(g.disk_read_bps), fmt.rate(g.disk_write_bps));
+      }
+      net.set(fmt.rate(g.net_in_bps), fmt.rate(g.net_out_bps));
+
+      const fs = g.filesystem;
+      usage.set(fs
+        ? `${Math.round((fs.used / fs.total) * 100)}% · `
+          + `${fmt.gib(fs.used)} / ${fmt.gib(fs.total)} GiB`
+        : "no guest agent");
+    },
+  };
+}
+
 /* --- 4.4 basic guest --- */
 
 export function basicCard(guest) {
@@ -62,7 +95,8 @@ export function basicCard(guest) {
   // the two metrics read the same way.
   const cpu = meter("CPU");
   const mem = meter("Memory");
-  shell.el.append(cpu.el, mem.el);
+  const io = ioRow();
+  shell.el.append(cpu.el, mem.el, io.el);
 
   return {
     el: shell.el,
@@ -72,6 +106,7 @@ export function basicCard(guest) {
       cpu.set(g.cpu_pct || 0, 100, `${fmt.pct(g.cpu_pct)}%`);
       mem.set(g.mem, g.maxmem,
         `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
+      io.update(g);
       applyStale(shell, status);
     },
   };
@@ -114,6 +149,9 @@ export function gpuCard(guest) {
   const cpu = meter("CPU");
   const mem = meter("Memory");
   usage.append(cpu.el, mem.el);
+  // ml60's storage is passed through, so the hypervisor never sees its disk
+  // traffic — the panel would only ever read zero.
+  const io = ioRow({ diskIo: false });
 
   const models = dataTable("Loaded models", [
     { label: "Model" }, { label: "VRAM", num: true }, { label: "Unloads in", num: true },
@@ -125,7 +163,7 @@ export function gpuCard(guest) {
   tiles.classList.add("after-chart");
   models.el.classList.add("divided");
   procs.el.classList.add("divided");
-  shell.el.append(heroWrap, spark.el, gpuLegend, tiles, usage,
+  shell.el.append(heroWrap, spark.el, gpuLegend, tiles, usage, io.el,
                   models.el, procs.el);
 
   return {
@@ -137,6 +175,7 @@ export function gpuCard(guest) {
       setSub(shell, [`vmid ${g.vmid}`, "GPU", (g.addresses || [])[0],
                      `up ${fmt.uptime(g.uptime)}`]);
       mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
+      io.update(g);
 
       const gpu = g.gpu;
       if (gpu) {
