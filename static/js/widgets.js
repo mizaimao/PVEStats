@@ -41,6 +41,7 @@ export function meter(label, { graded = false, compact = false } = {}) {
   // Explicit zero: an unset width on a block element renders as a full bar,
   // so a source with no data yet would read as 100%.
   fill.style.width = "0%";
+  fill.appendChild(el("i"));      // clipped sweep layer; see .meter > span > i
   track.appendChild(fill);
   root.append(track);
   let lastBand = null;
@@ -289,12 +290,16 @@ export class Spark {
       });
       const stopFrom = svgEl("stop", {
         offset: "0", "stop-color": s.color, "stop-opacity": "0" });
+      // Brightens toward the leading end so "now" is the hottest point.
       const stopTo = svgEl("stop", {
-        offset: "1", "stop-color": s.color, "stop-opacity": "1" });
+        offset: "1", "stop-color": "var(--ink)", "stop-opacity": "0.75" });
       gradient.append(stopFrom, stopTo);
       defs.appendChild(gradient);
+      // Same 2px weight as the line: a fatter comet made the trace visibly
+      // thicker for its last stretch, which read as a rendering fault rather
+      // than emphasis. The gradient and the glow carry it instead.
       const comet = svgEl("path", {
-        fill: "none", stroke: `url(#${gradientId})`, "stroke-width": "3.5",
+        fill: "none", stroke: `url(#${gradientId})`, "stroke-width": "2",
         "stroke-linecap": "round", "stroke-linejoin": "round",
         class: "glowable", style: `color: ${s.color}`,
       });
