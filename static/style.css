@@ -49,6 +49,24 @@ body {
   color: var(--ink-2);
 }
 .sources { display: flex; gap: 14px; flex-wrap: wrap; }
+
+/* Settings placeholder — present so the layout is settled, inert until it
+   does something. */
+.settings {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.settings:hover { color: var(--ink-2); border-color: var(--baseline); }
+.settings:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
 .src {
   display: inline-flex;
   align-items: center;

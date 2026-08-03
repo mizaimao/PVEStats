@@ -184,8 +184,12 @@ class Spark {
     }).observe(this.el);
   }
 
-  update(history) {
+  update(history, capacity) {
     this.data = this.series.map(s => (history && history[s.key]) || []);
+    // The x-axis spans the buffer's full capacity, not the samples collected
+    // so far. Without this the line stretches as history accumulates and the
+    // same reading appears to move.
+    if (capacity) this.capacity = capacity;
     this.draw();
   }
 
@@ -221,11 +225,18 @@ class Spark {
         dot.setAttribute("r", "0");
         return;
       }
-      const step = w / (values.length - 1);
+      // Fixed step across the buffer's capacity, with the newest sample pinned
+      // to the right edge, so the trace fills in from the right and then
+      // scrolls rather than stretching.
+      const span = Math.max(this.capacity || values.length, values.length);
+      const step = w / (span - 1);
+      const x0 = w - (values.length - 1) * step;
       const y = v => h - pad - (v / max) * (h - pad * 2);
-      const points = values.map((v, j) => `${(j * step).toFixed(1)},${y(v).toFixed(1)}`);
+      const points = values.map((v, j) =>
+        `${(x0 + j * step).toFixed(1)},${y(v).toFixed(1)}`);
       line.setAttribute("points", points.join(" "));
-      area.setAttribute("d", `M0,${h} L${points.join(" L")} L${w},${h} Z`);
+      area.setAttribute("d",
+        `M${x0.toFixed(1)},${h} L${points.join(" L")} L${w},${h} Z`);
       dot.setAttribute("r", "4");
       dot.setAttribute("cx", w.toFixed(1));
       dot.setAttribute("cy", y(values[values.length - 1]).toFixed(1));
@@ -408,7 +419,7 @@ function gpuCard(guest) {
         procs.set((gpu.procs || []).map(p => [
           p.name || "?", String(p.pid), p.vram == null ? "–" : `${fmt.gib(p.vram)} GiB`,
         ]));
-        spark.update(history.agent);
+        spark.update(history.agent, g.gpu_status && g.gpu_status.capacity);
       } else {
         // Agent unreachable. Clear its panels explicitly rather than leaving
         // whatever was last drawn — the card must not imply live readings.
@@ -473,7 +484,7 @@ function nasCard(guest) {
           });
           ifSpark.append(spark.el, legend(ifSeries));
         }
-        if (spark) spark.update(history.truenas);
+        if (spark) spark.update(history.truenas, g.nas_status && g.nas_status.capacity);
 
         ifTable.set(names.map(n => [
           n, fmt.rate(nas.interfaces[n].rx_bps), fmt.rate(nas.interfaces[n].tx_bps),
@@ -539,7 +550,7 @@ const nodeCard = (() => {
     built.guests.set(`${node.guests_running} / ${node.guests_total}`);
     built.mem.set(node.mem, node.maxmem,
       `${fmt.gib(node.mem)} / ${fmt.gib(node.maxmem)} GiB`);
-    built.spark.update(history);
+    built.spark.update(history, status && status.capacity);
     applyStale({ el: root, error: built.error }, status);
   };
 })();

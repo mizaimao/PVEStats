@@ -25,7 +25,18 @@ async def main():
     runner = web.AppRunner(build_app(collector), access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, HOST, config.port)
-    await site.start()
+    try:
+        await site.start()
+    except OSError as exc:
+        # Usually an instance already running. A bare traceback here sends
+        # people looking for a bug that is not there.
+        await runner.cleanup()
+        await collector.stop()
+        raise SystemExit(
+            f"Cannot bind {HOST}:{config.port} — {exc.strerror or exc}.\n"
+            f"PVEStats may already be running. Check with:\n"
+            f"  lsof -nP -iTCP:{config.port} -sTCP:LISTEN"
+        )
 
     # flush=True so the banner appears immediately even when redirected to a
     # log rather than a terminal.

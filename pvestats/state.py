@@ -56,6 +56,9 @@ class Source:
             "error": self.error,
             "age": self.age,
             "interval": self.interval,
+            # Ring-buffer length, so the page can hold the x-axis fixed instead
+            # of rescaling as samples accumulate.
+            "capacity": self.maxlen,
             # True once a source has gone missing for more than two polls.
             "stale": self.updated_at is not None
             and (time.monotonic() - self.updated_at) > self.interval * 2,
