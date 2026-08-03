@@ -6,7 +6,9 @@
  */
 
 const KEY = "pvestats.theme";
-const THEMES = new Set(["midnight", "neon", "amber", "nord"]);
+const DEFAULT = "ice";
+const THEMES = new Set(["midnight", "neon", "amber", "synthwave",
+                        "matrix", "ice", "ember", "nord"]);
 
 export function currentTheme() {
   try {
@@ -15,14 +17,14 @@ export function currentTheme() {
   } catch {
     // Private mode or storage disabled — fall through to the default.
   }
-  return "midnight";
+  return DEFAULT;
 }
 
 export function applyTheme(name) {
-  const theme = THEMES.has(name) ? name : "midnight";
-  // midnight is the :root default, so it needs no attribute.
-  if (theme === "midnight") delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
+  const theme = THEMES.has(name) ? name : DEFAULT;
+  // Always stamped, including midnight — :root carries midnight's values, so
+  // the attribute is a no-op there but keeps the select and the DOM in step.
+  document.documentElement.dataset.theme = theme;
   try {
     localStorage.setItem(KEY, theme);
   } catch {
