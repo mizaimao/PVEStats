@@ -1,0 +1,401 @@
+import { fmt, severity, GiB, MiB } from "./format.js";
+import { el, svgEl } from "./dom.js";
+
+/* ---------------- stat tile ---------------- */
+
+export function tile(label, { hero = false, unit = "" } = {}) {
+  const root = el("div", hero ? "tile hero" : "tile");
+  const value = el("div", "value");
+  const number = document.createTextNode("–");
+  value.appendChild(number);
+  if (unit) {
+    const u = el("span", "unit", unit);
+    value.appendChild(u);
+  }
+  const caption = el("div", "label", label);
+  root.append(caption, value);
+  return {
+    el: root,
+    set: v => { number.nodeValue = v; },
+    setLabel: text => { caption.textContent = text; },
+  };
+}
+
+/* ---------------- meter ---------------- */
+
+/* `graded` opts into severity colouring. Off by default and deliberately not
+   used for guest memory: PVE reports cache and balloon inside `mem`, so a
+   healthy guest routinely sits above 90% and a red bar there would be crying
+   wolf. ZFS pool capacity is graded, where >80% is a real concern. */
+export function meter(label, { graded = false, compact = false } = {}) {
+  const root = el("div", compact ? "meter-row is-compact" : "meter-row");
+  const readout = el("b", null, "–");
+  if (!compact) {
+    const caption = el("div", "caption");
+    caption.append(el("span", null, label), readout);
+    root.append(caption);
+  }
+  const track = el("div", "meter");
+  const fill = el("span");
+  // Explicit zero: an unset width on a block element renders as a full bar,
+  // so a source with no data yet would read as 100%.
+  fill.style.width = "0%";
+  track.appendChild(fill);
+  root.append(track);
+  return {
+    el: root,
+    set(used, total, text) {
+      const ratio = total ? Math.min(1, used / total) : 0;
+      track.style.setProperty("--meter-color",
+        graded ? severity(total ? used / total : null) : "var(--series-1)");
+      fill.style.width = `${(ratio * 100).toFixed(1)}%`;
+      readout.textContent = text;
+    },
+  };
+}
+
+/* ---------------- arc gauge ----------------
+ * A 270-degree arc, open at the bottom. `nested` adds a second inner ring so
+ * one glyph can carry two ratios — CPU outside, memory inside.
+ *
+ * Worth knowing: arcs are harder to compare across cards than aligned bars,
+ * because there is no shared baseline. Fine for a single prominent value,
+ * weaker for scanning a grid.
+ */
+
+export const ARC_SWEEP = 0.75;   // 270 of 360 degrees
+
+export function arcRing(svg, radius, width, colour) {
+  const circumference = 2 * Math.PI * radius;
+  const common = {
+    cx: 50, cy: 50, r: radius, fill: "none", "stroke-width": width,
+    "stroke-linecap": "round", transform: "rotate(135 50 50)",
+  };
+  const track = svgEl("circle", {
+    ...common,
+    stroke: `color-mix(in oklab, ${colour} 22%, var(--surface))`,
+    "stroke-dasharray": `${circumference * ARC_SWEEP} ${circumference}`,
+  });
+  const fill = svgEl("circle", {
+    ...common, stroke: colour, "stroke-dasharray": `0 ${circumference}`,
+    // Butt, not round: a round cap paints a full-width dot even at near-zero
+    // length, so an idle guest at 0.3% grew a blob that read as a real value.
+    // Square at the origin is also the correct treatment for a value scale.
+    "stroke-linecap": "butt",
+  });
+  svg.append(track, fill);
+  return value => fill.setAttribute(
+    "stroke-dasharray",
+    `${circumference * ARC_SWEEP * Math.max(0, Math.min(1, value || 0))} ${circumference}`);
+}
+
+export function arcGauge(label, { nested = false, sublabel = "" } = {}) {
+  const root = el("div", nested ? "arc is-nested" : "arc");
+  const svg = svgEl("svg", { viewBox: "0 0 100 100" });
+  root.appendChild(svg);
+
+  const outer = arcRing(svg, 41, 8, "var(--series-1)");
+  const inner = nested ? arcRing(svg, 29, 7, "var(--series-2)") : null;
+
+  const centre = el("div", "arc-centre");
+  const value = el("div", "arc-value", "–");
+  const caption = el("div", "arc-label", label);
+  centre.append(value, caption);
+  root.appendChild(centre);
+
+  const foot = el("div", "arc-foot", sublabel);
+  if (sublabel || nested) root.appendChild(foot);
+
+  return {
+    el: root,
+    set(ratio, text, innerRatio, footText) {
+      outer(ratio);
+      if (inner) inner(innerRatio);
+      value.textContent = text;
+      if (footText != null) foot.textContent = footText;
+    },
+  };
+}
+
+/* ---------------- sparkline ----------------
+ * Rendered in real pixel coordinates rather than a stretched viewBox, so the
+ * 2px stroke and the end dot stay circular at any width.
+ */
+
+export class Spark {
+  /* `domain` fixes the y-scale. Percentages get [0, 100] — auto-scaling a
+     percentage makes a host idling at 2% look like it is thrashing, and with
+     no y-axis on a sparkline the reader has no way to tell. Series with no
+     natural ceiling (throughput) auto-scale and print their peak instead, so
+     the scale is still readable. */
+  constructor(series, { height = 38, format = fmt.pct, unit = "",
+                        domain = null, caption = "", axis = false,
+                        xTicks = false, secondsPerSample = 1,
+                        minScale = 0 } = {}) {
+    this.series = series;                 // [{key, color, label}]
+    this.height = height;
+    this.format = format;
+    this.unit = unit;
+    this.domain = domain;
+    this.axis = axis;
+    // Floor for the auto-scale. Without it an idle series collapses to a
+    // 1-byte range and both axis labels round to the same "0.0".
+    this.minScale = minScale;
+    // Right-hand gutter reserved for axis labels, sized to the unit — a fixed
+    // 46px clipped " MiB/s" to " MiB/".
+    this.gutter = axis ? 44 + unit.length * 4 : 0;
+    this.xTicks = xTicks;
+    this.secondsPerSample = secondsPerSample;
+    // Room under the plot for the time labels.
+    this.footer = xTicks ? 15 : 0;
+    this.width = 240;
+    this.data = [];
+
+    this.el = el("div", "spark");
+
+    // Caption and peak sit above the plot, never over it — a label drawn on
+    // top of the data is unreadable the moment the series climbs.
+    this.head = el("div", "spark-head");
+    this.peak = el("span", "peak");
+    this.head.append(el("span", null, caption), this.peak);
+    if (caption || !domain) this.el.appendChild(this.head);
+
+    this.svg = svgEl("svg", { preserveAspectRatio: "none" });
+    this.el.appendChild(this.svg);
+
+    // Hairline, solid, recessive — and only where the scale is fixed, so the
+    // reader can see that a flat line near the floor means genuinely idle
+    // rather than a broken chart.
+    // Gridlines mark the midpoint and the ceiling of a fixed domain, with
+    // labels when `axis` is on — otherwise a flat trace is unreadable, since
+    // nothing says what the height means.
+    this.gridFractions = [0.5, 1];
+    // Gridlines whenever an axis is wanted, not only for fixed domains — an
+    // auto-scaled throughput chart is just as unreadable without them.
+    this.gridlines = (domain || axis)
+      ? this.gridFractions.map(() => {
+          const line = svgEl("line", { stroke: "var(--grid)", "stroke-width": "1" });
+          this.svg.appendChild(line);
+          return line;
+        })
+      : [];
+    this.axisLabels = axis
+      ? this.gridFractions.map(() => {
+          const text = svgEl("text", {
+            "text-anchor": "start", "dominant-baseline": "middle",
+            fill: "var(--ink-muted)", "font-size": "10",
+          });
+          this.svg.appendChild(text);
+          return text;
+        })
+      : [];
+
+    // Vertical time ticks. Built lazily on first draw, since how many there
+    // are depends on the buffer capacity the server reports.
+    this.xTickNodes = [];
+
+    this.parts = series.map(s => {
+      // Taller charts cover far more area, so the same opacity reads as a
+      // solid block rather than a wash.
+      const area = svgEl("path", {
+        fill: s.color, "fill-opacity": height > 60 ? "0.06" : "0.10",
+      });
+      const line = svgEl("polyline", {
+        fill: "none", stroke: s.color, "stroke-width": "2",
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+      });
+      // 2px ring in the surface colour keeps the end dot legible where it
+      // crosses another line.
+      const dot = svgEl("circle", {
+        r: "4", fill: s.color, stroke: "var(--surface)", "stroke-width": "2",
+      });
+      this.svg.append(area, line, dot);
+      return { area, line, dot };
+    });
+
+    this.tip = el("div", "tip");
+    this.el.appendChild(this.tip);
+    this.svg.addEventListener("mousemove", e => this.hover(e));
+
+    new ResizeObserver(entries => {
+      const w = Math.max(40, Math.round(entries[0].contentRect.width));
+      if (w !== this.width) { this.width = w; this.draw(); }
+    }).observe(this.el);
+  }
+
+  update(history, capacity) {
+    this.data = this.series.map(s => (history && history[s.key]) || []);
+    // The x-axis spans the buffer's full capacity, not the samples collected
+    // so far. Without this the line stretches as history accumulates and the
+    // same reading appears to move.
+    if (capacity) this.capacity = capacity;
+    this.draw();
+  }
+
+  scale() {
+    if (this.domain) return this.domain[1];
+    let max = 0;
+    for (const values of this.data) for (const v of values) if (v > max) max = v;
+    return Math.max(max, this.minScale) || 1;
+  }
+
+  draw() {
+    const h = this.height;
+    const w = this.width;
+    const plot = Math.max(20, w - this.gutter);   // trace area, minus axis gutter
+    const body = h - this.footer;                 // plot area, minus time labels
+    this.svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    this.svg.setAttribute("height", h);
+    const max = this.scale();
+    const pad = 3;
+    this.drawTimeTicks(plot, body, h);
+    // The peak duplicates the topmost axis label, so only show it when there
+    // is no axis to read the scale from.
+    if (!this.domain && !this.axis) {
+      this.peak.textContent = `peak ${this.format(max)}${this.unit}`;
+    }
+    this.gridlines.forEach((line, i) => {
+      const frac = this.gridFractions[i];
+      const y = (body - pad - frac * (body - pad * 2)).toFixed(1);
+      line.setAttribute("x1", 0); line.setAttribute("x2", plot);
+      line.setAttribute("y1", y); line.setAttribute("y2", y);
+      const text = this.axisLabels[i];
+      if (text) {
+        text.setAttribute("x", plot + 6);
+        // Keep the label inside the box — the topmost gridline sits at y=pad,
+        // and a centred label there is half clipped by the svg edge.
+        text.setAttribute("y", Math.min(Math.max(+y, 7), body - 5));
+        text.textContent = `${this.format(max * frac)}${this.unit}`;
+      }
+    });
+
+    this.data.forEach((values, i) => {
+      const { area, line, dot } = this.parts[i];
+      if (values.length < 2) {
+        line.setAttribute("points", "");
+        area.setAttribute("d", "");
+        dot.setAttribute("r", "0");
+        return;
+      }
+      // Fixed step across the buffer's capacity, with the newest sample pinned
+      // to the right edge, so the trace fills in from the right and then
+      // scrolls rather than stretching.
+      const span = Math.max(this.capacity || values.length, values.length);
+      const step = plot / (span - 1);
+      const x0 = plot - (values.length - 1) * step;
+      const y = v => body - pad - (v / max) * (body - pad * 2);
+      const points = values.map((v, j) =>
+        `${(x0 + j * step).toFixed(1)},${y(v).toFixed(1)}`);
+      line.setAttribute("points", points.join(" "));
+      area.setAttribute("d",
+        `M${x0.toFixed(1)},${body} L${points.join(" L")} L${plot.toFixed(1)},${body} Z`);
+      dot.setAttribute("r", "4");
+      dot.setAttribute("cx", plot.toFixed(1));
+      dot.setAttribute("cy", y(values[values.length - 1]).toFixed(1));
+    });
+  }
+
+  /* Time ticks along the bottom: the x-axis spans the whole ring buffer, so
+     the span is capacity x sample interval. Without these a flat trace gives
+     no sense of how far back it reaches. */
+  drawTimeTicks(plot, body, h) {
+    if (!this.xTicks || !this.capacity) return;
+    const spanMin = (this.capacity * this.secondsPerSample) / 60;
+    const step = spanMin <= 5 ? 1 : spanMin <= 15 ? 2 : 5;
+    const marks = [];
+    for (let t = 0; t <= spanMin + 0.001; t += step) marks.push(t);
+
+    while (this.xTickNodes.length < marks.length) {
+      const line = svgEl("line", { stroke: "var(--grid)", "stroke-width": "1" });
+      const text = svgEl("text", {
+        "text-anchor": "middle", fill: "var(--ink-muted)", "font-size": "10",
+      });
+      // Behind the data: inserted before the series parts.
+      this.svg.insertBefore(line, this.svg.firstChild);
+      this.svg.appendChild(text);
+      this.xTickNodes.push({ line, text });
+    }
+    this.xTickNodes.forEach((node, i) => {
+      if (i >= marks.length) {
+        node.line.setAttribute("stroke-opacity", "0");
+        node.text.textContent = "";
+        return;
+      }
+      const minutesAgo = marks[i];
+      const x = plot * (1 - minutesAgo / spanMin);
+      node.line.setAttribute("stroke-opacity", "1");
+      node.line.setAttribute("x1", x.toFixed(1));
+      node.line.setAttribute("x2", x.toFixed(1));
+      node.line.setAttribute("y1", 0);
+      node.line.setAttribute("y2", body);
+      node.text.setAttribute("x", Math.min(Math.max(x, 12), plot - 8).toFixed(1));
+      node.text.setAttribute("y", h - 3);
+      node.text.textContent = minutesAgo === 0 ? "now" : `-${minutesAgo}m`;
+    });
+  }
+
+  /* Hover enhances; it never gates a value — the current reading is always
+     printed in the tile beside the sparkline. */
+  hover(event) {
+    const values = this.data[0] || [];
+    if (values.length < 2) { this.tip.style.opacity = 0; return; }
+    const rect = this.svg.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    const index = Math.max(0, Math.min(values.length - 1,
+      Math.round(ratio * (values.length - 1))));
+    const parts = this.data
+      .map((s, i) => `${this.series[i].label}: ${this.format(s[index])}${this.unit}`)
+      .join("  ");
+    const secondsAgo = values.length - 1 - index;
+    this.tip.textContent = secondsAgo ? `${parts}  ·  ${secondsAgo} samples ago` : parts;
+    this.tip.style.left = `${ratio * 100}%`;
+  }
+}
+
+export function legend(series) {
+  const root = el("div", "legend");
+  for (const s of series) {
+    const item = el("span");
+    const swatch = el("i");
+    swatch.style.background = s.color;
+    item.append(swatch, document.createTextNode(s.label));
+    root.appendChild(item);
+  }
+  return root;
+}
+
+/* ---------------- table ---------------- */
+
+export function dataTable(caption, columns) {
+  const table = el("table", "data");
+  table.appendChild(el("caption", null, caption));
+  const head = el("tr");
+  for (const c of columns) head.appendChild(el("th", c.num ? "num" : null, c.label));
+  const thead = document.createElement("thead");
+  thead.appendChild(head);
+  const tbody = document.createElement("tbody");
+  table.append(thead, tbody);
+  return {
+    el: table,
+    set(rows) {
+      tbody.textContent = "";
+      if (!rows.length) {
+        const tr = el("tr");
+        const td = el("td", "empty", "none");
+        td.colSpan = columns.length;
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+      for (const row of rows) {
+        const tr = el("tr");
+        row.forEach((cell, i) => {
+          const td = el("td", columns[i].num ? "num" : "name");
+          if (cell instanceof Node) td.appendChild(cell); else td.textContent = cell;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+    },
+  };
+}
