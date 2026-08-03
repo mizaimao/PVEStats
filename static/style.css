@@ -115,7 +115,51 @@ body {
   word-break: break-word;
 }
 
-.card-node { margin-bottom: var(--gap); }
+/* Half width — the host card carries fewer panels than the feature cards and
+   was stretching to fill space it did not need. */
+.card-node {
+  margin-bottom: var(--gap);
+  width: 100%;
+  max-width: calc(50% - var(--gap) / 2);
+}
+@media (max-width: 1100px) {
+  .card-node { max-width: 100%; }
+}
+
+/* ---------- arc gauge ---------- */
+
+.arc-row {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.arc {
+  position: relative;
+  width: 108px;
+  flex: none;
+}
+.arc svg { display: block; width: 100%; height: auto; }
+.arc-centre {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.arc-value { font-size: 19px; font-weight: 600; line-height: 1.1; }
+.arc-label { font-size: 10px; color: var(--ink-muted); margin-top: 1px; }
+.arc-foot {
+  font-size: 10px;
+  color: var(--ink-muted);
+  text-align: center;
+  margin-top: 2px;
+}
+.arc.is-nested { width: 128px; }
+.arc.is-nested .arc-value { font-size: 16px; }
 .feature {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
@@ -193,7 +237,9 @@ body {
 /* ---------- sparkline ---------- */
 
 .spark { position: relative; margin-top: 8px; }
-.spark svg { display: block; width: 100%; height: 38px; }
+/* Height comes from the element's own attribute, set per chart in JS — a fixed
+   height here would override the taller labelled charts. */
+.spark svg { display: block; width: 100%; }
 /* Caption and peak sit above the plot. Auto-scaled sparklines print their
    peak so the scale is readable without a y-axis; fixed-domain ones show
    gridlines instead. */
@@ -311,33 +357,6 @@ table.data .name { color: var(--ink); }
 }
 .demo-card .caption b { color: var(--ink-2); font-weight: 500; }
 .demo-note { font-size: 10px; color: var(--baseline); margin-top: 6px; }
-
-.seg { display: flex; gap: 3px; }
-.seg i {
-  flex: 1; height: 10px; border-radius: 2px;
-  background: color-mix(in oklab, var(--series-1) 20%, var(--surface));
-}
-.seg i.on { background: var(--series-1); }
-
-.waffle { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; }
-.waffle i {
-  aspect-ratio: 1; border-radius: 2px;
-  background: color-mix(in oklab, var(--series-1) 18%, var(--surface));
-}
-.waffle i.on { background: var(--series-1); }
-
-.bullet {
-  position: relative; height: 12px; border-radius: 3px;
-  background: color-mix(in oklab, var(--series-1) 16%, var(--surface));
-}
-.bullet .fill {
-  position: absolute; inset: 3px auto 3px 0;
-  background: var(--series-1); border-radius: 0 3px 3px 0;
-}
-.bullet .mark {
-  position: absolute; top: -2px; bottom: -2px; width: 2px;
-  background: var(--ink-2);
-}
 
 /* ---------- settings panel (inert placeholder) ---------- */
 

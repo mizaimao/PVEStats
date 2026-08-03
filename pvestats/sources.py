@@ -226,6 +226,7 @@ class TrueNasSource:
         self.ws = None
         self.counter = 0
         self.identifiers = {}   # graph name -> [identifier, ...]
+        self.nics = {}          # interface name -> {role, media, addresses}
 
     async def call(self, method, params):
         self.counter += 1
@@ -259,6 +260,28 @@ class TrueNasSource:
         self.identifiers = {g["name"]: g.get("identifiers") or []
                             for g in graphs if g.get("name") in ("disk", "interface")}
 
+        # Interface roles, derived rather than hardcoded by name. Proxmox
+        # stamps BC:24:11 on the virtio NICs it creates; a passed-through card
+        # reports a real media subtype ("2500Mb/s Twisted Pair") where virtio
+        # reports "Unknown Other".
+        self.nics = {}
+        for iface in await self.call("interface.query", []):
+            state = iface.get("state") or {}
+            mac = (state.get("hardware_link_address") or "").upper()
+            media = state.get("active_media_subtype") or ""
+            if mac.startswith("BC:24:11"):
+                role = "virtual"
+            elif media and media.lower() != "unknown other":
+                role = "physical"
+            else:
+                role = "unknown"
+            self.nics[iface.get("name")] = {
+                "role": role,
+                "media": media,
+                "addresses": [a.get("address") for a in (state.get("aliases") or [])
+                              if a.get("type") == "INET"],
+            }
+
     async def poll(self, session):
         if self.ws is None or self.ws.closed:
             await self.connect(session)
@@ -284,7 +307,8 @@ class TrueNasSource:
             if entry.get("name") == "interface":
                 # netdata reports Kilobits/s; normalise to bytes/sec.
                 interfaces[label] = {"rx_bps": latest[1] * 125,
-                                     "tx_bps": latest[2] * 125}
+                                     "tx_bps": latest[2] * 125,
+                                     **(self.nics.get(label) or {})}
             else:
                 # netdata reports Kibibytes/s; normalise to bytes/sec.
                 disks[label] = {"read_bps": latest[1] * 1024,
