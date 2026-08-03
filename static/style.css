@@ -101,10 +101,14 @@ body {
   letter-spacing: 0.01em;
 }
 .card .sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
   font-size: 11px;
   color: var(--ink-muted);
   margin-bottom: 12px;
 }
+.card .sub .sep { color: var(--baseline); }
 
 /* A source that has gone quiet recedes; it never blanks (spec §2, §7). */
 .card.is-stale { opacity: 0.55; }
