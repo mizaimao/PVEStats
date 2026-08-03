@@ -129,8 +129,9 @@ def rounded(image, radius_ratio=0.225):
 def build_icns(out_path, value=0.28, ticks=9):
     """Write a macOS .icns, rendering each size natively rather than resampling.
 
-    macOS icons sit inset in their canvas — the squircle covers about 80% —
-    so the icon matches its Dock neighbours instead of looming over them.
+    macOS icons sit inset in their canvas. Measured against Terminal, Notes and
+    Chrome, the artwork occupies 214/256 = 83.6% — not the 80% often quoted.
+    Anything smaller reads as a slightly undersized icon in the Dock.
     """
     import shutil
     import subprocess
@@ -144,7 +145,7 @@ def build_icns(out_path, value=0.28, ticks=9):
         iconset = Path(tmp) / "AppIcon.iconset"
         iconset.mkdir()
         for px, name in entries:
-            inner = max(1, round(px * 0.80))
+            inner = max(1, round(px * 0.836))
             art = rounded(draw_icon(inner, value, ticks))
             canvas = Image.new("RGBA", (px, px), (0, 0, 0, 0))
             offset = (px - inner) // 2

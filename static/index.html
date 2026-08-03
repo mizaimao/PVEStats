@@ -11,19 +11,76 @@
 <header class="topbar">
   <h1>PVEStats</h1>
   <div class="sources" id="sources"></div>
-  <!-- Placeholder. Deliberately inert until there is something to configure. -->
+  <!-- Icon: Lucide (https://lucide.dev), ISC licensed. Inlined rather than
+       loaded from a CDN — the page has no network access beyond localhost. -->
   <button type="button" class="settings" id="settings"
-          aria-label="Settings" title="Settings — not wired up yet">
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor"
-              stroke-width="1.8"/>
-      <path fill="none" stroke="currentColor" stroke-width="1.8"
-            stroke-linecap="round" stroke-linejoin="round"
-            d="M12 2.6v2.2M12 19.2v2.2M21.4 12h-2.2M4.8 12H2.6
-               M18.6 5.4l-1.6 1.6M7 17l-1.6 1.6M18.6 18.6L17 17M7 7L5.4 5.4"/>
+          aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">
+    <svg class="lucide" viewBox="0 0 24 24" width="16" height="16"
+         fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/>
+      <circle cx="12" cy="12" r="3"/>
     </svg>
   </button>
 </header>
+
+<!-- Nothing here is wired up yet; every control is disabled on purpose. -->
+<div class="panel" id="settings-panel" hidden>
+  <div class="panel-head">
+    <h2>Settings</h2>
+    <button type="button" class="icon-btn" id="settings-close" aria-label="Close">
+      <svg class="lucide" viewBox="0 0 24 24" width="16" height="16"
+           fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+      </svg>
+    </button>
+  </div>
+
+  <p class="panel-note">Not wired up yet — these show the intended controls and
+    which of them a source can actually honour.</p>
+
+  <div class="setting">
+    <label for="set-page">Page refresh</label>
+    <select id="set-page" disabled><option>1s</option></select>
+    <span class="applies ok">Applies</span>
+    <p>How often the page re-reads collected state. Local only; no source is
+      polled by changing this.</p>
+  </div>
+
+  <div class="setting">
+    <label for="set-agent">ml60 GPU agent</label>
+    <select id="set-agent" disabled><option>1s</option></select>
+    <span class="applies ok">Applies</span>
+    <p>NVML reads take microseconds, so this is genuinely real-time and can be
+      raised or lowered freely.</p>
+  </div>
+
+  <div class="setting">
+    <label for="set-truenas">TrueNAS</label>
+    <select id="set-truenas" disabled><option>5s</option></select>
+    <span class="applies ok">Applies</span>
+    <p>Netdata keeps per-second samples, so a faster poll returns real data.
+      Each poll is a round trip over the WebSocket.</p>
+  </div>
+
+  <div class="setting">
+    <label for="set-pve">Proxmox VE</label>
+    <select id="set-pve" disabled><option>10s</option></select>
+    <span class="applies capped">Floor 10s</span>
+    <p>Ignored below 10s. <code>pvestatd</code> recomputes guest statistics on
+      its own 10s cycle, so polling faster returns the same numbers and only
+      adds load and log lines. A hard property of PVE, not a preference.</p>
+  </div>
+
+  <div class="setting">
+    <label>History window</label>
+    <select disabled><option>10 minutes</option></select>
+    <span class="applies ok">Applies</span>
+    <p>Length of the in-memory ring buffers behind the sparklines. Memory only,
+      discarded on restart.</p>
+  </div>
+</div>
 
 <main>
   <section id="node-card" class="card card-node" hidden></section>
