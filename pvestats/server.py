@@ -68,6 +68,31 @@ async def handle_history(request):
     )
 
 
+async def handle_ui_get(request):
+    return web.json_response(request.app["collector"].config.ui(),
+                             headers={"Cache-Control": "no-store"})
+
+
+async def handle_ui_post(request):
+    """Save appearance settings.
+
+    This is the one write the dashboard performs, and it lands on the Mac —
+    never on a homelab disk (spec §3). It changes nothing about any monitored
+    machine, so the read-only guarantee is intact.
+    """
+    try:
+        changes = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text="expected a JSON object")
+    if not isinstance(changes, dict):
+        raise web.HTTPBadRequest(text="expected a JSON object")
+    try:
+        saved = request.app["collector"].config.save_ui(changes)
+    except OSError as exc:
+        raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+    return web.json_response(saved)
+
+
 async def handle_index(request):
     return web.FileResponse(STATIC / "index.html",
                             headers={"Cache-Control": "no-store"})
@@ -78,6 +103,8 @@ def build_app(collector):
     app["collector"] = collector
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/state", handle_state)
+    app.router.add_get("/api/ui", handle_ui_get)
+    app.router.add_post("/api/ui", handle_ui_post)
     app.router.add_get("/api/history/{vmid}", handle_history)
     app.router.add_static("/static/", STATIC)
     return app

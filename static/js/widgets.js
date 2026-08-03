@@ -43,14 +43,30 @@ export function meter(label, { graded = false, compact = false } = {}) {
   fill.style.width = "0%";
   track.appendChild(fill);
   root.append(track);
+  let lastBand = null;
   return {
     el: root,
     set(used, total, text) {
       const ratio = total ? Math.min(1, used / total) : 0;
-      track.style.setProperty("--meter-color",
-        graded ? severity(total ? used / total : null) : "var(--series-1)");
+      const colour = graded ? severity(total ? used / total : null)
+                            : "var(--series-1)";
+      track.style.setProperty("--meter-color", colour);
       fill.style.width = `${(ratio * 100).toFixed(1)}%`;
       readout.textContent = text;
+
+      // Flare only on the way up, and only for graded meters: crossing into a
+      // worse band is news, sitting in one is not.
+      if (graded) {
+        const band = colour.includes("critical") ? 2
+                   : colour.includes("warning") ? 1 : 0;
+        if (lastBand !== null && band > lastBand) {
+          track.classList.remove("flare");
+          void track.offsetWidth;                 // restart the animation
+          track.classList.add("flare");
+          setTimeout(() => track.classList.remove("flare"), 2400);
+        }
+        lastBand = band;
+      }
     },
   };
 }
@@ -187,6 +203,8 @@ export class Spark {
     // Right-hand gutter reserved for axis labels, sized to the unit — a fixed
     // 46px clipped " MiB/s" to " MiB/".
     this.gutter = axis ? 44 + unit.length * 4 : 0;
+    this.reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this._drawn = false;
     this.xTicks = xTicks;
     this.secondsPerSample = secondsPerSample;
     // Room under the plot for the time labels.
@@ -237,7 +255,13 @@ export class Spark {
     // are depends on the buffer capacity the server reports.
     this.xTickNodes = [];
 
-    this.parts = series.map(s => {
+    // Unique per instance: gradient ids are document-global, so two charts
+    // sharing one id would silently borrow each other's fade.
+    this.uid = `sp${Math.random().toString(36).slice(2, 9)}`;
+    const defs = svgEl("defs", {});
+    this.svg.appendChild(defs);
+
+    this.parts = series.map((s, i) => {
       // Taller charts cover far more area, so the same opacity reads as a
       // solid block rather than a wash.
       const area = svgEl("path", {
@@ -257,8 +281,26 @@ export class Spark {
         r: "4", fill: s.color, stroke: "var(--surface)", "stroke-width": "2",
         class: "glowable", style: `color: ${s.color}`,
       });
-      this.svg.append(area, line, dot);
-      return { area, line, dot };
+      // Comet trail: the last stretch of the line redrawn over itself with a
+      // gradient that fades to nothing, so the eye is pulled to `now`.
+      const gradientId = `${this.uid}-${i}`;
+      const gradient = svgEl("linearGradient", {
+        id: gradientId, x1: "0", x2: "1", y1: "0", y2: "0",
+      });
+      const stopFrom = svgEl("stop", {
+        offset: "0", "stop-color": s.color, "stop-opacity": "0" });
+      const stopTo = svgEl("stop", {
+        offset: "1", "stop-color": s.color, "stop-opacity": "1" });
+      gradient.append(stopFrom, stopTo);
+      defs.appendChild(gradient);
+      const comet = svgEl("path", {
+        fill: "none", stroke: `url(#${gradientId})`, "stroke-width": "3.5",
+        "stroke-linecap": "round", "stroke-linejoin": "round",
+        class: "glowable", style: `color: ${s.color}`,
+      });
+
+      this.svg.append(area, line, comet, dot);
+      return { area, line, comet, dot };
     });
 
     this.tip = el("div", "tip");
@@ -271,6 +313,28 @@ export class Spark {
     }).observe(this.el);
   }
 
+  /* Draw-in: the line sweeps on once, the first time there is anything to
+     draw. Re-running it on every tick would make the chart unreadable. */
+  playDrawIn() {
+    if (this._drawn || this.reduced) return;
+    const paths = this.parts.map(p => p.line).filter(p => p.getAttribute("d"));
+    if (!paths.length) return;
+    this._drawn = true;
+    for (const path of paths) {
+      const length = path.getTotalLength();
+      if (!length) continue;
+      path.style.strokeDasharray = `${length}`;
+      path.style.strokeDashoffset = `${length}`;
+      path.getBoundingClientRect();               // force layout before animating
+      path.style.transition = "stroke-dashoffset 900ms ease-out";
+      path.style.strokeDashoffset = "0";
+      setTimeout(() => {
+        path.style.transition = path.style.strokeDasharray =
+          path.style.strokeDashoffset = "";
+      }, 1000);
+    }
+  }
+
   update(history, capacity) {
     this.data = this.series.map(s => (history && history[s.key]) || []);
     // The x-axis spans the buffer's full capacity, not the samples collected
@@ -278,6 +342,7 @@ export class Spark {
     // same reading appears to move.
     if (capacity) this.capacity = capacity;
     this.draw();
+    this.playDrawIn();
   }
 
   scale() {
@@ -320,10 +385,11 @@ export class Spark {
     });
 
     this.data.forEach((values, i) => {
-      const { area, line, dot } = this.parts[i];
+      const { area, line, comet, dot } = this.parts[i];
       if (values.length < 2) {
         line.setAttribute("d", "");
         area.setAttribute("d", "");
+        comet.setAttribute("d", "");
         dot.setAttribute("r", "0");
         return;
       }
@@ -354,9 +420,20 @@ export class Spark {
         + r.map(([x, yy]) => `L${x.toFixed(1)},${yy.toFixed(1)}`).join(" ")
         + ` L${r[r.length - 1][0].toFixed(1)},${body} Z`).join(" "));
 
+      // Trail over the tail of the newest run only — a comet across a gap
+      // would imply data that is not there.
+      const newest = runs.length ? runs[runs.length - 1] : null;
+      if (newest && newest.length > 1) {
+        const tail = newest.slice(-Math.min(newest.length, 14));
+        comet.setAttribute("d",
+          "M" + tail.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" L"));
+      } else {
+        comet.setAttribute("d", "");
+      }
+
       // The end dot marks the newest reading, which after a stall is the end
       // of the newest run rather than the right edge.
-      const last = runs.length ? runs[runs.length - 1][runs[runs.length - 1].length - 1] : null;
+      const last = newest ? newest[newest.length - 1] : null;
       dot.setAttribute("r", last ? "4" : "0");
       if (last) {
         dot.setAttribute("cx", last[0].toFixed(1));

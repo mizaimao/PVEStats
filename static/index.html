@@ -52,10 +52,40 @@
     <span class="applies ok">Live</span>
     <p>Changes surfaces, ink and the two series colours. Status colours
       (good / warning / critical) stay fixed in every theme, so a colour never
-      stops meaning what it meant. Remembered between launches.</p>
+      stops meaning what it meant.</p>
   </div>
 
-  <p class="panel-note">The rest is not wired up yet — these show the intended
+  <div class="setting">
+    <label for="set-glow">Glow</label>
+    <select id="set-glow">
+      <option value="0">Off</option>
+      <option value="0.5">Subtle</option>
+      <option value="1">Normal</option>
+      <option value="1.6">Strong</option>
+      <option value="2.5">Maximum</option>
+    </select>
+    <span class="applies ok">Live</span>
+    <p>Scales every glow at once — arcs, bars, chart lines and text. The theme
+      sets the character, this sets the volume. Themes without glow are
+      unaffected.</p>
+  </div>
+
+  <div class="setting">
+    <label>Texture</label>
+    <div class="toggles">
+      <label class="toggle"><input type="checkbox" id="fx-scanlines"> Scanlines</label>
+      <label class="toggle"><input type="checkbox" id="fx-grain"> Grain</label>
+      <label class="toggle"><input type="checkbox" id="fx-aurora"> Aurora</label>
+    </div>
+    <span class="applies ok">Live</span>
+    <p>Scanlines suit the CRT-flavoured themes; grain also hides banding on the
+      card gradients. Aurora drifts the card borders between the two series
+      hues over 24 seconds — slow on purpose, since this sits in peripheral
+      vision for hours.</p>
+  </div>
+
+  <p class="panel-note">All of the above save to <code>ui.json</code> beside
+    config.yaml. The rest is not wired up yet — these show the intended
     controls and which of them a source can actually honour.</p>
 
   <div class="setting">

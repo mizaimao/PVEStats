@@ -1,3 +1,15 @@
+# Appearance. Editable here; changing it in the settings panel writes to
+# ui.json instead, so the comments in this file survive.
+#   theme: ice | midnight | neon | amber | synthwave | matrix | ember | nord
+#   glow:  0 = off, 1 = normal, 2.5 = maximum
+#   scanlines / grain / aurora: textural overlays, on or off
+ui:
+  theme: ice
+  glow: 1.0
+  scanlines: false
+  grain: false
+  aurora: false
+
 # Card layout. `view` selects the panel set; VMIDs returned by PVE but absent
 # from this file default to `basic` (spec §4.5), so only the special cases are
 # listed here. VMIDs confirmed against captures/pve.json.
