@@ -282,6 +282,63 @@ table.data .name { color: var(--ink); }
 
 .empty { font-size: 11px; color: var(--ink-muted); padding: 6px 0; }
 
+/* ---------- TEMPORARY: capped-resource comparison ---------- */
+
+.demo-heading {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-muted);
+  margin: 24px 0 10px;
+}
+.grid-demo {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  align-items: start;
+  gap: var(--gap);
+}
+.demo-card .demo-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin: 0 0 10px;
+}
+.demo-card .caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-bottom: 8px;
+}
+.demo-card .caption b { color: var(--ink-2); font-weight: 500; }
+.demo-note { font-size: 10px; color: var(--baseline); margin-top: 6px; }
+
+.seg { display: flex; gap: 3px; }
+.seg i {
+  flex: 1; height: 10px; border-radius: 2px;
+  background: color-mix(in oklab, var(--series-1) 20%, var(--surface));
+}
+.seg i.on { background: var(--series-1); }
+
+.waffle { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; }
+.waffle i {
+  aspect-ratio: 1; border-radius: 2px;
+  background: color-mix(in oklab, var(--series-1) 18%, var(--surface));
+}
+.waffle i.on { background: var(--series-1); }
+
+.bullet {
+  position: relative; height: 12px; border-radius: 3px;
+  background: color-mix(in oklab, var(--series-1) 16%, var(--surface));
+}
+.bullet .fill {
+  position: absolute; inset: 3px auto 3px 0;
+  background: var(--series-1); border-radius: 0 3px 3px 0;
+}
+.bullet .mark {
+  position: absolute; top: -2px; bottom: -2px; width: 2px;
+  background: var(--ink-2);
+}
+
 /* ---------- settings panel (inert placeholder) ---------- */
 
 .panel {
@@ -358,6 +415,12 @@ table.data .name { color: var(--ink); }
 }
 .applies.ok { color: var(--good); border: 1px solid color-mix(in oklab, var(--good) 45%, transparent); }
 .applies.capped { color: var(--warning); border: 1px solid color-mix(in oklab, var(--warning) 45%, transparent); }
+.applies.auto { color: var(--ink-muted); border: 1px solid var(--hairline); }
+.derived {
+  font-size: 11px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
 
 .offline {
   position: fixed;

@@ -583,8 +583,20 @@ function controllerFor(guest) {
   return basicCard(guest);
 }
 
+/* The page refresh rate is derived, not chosen: polling faster than the
+   fastest source only redraws numbers that have not changed. */
+function refreshInterval(sources) {
+  const intervals = Object.values(sources)
+    .map(s => s.interval)
+    .filter(v => typeof v === "number" && v > 0);
+  return intervals.length ? Math.min(...intervals) : 1;
+}
+
 function render(state) {
   renderSources(state.sources);
+
+  const derived = document.getElementById("set-page-derived");
+  if (derived) derived.textContent = `${refreshInterval(state.sources)}s`;
   nodeCard(state.node, state.history.pve, state.sources.pve);
 
   const feature = document.getElementById("feature");
@@ -606,6 +618,10 @@ function render(state) {
   for (const [vmid, card] of cards) {
     if (!seen.has(vmid)) { card.el.remove(); cards.delete(vmid); }
   }
+
+  // TEMPORARY — remove with the #demo section.
+  const gpuGuest = state.guests.find(g => g.gpu);
+  if (gpuGuest) demoPanels(gpuGuest, state.history, gpuGuest.gpu_status);
 }
 
 async function tick() {
@@ -622,6 +638,97 @@ async function tick() {
     document.body.style.opacity = "0.6";
   }
 }
+
+/* ---------------- TEMPORARY: capped-resource treatments ----------------
+ * Six ways of showing one value against a cap, all fed from ml60's live VRAM.
+ * Driven by the same numbers as the real card so the comparison is honest.
+ * Delete this block and the #demo markup once a treatment is chosen.
+ */
+
+const demoPanels = (() => {
+  const host = document.getElementById("demo");
+  let built = null;
+
+  const forms = [
+    ["1 · Meter (current)", root => {
+      const track = el("div", "meter"); const fill = el("span");
+      fill.style.width = "0%"; track.appendChild(fill); root.appendChild(track);
+      return v => { fill.style.width = `${v * 100}%`; };
+    }],
+    ["2 · Segmented bar", root => {
+      const wrap = el("div", "seg");
+      const cells = Array.from({ length: 12 }, () => { const i = el("i"); wrap.appendChild(i); return i; });
+      root.appendChild(wrap);
+      return v => cells.forEach((c, i) => c.classList.toggle("on", i < Math.round(v * cells.length)));
+    }],
+    ["3 · Waffle grid", root => {
+      const wrap = el("div", "waffle");
+      const cells = Array.from({ length: 30 }, () => { const i = el("i"); wrap.appendChild(i); return i; });
+      root.appendChild(wrap);
+      return v => cells.forEach((c, i) => c.classList.toggle("on", i < Math.round(v * cells.length)));
+    }],
+    ["4 · Radial arc", root => {
+      const R = 34, C = 2 * Math.PI * R, SWEEP = 0.75;
+      const svg = svgEl("svg", { viewBox: "0 0 100 64", width: "100%", height: "64" });
+      const mk = (stroke, dash) => svgEl("circle", {
+        cx: 50, cy: 46, r: R, fill: "none", stroke, "stroke-width": 8,
+        "stroke-linecap": "round", "stroke-dasharray": dash,
+        transform: "rotate(135 50 46)",
+      });
+      const back = mk("color-mix(in oklab, var(--series-1) 20%, var(--surface))", `${C * SWEEP} ${C}`);
+      const front = mk("var(--series-1)", `0 ${C}`);
+      svg.append(back, front); root.appendChild(svg);
+      return v => front.setAttribute("stroke-dasharray", `${C * SWEEP * v} ${C}`);
+    }],
+    ["5 · Bullet + threshold", root => {
+      const wrap = el("div", "bullet");
+      const fill = el("div", "fill"); const mark = el("div", "mark");
+      mark.style.left = "90%";
+      wrap.append(fill, mark); root.appendChild(wrap);
+      root.appendChild(el("div", "demo-note", "marker = 90% of cap"));
+      return v => { fill.style.width = `${v * 100}%`; };
+    }],
+    ["6 · History + cap line", root => {
+      const spark = new Spark(
+        [{ key: "gpu.vram_used", color: "var(--series-1)", label: "VRAM" }],
+        { format: fmt.gib, unit: " GiB", domain: [0, 1] });
+      root.appendChild(spark.el);
+      root.appendChild(el("div", "demo-note", "upper gridline = cap"));
+      return (v, used, total, history, capacity) => {
+        spark.domain = [0, total || 1];
+        spark.update(history, capacity);
+      };
+    }],
+  ];
+
+  return function update(guest, history, status) {
+    if (!host) return;
+    const gpu = guest && guest.gpu;
+    if (!gpu || !gpu.vram_total) return;
+
+    if (!built) {
+      built = forms.map(([name, make]) => {
+        const card = el("section", "card demo-card");
+        card.appendChild(el("h3", "demo-title", name));
+        const caption = el("div", "caption");
+        const readout = el("b", null, "–");
+        caption.append(el("span", null, "VRAM"), readout);
+        card.appendChild(caption);
+        const set = make(card);
+        host.appendChild(card);
+        return { set, readout };
+      });
+    }
+
+    const used = gpu.vram_used, total = gpu.vram_total;
+    const ratio = Math.min(1, used / total);
+    const text = `${fmt.gib(used)} / ${fmt.gib(total)} GiB`;
+    for (const b of built) {
+      b.readout.textContent = text;
+      b.set(ratio, used, total, history.agent, status && status.capacity);
+    }
+  };
+})();
 
 /* ---------------- settings panel ----------------
  * Opens and closes only. Every control inside is disabled until there is

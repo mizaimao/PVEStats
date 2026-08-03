@@ -41,14 +41,6 @@
     which of them a source can actually honour.</p>
 
   <div class="setting">
-    <label for="set-page">Page refresh</label>
-    <select id="set-page" disabled><option>1s</option></select>
-    <span class="applies ok">Applies</span>
-    <p>How often the page re-reads collected state. Local only; no source is
-      polled by changing this.</p>
-  </div>
-
-  <div class="setting">
     <label for="set-agent">ml60 GPU agent</label>
     <select id="set-agent" disabled><option>1s</option></select>
     <span class="applies ok">Applies</span>
@@ -80,12 +72,26 @@
     <p>Length of the in-memory ring buffers behind the sparklines. Memory only,
       discarded on restart.</p>
   </div>
+
+  <div class="setting">
+    <label>Page refresh</label>
+    <span class="derived" id="set-page-derived">1s</span>
+    <span class="applies auto">Derived</span>
+    <p>Not a setting. The page reads collected state at the rate of the fastest
+      source above, since refreshing faster than anything updates only redraws
+      identical numbers.</p>
+  </div>
 </div>
 
 <main>
   <section id="node-card" class="card card-node" hidden></section>
   <section id="feature" class="feature"></section>
   <section id="basics" class="grid-basic"></section>
+
+  <!-- TEMPORARY: six ways of showing a capped resource, all driven by ml60's
+       live VRAM. Delete this section and demoPanels() in app.js once chosen. -->
+  <h2 class="demo-heading">Capped-resource treatments — ml60 VRAM, live. Temporary.</h2>
+  <section id="demo" class="grid-demo"></section>
 </main>
 
 <p class="offline" id="offline" hidden>
