@@ -96,5 +96,8 @@ async function tick() {
 }
 
 initSettings();
+/* Polls regardless of focus. Pausing while hidden saved a little CPU but the
+   window is meant to be glanceable from across the room, and coming back to a
+   chart that stopped moving is worse than the saving is worth. */
 tick();
 setInterval(tick, POLL_MS);

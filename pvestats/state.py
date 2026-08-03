@@ -22,6 +22,7 @@ class Source:
         # Roughly `history_seconds` of samples at this source's poll rate.
         self.maxlen = max(2, round(history_seconds / interval))
         self.series = {}
+        self._last_poll = None
 
     def push(self, key, value):
         """Append one sample to a named ring buffer."""
@@ -31,6 +32,25 @@ class Source:
         if buf is None:
             buf = self.series[key] = deque(maxlen=self.maxlen)
         buf.append(round(value, 4) if isinstance(value, float) else value)
+
+    def note_poll(self, interval):
+        """Insert nulls for polls that never happened.
+
+        Charts place samples one interval apart, so a stall — App Nap, a
+        closed lid, a dead source — would otherwise be drawn as a continuous
+        line across time that was never sampled. Padding keeps the x-axis
+        honest and renders the stall as a visible break.
+        """
+        now = time.monotonic()
+        previous, self._last_poll = self._last_poll, now
+        if previous is None:
+            return
+        missed = int(round((now - previous) / interval)) - 1
+        if missed < 1:
+            return
+        for buf in self.series.values():
+            for _ in range(min(missed, buf.maxlen)):
+                buf.append(None)
 
     def succeed(self, data):
         self.data = data
