@@ -90,6 +90,21 @@ def wait_for_server(url, deadline):
     return False
 
 
+def fit_to_screen(webview, want_width, want_height):
+    """Clamp the preferred window size to the largest attached display.
+
+    Asking for 1230px of height on a 1080p panel would open a window taller
+    than the screen, which macOS silently crops.
+    """
+    try:
+        screens = webview.screens
+        width = max(s.width for s in screens)
+        height = max(s.height for s in screens)
+    except Exception:
+        return want_width, want_height
+    return min(want_width, int(width * 0.94)), min(want_height, int(height * 0.92))
+
+
 def main():
     try:
         import webview
@@ -112,9 +127,17 @@ def main():
         backend.stop()
         sys.exit(f"server did not come up on {url}")
 
+    # Measured: the full layout is ~1160px tall between 1280 and 1500px wide,
+    # and grows to ~1280px below that as columns collapse. Open large enough to
+    # show everything without a scrollbar, but never larger than the display.
+    width, height = fit_to_screen(webview, 1500, 1230)
+
     webview.create_window(
         "PVEStats", url,
-        width=1500, height=1000, min_size=(760, 600),
+        width=width, height=height,
+        # Hard floor for drag-resizing. Below this the guest grid drops to two
+        # columns and the NAS tables start truncating.
+        min_size=(1040, 720),
         background_color="#0d0d0d",   # matches the page, so no white flash
     )
     try:
