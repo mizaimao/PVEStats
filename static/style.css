@@ -23,9 +23,20 @@
   --gap: 14px;
 
   /* Glow is a token, not a separate stylesheet: 0 means the shadows render
-     nothing. Themes that want it just raise the blur. */
+     nothing. Themes that want it raise the blur. Two radii — a tight bright
+     core and a wide soft halo — because a single blur just looks like a
+     slightly out-of-focus edge rather than light. */
   --glow-blur: 0px;
+  --glow-wide: 0px;
+  --glow-text: 0px;
+  --glow-text-soft: 0px;
   --glow-spread: 0px;
+
+  /* Surface gradient: themes set a second tone to blend toward. Defaults to
+     the flat surface, so the gradient is invisible unless a theme opts in. */
+  --surface-2: var(--surface);
+  /* Frosted panel blur. 0 keeps it a plain opaque panel. */
+  --panel-blur: 0px;
 }
 
 /* ---------- themes ----------
@@ -38,6 +49,8 @@
    (worst adjacent pair, OKLab x100, protan/deutan; gate is 8.) */
 
 :root[data-theme="neon"] {
+  --surface-2:  #161626;
+  --panel-blur: 18px;
   --plane:      #07070b;
   --surface:    #101018;
   --ink:        #f2f5ff;
@@ -48,13 +61,18 @@
   --hairline:   rgba(150, 180, 255, 0.14);
   --series-1:   #19a3c9;
   --series-2:   #cf3d80;
-  --glow-blur:  9px;
+  --glow-blur:  10px;
+  --glow-wide:  26px;
+  --glow-text:  16px;
+  --glow-text-soft: 7px;
   --glow-spread: 1px;
 }
 
 :root[data-theme="amber"] {
-  --plane:      #0d0b06;
-  --surface:    #17130b;
+  --surface-2:  #171008;
+  --panel-blur: 18px;
+  --plane:      #060402;
+  --surface:    #100c06;
   --ink:        #fdf3e0;
   --ink-2:      #cbb894;
   --ink-muted:  #8b7c60;
@@ -63,11 +81,99 @@
   --hairline:   rgba(255, 215, 150, 0.13);
   --series-1:   #bd8400;
   --series-2:   #0e9488;
-  --glow-blur:  7px;
+  --glow-blur:  8px;
+  --glow-wide:  20px;
+  --glow-text:  12px;
+  --glow-text-soft: 5px;
   --glow-spread: 0px;
 }
 
+:root[data-theme="synthwave"] {
+  --surface-2:  #1d0f36;
+  --panel-blur: 18px;
+  --plane:      #0b0518;
+  --surface:    #150a28;
+  --ink:        #f6eaff;
+  --ink-2:      #c4a9e0;
+  --ink-muted:  #8b74a8;
+  --grid:       #241338;
+  --baseline:   #331d4d;
+  --hairline:   rgba(214, 170, 255, 0.15);
+  --series-1:   #8a5cf6;
+  --series-2:   #e0457b;
+  --glow-blur:  11px;
+  --glow-wide:  28px;
+  --glow-text:  18px;
+  --glow-text-soft: 8px;
+  --glow-spread: 1px;
+}
+
+:root[data-theme="matrix"] {
+  --surface-2:  #0c140c;
+  --panel-blur: 18px;
+  --plane:      #030503;
+  --surface:    #080d08;
+  --ink:        #dcffe4;
+  --ink-2:      #8fce9f;
+  --ink-muted:  #5c8768;
+  --grid:       #12200f;
+  --baseline:   #1d3319;
+  --hairline:   rgba(120, 255, 150, 0.13);
+  /* Green's partner is violet, not amber: green+amber measures ΔE 3.2 under
+     protanopia — the classic red/green confusion — and no lightness tweak
+     fixes it. */
+  --series-1:   #2ea043;
+  --series-2:   #8a5cf6;
+  --glow-blur:  10px;
+  --glow-wide:  26px;
+  --glow-text:  16px;
+  --glow-text-soft: 7px;
+  --glow-spread: 1px;
+}
+
+:root[data-theme="ice"] {
+  --surface-2:  #0e1622;
+  --panel-blur: 18px;
+  --plane:      #04070d;
+  --surface:    #0a1018;
+  --ink:        #eaf4ff;
+  --ink-2:      #a8c2da;
+  --ink-muted:  #6d8399;
+  --grid:       #14202c;
+  --baseline:   #1f2f3f;
+  --hairline:   rgba(170, 210, 255, 0.13);
+  --series-1:   #3987e5;
+  --series-2:   #12a594;
+  --glow-blur:  10px;
+  --glow-wide:  24px;
+  --glow-text:  14px;
+  --glow-text-soft: 6px;
+  --glow-spread: 0px;
+}
+
+:root[data-theme="ember"] {
+  --surface-2:  #1a0c08;
+  --panel-blur: 18px;
+  --plane:      #070302;
+  --surface:    #120806;
+  --ink:        #fff0e8;
+  --ink-2:      #d6ab99;
+  --ink-muted:  #96705f;
+  --grid:       #241009;
+  --baseline:   #351a10;
+  --hairline:   rgba(255, 170, 130, 0.13);
+  --series-1:   #d9531e;
+  --series-2:   #2f9e8f;
+  --glow-blur:  10px;
+  --glow-wide:  26px;
+  --glow-text:  16px;
+  --glow-text-soft: 7px;
+  --glow-spread: 1px;
+}
+
 :root[data-theme="nord"] {
+  --surface-2:  #353c4a;
+  --panel-blur: 18px;
   --plane:      #242933;
   --surface:    #2e3440;
   --ink:        #eceff4;
@@ -280,7 +386,8 @@ body {
   /* Track is a dimmed step of the fill's own ramp, so the bar reads as one
      object rather than a fill sitting on unrelated grey. */
   background: color-mix(in oklab, var(--meter-color, var(--series-1)) 22%, var(--surface));
-  overflow: hidden;
+  /* No overflow clip: it cropped the fill's glow flat against the track. The
+     fill is inset by its own radius instead. */
   margin-top: 6px;
 }
 .meter > span {
@@ -609,12 +716,79 @@ table.data.divided {
    --glow-blur at 0 these render nothing, so the rules are inert by default. */
 
 .meter > span {
-  box-shadow: 0 0 var(--glow-blur) var(--glow-spread)
-              var(--meter-color, var(--series-1));
+  box-shadow:
+    0 0 var(--glow-blur) var(--glow-spread) var(--meter-color, var(--series-1)),
+    0 0 var(--glow-wide) color-mix(in oklab,
+         var(--meter-color, var(--series-1)) 55%, transparent);
 }
 /* drop-shadow with no colour argument uses the element's own `color`, which
-   the chart sets to the series hue — so each line glows in its own colour. */
+   the chart sets to the series hue — so each mark glows in its own colour.
+   Stacked twice for a bright core inside a soft halo. */
+/* SVG clips to its viewport by default, which cropped the halo into a visible
+   square patch. The marks themselves stay inside; only the light spills. */
+.spark svg,
+.arc svg { overflow: visible; }
+
+/* Three passes with graduated radii. drop-shadow spreads the source alpha
+   across the blur, so a single wide pass leaves a 2px line almost invisible;
+   a tight pass close to the stroke is what actually reads as light. */
 .spark svg .glowable,
 .arc svg .glowable {
-  filter: drop-shadow(0 0 var(--glow-blur));
+  filter:
+    drop-shadow(0 0 calc(var(--glow-blur) * 0.3))
+    drop-shadow(0 0 calc(var(--glow-blur) * 0.3))
+    drop-shadow(0 0 var(--glow-blur))
+    drop-shadow(0 0 var(--glow-wide));
+}
+/* The figures the eye lands on first pick up the light too. */
+/* Two tiers: the label carries a hint, the figure it labels carries more, so
+   the eye lands on the number rather than the caption. */
+.tile .label,
+.pair-title,
+.arc-label,
+.spark-head,
+.meter-row .caption > span,
+table.data caption {
+  text-shadow: 0 0 var(--glow-text-soft) currentColor;
+}
+.tile .value,
+.hero .value,
+.arc-value,
+.pair-value,
+.pair-row b,
+.meter-row .caption b {
+  text-shadow: 0 0 var(--glow-text) currentColor;
+}
+/* ---------- surfaces, hover, frosted panel ---------- */
+
+.card {
+  /* A hint of a lit surface rather than a flat swatch — half-strength, and it
+     collapses to nothing when a theme leaves --surface-2 alone. */
+  background: linear-gradient(160deg,
+    color-mix(in oklab, var(--surface-2) 50%, var(--surface)),
+    var(--surface) 55%);
+}
+
+.panel {
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+  backdrop-filter: blur(var(--panel-blur)) saturate(130%);
+  -webkit-backdrop-filter: blur(var(--panel-blur)) saturate(130%);
+}
+
+/* ---------- live indicator ----------
+   A source that is currently collecting pulses; one that is stale or down
+   holds steady, so movement means "fresh" rather than being decoration. */
+@keyframes pvestats-pulse {
+  0%, 100% { opacity: 1;    box-shadow: 0 0 0 0 currentColor; }
+  50%      { opacity: 0.55; box-shadow: 0 0 0 3px transparent; }
+}
+.src .dot { color: var(--good); }
+.src:not(.is-stale):not(.is-down) .dot {
+  animation: pvestats-pulse 2s ease-in-out infinite;
+}
+
+/* Motion is decoration here; every value is also printed as text. */
+@media (prefers-reduced-motion: reduce) {
+  .src .dot { animation: none; }
+  .meter > span { transition: none; }
 }

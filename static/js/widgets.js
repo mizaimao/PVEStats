@@ -1,5 +1,5 @@
 import { fmt, severity, GiB, MiB } from "./format.js";
-import { el, svgEl } from "./dom.js";
+import { el, svgEl, setAnimated } from "./dom.js";
 
 /* ---------------- stat tile ---------------- */
 
@@ -14,9 +14,10 @@ export function tile(label, { hero = false, unit = "" } = {}) {
   }
   const caption = el("div", "label", label);
   root.append(caption, value);
+  let shown = "–";
   return {
     el: root,
-    set: v => { number.nodeValue = v; },
+    set: v => { setAnimated(number, v, shown); shown = String(v); },
     setLabel: text => { caption.textContent = text; },
   };
 }
@@ -109,12 +110,18 @@ export function arcGauge(label, { nested = false, sublabel = "" } = {}) {
   const foot = el("div", "arc-foot", sublabel);
   if (sublabel || nested) root.appendChild(foot);
 
+  const number = document.createTextNode("–");
+  value.textContent = "";
+  value.appendChild(number);
+  let shown = "–";
+
   return {
     el: root,
     set(ratio, text, innerRatio, footText) {
       outer(ratio);
       if (inner) inner(innerRatio);
-      value.textContent = text;
+      setAnimated(number, text, shown);
+      shown = String(text);
       if (footText != null) foot.textContent = footText;
     },
   };

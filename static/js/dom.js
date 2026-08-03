@@ -13,3 +13,37 @@ export function svgEl(tag, attrs) {
   for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
   return node;
 }
+
+/* ---------------- animated numbers ----------------
+ * Values change once a second; jumping straight to the new figure reads as a
+ * flicker, while a short ease makes the change legible. Only the numeric part
+ * animates, and only when the surrounding text is unchanged — "5d 18h" or
+ * "64.1 / 95.6" are left alone rather than being counted through nonsense.
+ */
+
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)");
+const NUMERIC = /^(-?\d+(?:\.\d+)?)(\D*)$/;
+const DURATION = 320;
+
+export function setAnimated(node, text, previous) {
+  const to = NUMERIC.exec(String(text));
+  const from = NUMERIC.exec(String(previous ?? ""));
+  // Same trailing unit, both numeric, motion allowed — otherwise just set it.
+  if (!to || !from || to[2] !== from[2] || REDUCED.matches) {
+    node.nodeValue = text;
+    return;
+  }
+  const start = parseFloat(from[1]);
+  const end = parseFloat(to[1]);
+  if (start === end) { node.nodeValue = text; return; }
+  const decimals = (to[1].split(".")[1] || "").length;
+  const t0 = performance.now();
+
+  const step = now => {
+    const p = Math.min(1, (now - t0) / DURATION);
+    const eased = 1 - (1 - p) ** 3;          // ease-out cubic
+    node.nodeValue = (start + (end - start) * eased).toFixed(decimals) + to[2];
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
