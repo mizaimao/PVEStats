@@ -115,6 +115,69 @@ function meter(label, { graded = false, compact = false } = {}) {
   };
 }
 
+/* ---------------- arc gauge ----------------
+ * A 270-degree arc, open at the bottom. `nested` adds a second inner ring so
+ * one glyph can carry two ratios — CPU outside, memory inside.
+ *
+ * Worth knowing: arcs are harder to compare across cards than aligned bars,
+ * because there is no shared baseline. Fine for a single prominent value,
+ * weaker for scanning a grid.
+ */
+
+const ARC_SWEEP = 0.75;   // 270 of 360 degrees
+
+function arcRing(svg, radius, width, colour) {
+  const circumference = 2 * Math.PI * radius;
+  const common = {
+    cx: 50, cy: 50, r: radius, fill: "none", "stroke-width": width,
+    "stroke-linecap": "round", transform: "rotate(135 50 50)",
+  };
+  const track = svgEl("circle", {
+    ...common,
+    stroke: `color-mix(in oklab, ${colour} 22%, var(--surface))`,
+    "stroke-dasharray": `${circumference * ARC_SWEEP} ${circumference}`,
+  });
+  const fill = svgEl("circle", {
+    ...common, stroke: colour, "stroke-dasharray": `0 ${circumference}`,
+    // Butt, not round: a round cap paints a full-width dot even at near-zero
+    // length, so an idle guest at 0.3% grew a blob that read as a real value.
+    // Square at the origin is also the correct treatment for a value scale.
+    "stroke-linecap": "butt",
+  });
+  svg.append(track, fill);
+  return value => fill.setAttribute(
+    "stroke-dasharray",
+    `${circumference * ARC_SWEEP * Math.max(0, Math.min(1, value || 0))} ${circumference}`);
+}
+
+function arcGauge(label, { nested = false, sublabel = "" } = {}) {
+  const root = el("div", nested ? "arc is-nested" : "arc");
+  const svg = svgEl("svg", { viewBox: "0 0 100 100" });
+  root.appendChild(svg);
+
+  const outer = arcRing(svg, 41, 8, "var(--series-1)");
+  const inner = nested ? arcRing(svg, 29, 7, "var(--series-2)") : null;
+
+  const centre = el("div", "arc-centre");
+  const value = el("div", "arc-value", "–");
+  const caption = el("div", "arc-label", label);
+  centre.append(value, caption);
+  root.appendChild(centre);
+
+  const foot = el("div", "arc-foot", sublabel);
+  if (sublabel || nested) root.appendChild(foot);
+
+  return {
+    el: root,
+    set(ratio, text, innerRatio, footText) {
+      outer(ratio);
+      if (inner) inner(innerRatio);
+      value.textContent = text;
+      if (footText != null) foot.textContent = footText;
+    },
+  };
+}
+
 /* ---------------- sparkline ----------------
  * Rendered in real pixel coordinates rather than a stretched viewBox, so the
  * 2px stroke and the end dot stay circular at any width.
@@ -127,12 +190,16 @@ class Spark {
      natural ceiling (throughput) auto-scale and print their peak instead, so
      the scale is still readable. */
   constructor(series, { height = 38, format = fmt.pct, unit = "",
-                        domain = null, caption = "" } = {}) {
+                        domain = null, caption = "", axis = false } = {}) {
     this.series = series;                 // [{key, color, label}]
     this.height = height;
     this.format = format;
     this.unit = unit;
     this.domain = domain;
+    this.axis = axis;
+    // Right-hand gutter reserved for axis labels, so the trace never runs
+    // underneath them.
+    this.gutter = axis ? 46 : 0;
     this.width = 240;
     this.data = [];
 
@@ -151,11 +218,25 @@ class Spark {
     // Hairline, solid, recessive — and only where the scale is fixed, so the
     // reader can see that a flat line near the floor means genuinely idle
     // rather than a broken chart.
+    // Gridlines mark the midpoint and the ceiling of a fixed domain, with
+    // labels when `axis` is on — otherwise a flat trace is unreadable, since
+    // nothing says what the height means.
+    this.gridFractions = [0.5, 1];
     this.gridlines = domain
-      ? [0.5, 0].map(() => {
+      ? this.gridFractions.map(() => {
           const line = svgEl("line", { stroke: "var(--grid)", "stroke-width": "1" });
           this.svg.appendChild(line);
           return line;
+        })
+      : [];
+    this.axisLabels = (domain && axis)
+      ? this.gridFractions.map(() => {
+          const text = svgEl("text", {
+            "text-anchor": "start", "dominant-baseline": "middle",
+            fill: "var(--ink-muted)", "font-size": "10",
+          });
+          this.svg.appendChild(text);
+          return text;
         })
       : [];
 
@@ -203,6 +284,7 @@ class Spark {
   draw() {
     const h = this.height;
     const w = this.width;
+    const plot = Math.max(20, w - this.gutter);   // trace area, minus axis gutter
     this.svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     this.svg.setAttribute("height", h);
     const max = this.scale();
@@ -210,11 +292,17 @@ class Spark {
     if (!this.domain) {
       this.peak.textContent = `peak ${this.format(max)}${this.unit}`;
     }
-    // Gridlines at the midpoint and the ceiling of a fixed domain.
     this.gridlines.forEach((line, i) => {
-      const y = (pad + (h - pad * 2) * (i === 0 ? 0.5 : 0)).toFixed(1);
-      line.setAttribute("x1", 0); line.setAttribute("x2", w);
+      const frac = this.gridFractions[i];
+      const y = (h - pad - frac * (h - pad * 2)).toFixed(1);
+      line.setAttribute("x1", 0); line.setAttribute("x2", plot);
       line.setAttribute("y1", y); line.setAttribute("y2", y);
+      const text = this.axisLabels[i];
+      if (text) {
+        text.setAttribute("x", plot + 6);
+        text.setAttribute("y", y);
+        text.textContent = `${this.format(max * frac)}${this.unit}`;
+      }
     });
 
     this.data.forEach((values, i) => {
@@ -229,16 +317,16 @@ class Spark {
       // to the right edge, so the trace fills in from the right and then
       // scrolls rather than stretching.
       const span = Math.max(this.capacity || values.length, values.length);
-      const step = w / (span - 1);
-      const x0 = w - (values.length - 1) * step;
+      const step = plot / (span - 1);
+      const x0 = plot - (values.length - 1) * step;
       const y = v => h - pad - (v / max) * (h - pad * 2);
       const points = values.map((v, j) =>
         `${(x0 + j * step).toFixed(1)},${y(v).toFixed(1)}`);
       line.setAttribute("points", points.join(" "));
       area.setAttribute("d",
-        `M${x0.toFixed(1)},${h} L${points.join(" L")} L${w},${h} Z`);
+        `M${x0.toFixed(1)},${h} L${points.join(" L")} L${plot.toFixed(1)},${h} Z`);
       dot.setAttribute("r", "4");
-      dot.setAttribute("cx", w.toFixed(1));
+      dot.setAttribute("cx", plot.toFixed(1));
       dot.setAttribute("cy", y(values[values.length - 1]).toFixed(1));
     });
   }
@@ -348,13 +436,19 @@ function applyStale(shell, status) {
 
 function basicCard(guest) {
   const shell = cardShell(guest.name, `vmid ${guest.vmid}`);
-  const panels = baseGuestPanels(shell);
+  const row = el("div", "arc-row");
+  const cpu = arcGauge("CPU");
+  const up = tile("Uptime");
+  row.append(cpu.el, up.el);
+  const mem = meter("Memory");
+  shell.el.append(row, mem.el);
+
   return {
     el: shell.el,
     update(g, history, status) {
-      panels.cpu.set(fmt.pct(g.cpu_pct));
-      panels.up.set(fmt.uptime(g.uptime));
-      panels.mem.set(g.mem, g.maxmem,
+      cpu.set((g.cpu_pct || 0) / 100, `${fmt.pct(g.cpu_pct)}%`);
+      up.set(fmt.uptime(g.uptime));
+      mem.set(g.mem, g.maxmem,
         `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
       applyStale(shell, status);
     },
@@ -371,9 +465,16 @@ function gpuCard(guest) {
   heroWrap.appendChild(util.el);
 
   const spark = new Spark([{ key: "gpu.util", color: "var(--series-1)", label: "GPU" }],
-    { format: fmt.pct, unit: "%", domain: [0, 100] });
+    { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 84,
+      caption: "GPU utilisation, last 10 minutes" });
 
-  const vram = meter("VRAM");
+  // VRAM as history against its ceiling, plus the current figure — the value
+  // alone hides whether it is climbing.
+  const vramNow = tile("VRAM in use", { unit: " GiB" });
+  const vram = new Spark(
+    [{ key: "gpu.vram_used", color: "var(--series-1)", label: "VRAM" }],
+    { format: fmt.gib, unit: " GiB", domain: [0, 1], axis: true, height: 84,
+      caption: "VRAM against card total" });
 
   const tiles = el("div", "tiles");
   const temp = tile("Temp", { unit: "°C" });
@@ -393,7 +494,8 @@ function gpuCard(guest) {
     { label: "Process" }, { label: "PID", num: true }, { label: "VRAM", num: true },
   ]);
 
-  shell.el.append(heroWrap, spark.el, vram.el, tiles, mem.el, models.el, procs.el);
+  shell.el.append(heroWrap, spark.el, vramNow.el, vram.el, tiles, mem.el,
+                  models.el, procs.el);
 
   return {
     el: shell.el,
@@ -411,8 +513,9 @@ function gpuCard(guest) {
         power.set(gpu.power == null ? "–" : Math.round(gpu.power));
         fan.set(gpu.fan == null ? "–" : fmt.pct(gpu.fan));
         clock.set(fmt.int(gpu.clock_sm));
-        vram.set(gpu.vram_used, gpu.vram_total,
-          `${fmt.gib(gpu.vram_used)} / ${fmt.gib(gpu.vram_total)} GiB`);
+        vramNow.set(`${fmt.gib(gpu.vram_used)} / ${fmt.gib(gpu.vram_total)}`);
+        vram.domain = [0, gpu.vram_total || 1];
+        vram.update(history.agent, g.gpu_status && g.gpu_status.capacity);
         models.set((gpu.models || []).map(m => [
           m.name || "?", `${fmt.gib(m.size_vram)} GiB`, fmt.countdown(m.unload_in),
         ]));
@@ -423,8 +526,7 @@ function gpuCard(guest) {
       } else {
         // Agent unreachable. Clear its panels explicitly rather than leaving
         // whatever was last drawn — the card must not imply live readings.
-        [util, temp, power, fan, clock].forEach(t => t.set("–"));
-        vram.set(0, 0, "–");
+        [util, temp, power, fan, clock, vramNow].forEach(t => t.set("–"));
         models.set([]);
         procs.set([]);
       }
@@ -439,19 +541,20 @@ function gpuCard(guest) {
 function nasCard(guest) {
   const shell = cardShell(guest.name, `vmid ${guest.vmid} · NAS`);
 
-  const tiles = el("div", "tiles");
-  const cpu = tile("CPU", { unit: "%" });
+  const row = el("div", "arc-row");
+  const cpu = arcGauge("CPU");
+  const mem = arcGauge("Memory");
   const up = tile("Uptime");
-  tiles.append(cpu.el, up.el);
-  const mem = meter("Memory");
-  shell.el.append(tiles, mem.el);
+  row.append(cpu.el, mem.el, up.el);
+  shell.el.append(row);
 
   // Interface throughput is read from inside TrueNAS, never from PVE's
   // counters (spec §3.3). Two series, so a legend is mandatory.
   const ifSeries = [];
   const ifSpark = el("div");
   const ifTable = dataTable("Interfaces", [
-    { label: "Interface" }, { label: "RX MiB/s", num: true }, { label: "TX MiB/s", num: true },
+    { label: "Interface" }, { label: "Role" },
+    { label: "RX MiB/s", num: true }, { label: "TX MiB/s", num: true },
   ]);
   const disks = dataTable("Disks", [
     { label: "Disk" }, { label: "Read MiB/s", num: true }, { label: "Write MiB/s", num: true },
@@ -466,9 +569,11 @@ function nasCard(guest) {
   return {
     el: shell.el,
     update(g, history, status) {
-      cpu.set(fmt.pct(g.cpu_pct));
+      cpu.set((g.cpu_pct || 0) / 100, `${fmt.pct(g.cpu_pct)}%`);
+      mem.set(g.maxmem ? g.mem / g.maxmem : 0,
+              `${fmt.pct(g.maxmem ? (g.mem / g.maxmem) * 100 : null)}%`,
+              null, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
       up.set(fmt.uptime(g.uptime));
-      mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
 
       const nas = g.nas;
       if (nas) {
@@ -477,18 +582,26 @@ function nasCard(guest) {
         if (!spark && names.length) {
           const colours = ["var(--series-1)", "var(--series-2)"];
           names.slice(0, 2).forEach((name, i) => ifSeries.push({
-            key: `if.${name}.rx`, color: colours[i], label: name,
+            key: `if.${name}.rx`, color: colours[i],
+            // Role travels in the legend, so the two lines are identifiable
+            // without cross-referencing the table.
+            label: `${name} (${(nas.interfaces[name] || {}).role || "?"})`,
           }));
           spark = new Spark(ifSeries, {
-            format: fmt.rate, unit: " MiB/s", caption: "Receive throughput",
+            format: fmt.rate, unit: " MiB/s", height: 96,
+            caption: "Receive throughput, last 10 minutes",
           });
           ifSpark.append(spark.el, legend(ifSeries));
         }
         if (spark) spark.update(history.truenas, g.nas_status && g.nas_status.capacity);
 
-        ifTable.set(names.map(n => [
-          n, fmt.rate(nas.interfaces[n].rx_bps), fmt.rate(nas.interfaces[n].tx_bps),
-        ]));
+        ifTable.set(names.map(n => {
+          const nic = nas.interfaces[n];
+          const role = nic.role === "virtual" ? "virtual (virtio)"
+                     : nic.role === "physical" ? `physical · ${nic.media || "passthrough"}`
+                     : "unknown";
+          return [n, role, fmt.rate(nic.rx_bps), fmt.rate(nic.tx_bps)];
+        }));
         disks.set(Object.entries(nas.disks || {}).map(([n, d]) => [
           n, fmt.rate(d.read_bps), fmt.rate(d.write_bps),
         ]));
@@ -527,29 +640,35 @@ const nodeCard = (() => {
     if (!built) {
       const title = el("h2", null, `Proxmox host · ${node.name}`);
       const sub = el("div", "sub");
-      const tiles = el("div", "tiles");
-      const cpu = tile("CPU", { unit: "%" });
+      const row = el("div", "arc-row");
+      const mem = arcGauge("Memory");
       const load = tile("Load 1 / 5 / 15");
       const up = tile("Uptime");
       const guests = tile("Guests running");
-      tiles.append(cpu.el, load.el, up.el, guests.el);
-      const mem = meter("Memory");
-      const spark = new Spark([{ key: "node.cpu", color: "var(--series-1)", label: "CPU" }],
-        { format: fmt.pct, unit: "%", domain: [0, 100] });
+      row.append(mem.el, load.el, up.el, guests.el);
+
+      // Labelled: the top gridline is 100% of the host's cores, the middle
+      // one 50%. Previously this was an unlabelled trace with no way to tell
+      // what a given height meant.
+      const spark = new Spark(
+        [{ key: "node.cpu", color: "var(--series-1)", label: "CPU" }],
+        { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 84,
+          caption: "Host CPU, last 10 minutes" });
+
       const error = el("div", "card-error");
       error.hidden = true;
-      root.append(title, sub, tiles, mem.el, spark.el, error);
-      built = { sub, cpu, load, up, guests, mem, spark, error };
+      root.append(title, sub, row, spark.el, error);
+      built = { sub, load, up, guests, mem, spark, error };
     }
     // Trim pve-manager's build hash — it is noise at a glance.
     const version = (node.pveversion || "").split("/").slice(0, 2).join(" ");
     built.sub.textContent = `${node.cores} cores / ${node.cpus} threads · ${version}`;
-    built.cpu.set(fmt.pct(node.cpu_pct));
     built.load.set((node.loadavg || []).map(v => v.toFixed(2)).join(" / "));
     built.up.set(fmt.uptime(node.uptime));
     built.guests.set(`${node.guests_running} / ${node.guests_total}`);
-    built.mem.set(node.mem, node.maxmem,
-      `${fmt.gib(node.mem)} / ${fmt.gib(node.maxmem)} GiB`);
+    built.mem.set(node.maxmem ? node.mem / node.maxmem : 0,
+      `${fmt.pct(node.maxmem ? (node.mem / node.maxmem) * 100 : null)}%`,
+      null, `${fmt.gib(node.mem)} / ${fmt.gib(node.maxmem)} GiB`);
     built.spark.update(history, status && status.capacity);
     applyStale({ el: root, error: built.error }, status);
   };
@@ -620,8 +739,7 @@ function render(state) {
   }
 
   // TEMPORARY — remove with the #demo section.
-  const gpuGuest = state.guests.find(g => g.gpu);
-  if (gpuGuest) demoPanels(gpuGuest, state.history, gpuGuest.gpu_status);
+  demoPanels(state.guests);
 }
 
 async function tick() {
@@ -639,93 +757,36 @@ async function tick() {
   }
 }
 
-/* ---------------- TEMPORARY: capped-resource treatments ----------------
- * Six ways of showing one value against a cap, all fed from ml60's live VRAM.
- * Driven by the same numbers as the real card so the comparison is honest.
- * Delete this block and the #demo markup once a treatment is chosen.
+/* ---------------- TEMPORARY: nested arc ----------------
+ * One glyph carrying two ratios — CPU on the outer ring, memory on the inner.
+ * Answers "can we nest them"; delete with the #demo markup once decided.
  */
 
 const demoPanels = (() => {
   const host = document.getElementById("demo");
   let built = null;
 
-  const forms = [
-    ["1 · Meter (current)", root => {
-      const track = el("div", "meter"); const fill = el("span");
-      fill.style.width = "0%"; track.appendChild(fill); root.appendChild(track);
-      return v => { fill.style.width = `${v * 100}%`; };
-    }],
-    ["2 · Segmented bar", root => {
-      const wrap = el("div", "seg");
-      const cells = Array.from({ length: 12 }, () => { const i = el("i"); wrap.appendChild(i); return i; });
-      root.appendChild(wrap);
-      return v => cells.forEach((c, i) => c.classList.toggle("on", i < Math.round(v * cells.length)));
-    }],
-    ["3 · Waffle grid", root => {
-      const wrap = el("div", "waffle");
-      const cells = Array.from({ length: 30 }, () => { const i = el("i"); wrap.appendChild(i); return i; });
-      root.appendChild(wrap);
-      return v => cells.forEach((c, i) => c.classList.toggle("on", i < Math.round(v * cells.length)));
-    }],
-    ["4 · Radial arc", root => {
-      const R = 34, C = 2 * Math.PI * R, SWEEP = 0.75;
-      const svg = svgEl("svg", { viewBox: "0 0 100 64", width: "100%", height: "64" });
-      const mk = (stroke, dash) => svgEl("circle", {
-        cx: 50, cy: 46, r: R, fill: "none", stroke, "stroke-width": 8,
-        "stroke-linecap": "round", "stroke-dasharray": dash,
-        transform: "rotate(135 50 46)",
-      });
-      const back = mk("color-mix(in oklab, var(--series-1) 20%, var(--surface))", `${C * SWEEP} ${C}`);
-      const front = mk("var(--series-1)", `0 ${C}`);
-      svg.append(back, front); root.appendChild(svg);
-      return v => front.setAttribute("stroke-dasharray", `${C * SWEEP * v} ${C}`);
-    }],
-    ["5 · Bullet + threshold", root => {
-      const wrap = el("div", "bullet");
-      const fill = el("div", "fill"); const mark = el("div", "mark");
-      mark.style.left = "90%";
-      wrap.append(fill, mark); root.appendChild(wrap);
-      root.appendChild(el("div", "demo-note", "marker = 90% of cap"));
-      return v => { fill.style.width = `${v * 100}%`; };
-    }],
-    ["6 · History + cap line", root => {
-      const spark = new Spark(
-        [{ key: "gpu.vram_used", color: "var(--series-1)", label: "VRAM" }],
-        { format: fmt.gib, unit: " GiB", domain: [0, 1] });
-      root.appendChild(spark.el);
-      root.appendChild(el("div", "demo-note", "upper gridline = cap"));
-      return (v, used, total, history, capacity) => {
-        spark.domain = [0, total || 1];
-        spark.update(history, capacity);
-      };
-    }],
-  ];
-
-  return function update(guest, history, status) {
+  return function update(guests) {
     if (!host) return;
-    const gpu = guest && guest.gpu;
-    if (!gpu || !gpu.vram_total) return;
-
     if (!built) {
-      built = forms.map(([name, make]) => {
+      built = guests.slice(0, 4).map(g => {
         const card = el("section", "card demo-card");
-        card.appendChild(el("h3", "demo-title", name));
-        const caption = el("div", "caption");
-        const readout = el("b", null, "–");
-        caption.append(el("span", null, "VRAM"), readout);
-        card.appendChild(caption);
-        const set = make(card);
+        card.appendChild(el("h3", "demo-title", g.name));
+        const gauge = arcGauge("CPU / RAM", { nested: true });
+        card.appendChild(gauge.el);
         host.appendChild(card);
-        return { set, readout };
+        return { vmid: g.vmid, gauge };
       });
     }
-
-    const used = gpu.vram_used, total = gpu.vram_total;
-    const ratio = Math.min(1, used / total);
-    const text = `${fmt.gib(used)} / ${fmt.gib(total)} GiB`;
-    for (const b of built) {
-      b.readout.textContent = text;
-      b.set(ratio, used, total, history.agent, status && status.capacity);
+    for (const entry of built) {
+      const g = guests.find(x => x.vmid === entry.vmid);
+      if (!g) continue;
+      const memRatio = g.maxmem ? g.mem / g.maxmem : 0;
+      entry.gauge.set(
+        (g.cpu_pct || 0) / 100,
+        `${fmt.pct(g.cpu_pct)}%`,
+        memRatio,
+        `outer CPU ${fmt.pct(g.cpu_pct)}%  ·  inner RAM ${fmt.pct(memRatio * 100)}%`);
     }
   };
 })();
