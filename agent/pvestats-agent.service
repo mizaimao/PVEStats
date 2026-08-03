@@ -20,14 +20,33 @@ ExecStart=/opt/pvestats-agent/.venv/bin/python /opt/pvestats-agent/agent.py
 Restart=always
 RestartSec=5
 
+# --- keep this service off ml60's disk ---
+# Nothing is persisted: NVML handle and the Ollama model cache live in memory
+# and are rebuilt on start. What remains are incidental writes, closed here.
+
+# Python writes .pyc on first import. ProtectSystem=strict already makes that
+# fail, but this avoids the pointless syscalls.
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Both startup messages go to stderr, so stdout has nothing to carry and its
+# journal writes are pure overhead. stderr is kept: it is two lines per start
+# plus a traceback if the thing dies, which is worth having on disk.
+StandardOutput=null
+StandardError=journal
+# For literally zero journal writes, swap the line above for:
+#   StandardError=null
+# The cost is that a crash becomes silent — `systemctl status` shows the exit
+# code and nothing else.
+
 # No socket activation, deliberately: NVML re-initialisation on each wake
 # costs more than the ~20 MB this process idles at (spec §3.2).
 
-# Enforces the no-writes-to-homelab-disk constraint at the kernel level rather
-# than trusting the code. The whole filesystem is read-only to this unit.
 NoNewPrivileges=true
+# The whole filesystem is read-only to this unit, so a stray write cannot
+# reach ml60's disk even if the code changes.
 ProtectSystem=strict
 ProtectHome=true
+# Private /tmp and /var/tmp, both tmpfs — memory-backed, never the disk.
 PrivateTmp=true
 # PrivateDevices is NOT set — NVML needs /dev/nvidia*.
 

@@ -26,6 +26,8 @@ class TrueNasSource:
         self.identifiers = {}   # graph name -> [identifier, ...]
         self.nics = {}          # interface name -> {role, media, addresses}
         self.disk_sizes = {}    # device name -> bytes
+        self.pools = []         # last pool.query result
+        self._pool_countdown = 0
 
     async def call(self, method, params):
         self.counter += 1
@@ -44,6 +46,8 @@ class TrueNasSource:
             return payload.get("result")
 
     async def connect(self, session):
+        # A reconnect must re-read the pools, not reuse a stale list.
+        self._pool_countdown = 0
         self.ws = await session.ws_connect(self.config.truenas_ws_url,
                                            ssl=False, max_msg_size=0,
                                            heartbeat=30)
@@ -97,7 +101,14 @@ class TrueNasSource:
         now = int(time.time())
         series = await self.call("reporting.netdata_get_data",
                                  [targets, {"start": now - 10, "end": now}])
-        pools = await self.call("pool.query", [])
+
+        # Capacity and health move on the scale of hours, so re-reading them
+        # every 5s costs an RPC per poll for numbers that have not changed.
+        self._pool_countdown -= 1
+        if self._pool_countdown <= 0 or not self.pools:
+            self.pools = await self.call("pool.query", []) or []
+            self._pool_countdown = 6      # x TRUENAS_INTERVAL = every 30s
+        pools = self.pools
 
         interfaces, disks = {}, {}
         for entry in series or []:

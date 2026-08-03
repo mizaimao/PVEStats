@@ -23,6 +23,9 @@ async def run_poller(source, interval, poll):
     """Call `poll` forever on a fixed interval, absorbing every failure."""
     while True:
         started = time.monotonic()
+        # Before new samples land, account for any that were missed — a stall
+        # should read as a gap, not as compressed time.
+        source.note_poll(interval)
         try:
             await poll()
         except asyncio.CancelledError:

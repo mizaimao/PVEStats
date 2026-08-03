@@ -200,7 +200,10 @@ export class Spark {
       const area = svgEl("path", {
         fill: s.color, "fill-opacity": height > 60 ? "0.06" : "0.10",
       });
-      const line = svgEl("polyline", {
+      // A path, not a polyline: nulls mark polls that never happened, and a
+      // path can start a new subpath so the break is visible instead of the
+      // line being drawn straight across missing time.
+      const line = svgEl("path", {
         fill: "none", stroke: s.color, "stroke-width": "2",
         "stroke-linejoin": "round", "stroke-linecap": "round",
       });
@@ -235,7 +238,9 @@ export class Spark {
   scale() {
     if (this.domain) return this.domain[1];
     let max = 0;
-    for (const values of this.data) for (const v of values) if (v > max) max = v;
+    for (const values of this.data) {
+      for (const v of values) if (v != null && v > max) max = v;
+    }
     return Math.max(max, this.minScale) || 1;
   }
 
@@ -272,7 +277,7 @@ export class Spark {
     this.data.forEach((values, i) => {
       const { area, line, dot } = this.parts[i];
       if (values.length < 2) {
-        line.setAttribute("points", "");
+        line.setAttribute("d", "");
         area.setAttribute("d", "");
         dot.setAttribute("r", "0");
         return;
@@ -284,14 +289,34 @@ export class Spark {
       const step = plot / (span - 1);
       const x0 = plot - (values.length - 1) * step;
       const y = v => body - pad - (v / max) * (body - pad * 2);
-      const points = values.map((v, j) =>
-        `${(x0 + j * step).toFixed(1)},${y(v).toFixed(1)}`);
-      line.setAttribute("points", points.join(" "));
-      area.setAttribute("d",
-        `M${x0.toFixed(1)},${body} L${points.join(" L")} L${plot.toFixed(1)},${body} Z`);
-      dot.setAttribute("r", "4");
-      dot.setAttribute("cx", plot.toFixed(1));
-      dot.setAttribute("cy", y(values[values.length - 1]).toFixed(1));
+
+      // Walk the series, splitting into runs separated by gaps.
+      const runs = [];
+      let run = null;
+      values.forEach((v, j) => {
+        if (v == null) { run = null; return; }
+        const point = [x0 + j * step, y(v)];
+        if (run) run.push(point);
+        else runs.push(run = [point]);
+      });
+
+      const stroke = runs.map(r =>
+        "M" + r.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" L")).join(" ");
+      line.setAttribute("d", stroke);
+      // One closed shape per run, so the wash does not span a gap either.
+      area.setAttribute("d", runs.map(r =>
+        `M${r[0][0].toFixed(1)},${body} `
+        + r.map(([x, yy]) => `L${x.toFixed(1)},${yy.toFixed(1)}`).join(" ")
+        + ` L${r[r.length - 1][0].toFixed(1)},${body} Z`).join(" "));
+
+      // The end dot marks the newest reading, which after a stall is the end
+      // of the newest run rather than the right edge.
+      const last = runs.length ? runs[runs.length - 1][runs[runs.length - 1].length - 1] : null;
+      dot.setAttribute("r", last ? "4" : "0");
+      if (last) {
+        dot.setAttribute("cx", last[0].toFixed(1));
+        dot.setAttribute("cy", last[1].toFixed(1));
+      }
     });
   }
 
@@ -344,7 +369,8 @@ export class Spark {
     const index = Math.max(0, Math.min(values.length - 1,
       Math.round(ratio * (values.length - 1))));
     const parts = this.data
-      .map((s, i) => `${this.series[i].label}: ${this.format(s[index])}${this.unit}`)
+      .map((s, i) => `${this.series[i].label}: ` +
+        (s[index] == null ? "no data" : `${this.format(s[index])}${this.unit}`))
       .join("  ");
     const secondsAgo = values.length - 1 - index;
     this.tip.textContent = secondsAgo ? `${parts}  ·  ${secondsAgo} samples ago` : parts;

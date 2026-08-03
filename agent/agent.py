@@ -16,6 +16,7 @@ project and its API has drifted.
 import json
 import os
 import sys
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -30,7 +31,13 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/ps")
 # fraction of that. A stalled Ollama must not cost us the GPU numbers.
 OLLAMA_TIMEOUT = 1.0
 
+# Ollama's loaded-model list changes only when a model loads or unloads, but
+# the dashboard polls at 1 Hz. Caching briefly cuts ~86k requests a day to the
+# inference server down to a few thousand, with no visible staleness.
+OLLAMA_CACHE_SECONDS = 5.0
+
 _handle = None
+_models_cache = (0.0, [])
 
 
 def gpu_handle():
@@ -135,12 +142,20 @@ def gpu_stats():
 
 
 def loaded_models():
-    """Ollama's currently-resident models. Never raises (spec §3.2)."""
+    """Ollama's currently-resident models, cached briefly. Never raises."""
+    global _models_cache
+    cached_at, cached = _models_cache
+    now = time.monotonic()
+    if now - cached_at < OLLAMA_CACHE_SECONDS:
+        return cached
     try:
         with urllib.request.urlopen(OLLAMA_URL, timeout=OLLAMA_TIMEOUT) as response:
             data = json.loads(response.read())
     except Exception:
-        return []  # Ollama down; GPU data is still worth serving
+        # Ollama down; GPU data is still worth serving. Cache the empty result
+        # too, so a dead Ollama is not retried at full poll rate.
+        _models_cache = (now, [])
+        return []
 
     models = []
     for entry in data.get("models", []):
@@ -150,6 +165,7 @@ def loaded_models():
             "size_vram": entry.get("size_vram"),
             "expires_at": entry.get("expires_at"),
         })
+    _models_cache = (now, models)
     return models
 
 

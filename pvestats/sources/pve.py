@@ -16,9 +16,11 @@ from .base import PVE_TIMEOUT
 # is a legitimate LAN range as well as Docker's default pool.
 VIRTUAL_NIC = re.compile(r"^(lo|docker|br-|veth|virbr|cni|kube|flannel|tap)")
 
-# Guest addresses change rarely and each lookup is a separate API call per
-# guest, so they refresh on a slow cycle rather than every poll.
-IP_REFRESH_EVERY = 6        # x PVE_INTERVAL = once a minute
+# Guest addresses barely change, and each lookup is a separate API call per
+# guest. So they are fetched once at startup and then only when a guest needs
+# it — newly seen, no address yet, or rebooted (uptime went backwards). The
+# backstop catches a DHCP lease change on a guest that never restarts.
+IP_BACKSTOP_EVERY = 90      # x PVE_INTERVAL = every 15 minutes
 
 
 class PveSource:
@@ -28,7 +30,8 @@ class PveSource:
         self.rates = RateTracker()
         self.node = config.pve_node
         self.ips = {}           # vmid -> [address, ...]
-        self._ip_countdown = 0
+        self.seen_uptime = {}   # vmid -> last uptime, for reboot detection
+        self._backstop = 0
 
     async def refresh_ips(self, session, guests, headers, base):
         """Ask each running guest's agent for its addresses.
@@ -90,10 +93,28 @@ class PveSource:
         # their stale counters would pollute the rate tracker.
         running_raw = [g for g in resources if g.get("status") == "running"
                        and not g.get("template")]
-        if self._ip_countdown <= 0:
-            await self.refresh_ips(session, running_raw, headers, base)
-            self._ip_countdown = IP_REFRESH_EVERY
-        self._ip_countdown -= 1
+        # Only ask about guests that actually need an answer.
+        self._backstop -= 1
+        due = self._backstop <= 0
+        if due:
+            self._backstop = IP_BACKSTOP_EVERY
+        stale = []
+        for guest in running_raw:
+            vmid, uptime = guest.get("vmid"), guest.get("uptime")
+            if vmid is None:
+                continue
+            was = self.seen_uptime.get(vmid)
+            rebooted = was is not None and uptime is not None and uptime < was
+            if due or rebooted or vmid not in self.ips:
+                stale.append(guest)
+            self.seen_uptime[vmid] = uptime
+        if stale:
+            await self.refresh_ips(session, stale, headers, base)
+
+        # Forget guests that are no longer running, so a later start re-reads.
+        live_ids = {g.get("vmid") for g in running_raw}
+        for gone in [v for v in self.ips if v not in live_ids]:
+            del self.ips[gone]
 
         now = time.monotonic()
         guests = {}

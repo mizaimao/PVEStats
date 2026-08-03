@@ -90,6 +90,27 @@ def wait_for_server(url, deadline):
     return False
 
 
+def keep_awake():
+    """Opt out of macOS App Nap.
+
+    An unfocused or occluded app gets throttled — timers stretch and threads
+    are descheduled — which stalls the collector and leaves real gaps in the
+    ring buffers, not just a stale page. The returned token must stay
+    referenced for the activity to hold.
+
+    Deliberately `AllowingIdleSystemSleep`: this keeps the process scheduled,
+    it does not keep the Mac awake.
+    """
+    try:
+        from Foundation import (NSActivityUserInitiatedAllowingIdleSystemSleep,
+                                NSProcessInfo)
+    except ImportError:
+        return None        # not macOS, or pyobjc absent
+    return NSProcessInfo.processInfo().beginActivityWithOptions_reason_(
+        NSActivityUserInitiatedAllowingIdleSystemSleep,
+        "PVEStats metric collection")
+
+
 def fit_to_screen(webview, want_width, want_height):
     """Clamp the preferred window size to the largest attached display.
 
@@ -116,6 +137,8 @@ def main():
         )
 
     config = Config()
+    # Held for the process lifetime; dropping it re-enables App Nap.
+    activity = keep_awake()      # noqa: F841
     backend = Backend(config)
     backend.start()
 

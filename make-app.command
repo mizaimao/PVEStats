@@ -34,6 +34,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>PVEStats</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <!-- App Nap throttles unfocused apps, which stalls the collector thread and
+       puts real gaps in the history. The process also asks for this at
+       runtime; the key covers the bundle. -->
+  <key>LSAppNapIsDisabled</key><true/>
   <!-- The dashboard window belongs to this process, so the app needs a normal
        Dock icon and menu bar. Do not set LSUIElement here — without a Dock
        presence there is no way to ⌘Q it. -->

@@ -70,12 +70,30 @@ All optional, set via systemd `Environment=`:
 | `PVESTATS_GPU_INDEX` | `0` |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/ps` |
 
-## Notes
+## Disk writes
 
-Per-request logging is disabled. At the dashboard's 1 Hz poll the default
-handler would write ~86,400 journal lines per day to ml60's disk. Startup and
-crash lines still reach the journal — those are rare and worth having. If even
-that is unwanted, `journalctl` can be capped with `RuntimeMaxUse`.
+The agent persists nothing. The NVML handle and the cached Ollama model list
+live in memory and are rebuilt on start; every response is assembled per
+request. What is left is incidental, and the unit closes it:
+
+| Source | Status |
+|---|---|
+| Per-request access log | disabled — at 1 Hz this alone would be ~86,400 lines/day |
+| Python bytecode (`.pyc`) | `PYTHONDONTWRITEBYTECODE=1`, and `ProtectSystem=strict` blocks it anyway |
+| stdout | `StandardOutput=null` — both startup messages go to stderr, so nothing is lost |
+| stderr | kept: two lines per start, plus a traceback if it dies |
+| `/tmp`, `/var/tmp` | `PrivateTmp=true` — tmpfs, memory-backed |
+| Anything else | `ProtectSystem=strict` makes the filesystem read-only to the unit |
+
+For zero journal writes, set `StandardError=null` too — the cost is that a
+crash becomes silent apart from the exit code in `systemctl status`.
+
+System-wide, `Storage=volatile` in `/etc/systemd/journald.conf` keeps *all*
+journal data in `/run` (tmpfs) rather than on disk. That affects every service
+on ml60, not just this one, so it is your call rather than something the unit
+should assume.
+
+## Notes
 
 If Ollama runs in Docker, its PIDs are namespaced, so `procs[].name` will not
 say "ollama". This is expected; VRAM is attributed through the `models` array
