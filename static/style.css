@@ -431,6 +431,48 @@ body {
 }
 .sources { display: flex; gap: 14px; flex-wrap: wrap; }
 
+/* ---------- focus mode ---------- */
+
+.focus-toggle {
+  flex: 1;
+  align-self: stretch;
+  min-width: 40px;
+  min-height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 11px;
+  text-align: right;
+  color: transparent;
+  cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.focus-toggle:hover,
+.focus-toggle:focus-visible {
+  color: var(--ink-muted);
+  background: color-mix(in oklab, var(--series-1) 10%, transparent);
+}
+.focus-toggle span::after { content: attr(data-off); }
+.focus-toggle[aria-pressed="true"] span::after { content: attr(data-on); }
+
+/* Everything but the GPU column steps aside. */
+:root[data-focus="gpu"] #col-left,
+:root[data-focus="gpu"] #basics { display: none; }
+:root[data-focus="gpu"] .row-top { grid-template-columns: 1fr; }
+:root[data-focus="gpu"] #col-right > .card { flex: 1; }
+
+/* Named so the View Transitions API morphs the pane between the two layouts
+   rather than cross-fading the whole page. */
+#col-right { view-transition-name: gpu-pane; }
+::view-transition-old(gpu-pane),
+::view-transition-new(gpu-pane) { animation-duration: 320ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-toggle { transition: none; }
+}
+
 /* Settings placeholder — present so the layout is settled, inert until it
    does something. */
 .settings {
