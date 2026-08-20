@@ -164,6 +164,7 @@ def loaded_models():
             "size": entry.get("size"),
             "size_vram": entry.get("size_vram"),
             "expires_at": entry.get("expires_at"),
+            "context_length": entry.get("context_length"),
         })
     _models_cache = (now, models)
     return models

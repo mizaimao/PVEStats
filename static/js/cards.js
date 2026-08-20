@@ -155,7 +155,8 @@ export function gpuCard(guest) {
   const io = ioRow({ diskIo: false });
 
   const models = dataTable("Loaded models", [
-    { label: "Model" }, { label: "VRAM", num: true }, { label: "Unloads in", num: true },
+    { label: "Model" }, { label: "Processor" },
+    { label: "VRAM", num: true }, { label: "Unloads in", num: true },
   ]);
   const procs = dataTable("GPU processes", [
     { label: "Process" }, { label: "PID", num: true }, { label: "VRAM", num: true },
@@ -212,9 +213,15 @@ export function gpuCard(guest) {
         // One decimal: the link idles well under 1 MiB/s, which rounded to "1".
         pcieRate.set(pcie.rx_kbps == null ? "–"
           : `${(pcie.rx_kbps / 1024).toFixed(1)} / ${(pcie.tx_kbps / 1024).toFixed(1)}`);
-        models.set((gpu.models || []).map(m => [
-          m.name || "?", `${fmt.gib(m.size_vram)} GiB`, fmt.countdown(m.unload_in),
-        ]));
+        models.set((gpu.models || []).map(m => {
+          // Where the model actually runs. A model that spilled to system RAM
+          // is not slightly slower, it is an order of magnitude slower, and
+          // GPU utilisation alone will not tell you.
+          const proc = el("span", m.offloaded ? "offloaded" : null,
+                          m.processor || "unknown");
+          return [m.name || "?", proc,
+                  `${fmt.gib(m.size_vram)} GiB`, fmt.countdown(m.unload_in)];
+        }));
         procs.set((gpu.procs || []).map(p => [
           p.name || "?", String(p.pid), p.vram == null ? "–" : `${fmt.gib(p.vram)} GiB`,
         ]));

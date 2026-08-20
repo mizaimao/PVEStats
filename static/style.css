@@ -76,8 +76,6 @@
   --glow-text:  16px;
   --glow-text-soft: 7px;
   --glow-text-faint: 4px;
-  --glow-text-faint: 4px;
-  --glow-text-faint: 4px;
   --glow-spread: 1px;
 }
 
@@ -151,6 +149,7 @@
   --glow-blur:  10px;
   --glow-wide:  26px;
   --glow-text:  16px;
+  --glow-text-faint: 4px;
   --glow-text-soft: 7px;
   --glow-spread: 1px;
 }
@@ -198,6 +197,7 @@
   --glow-blur:  10px;
   --glow-wide:  26px;
   --glow-text:  16px;
+  --glow-text-faint: 4px;
   --glow-text-soft: 7px;
   --glow-spread: 1px;
 }
@@ -1281,3 +1281,51 @@ body::before {
 .tile.is-critical .value { color: var(--critical); }
 .tile.is-warning .label,
 .tile.is-critical .label { color: var(--ink-2); }
+
+/* A model running partly or wholly on the CPU. Amber because it is a
+   degradation to notice, not a failure — it still works, just slowly. */
+table.data .offloaded {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* ---------- placeholders ----------
+   The layout appears immediately and fills in, rather than hiding behind a
+   loading screen: PVE's first poll can be 10s out, and an empty frame that
+   shows its shape is far less jarring than a blocked view that then snaps
+   into place. Transform-driven, so the sweep costs nothing. */
+.card.skeleton { pointer-events: none; }
+.skeleton-bar {
+  position: relative;
+  overflow: hidden;
+  height: 11px;
+  margin-bottom: 10px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+}
+.skeleton-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    transparent, color-mix(in oklab, var(--ink) 9%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: pvestats-shimmer 1.9s ease-in-out infinite;
+}
+.skeleton-bar.tall { height: 26px; }
+/* Stands in for an arc gauge, so it is a block rather than a bar. Sized
+   here rather than borrowing .arc — that would couple the placeholder to a
+   rule that exists for a different reason. */
+.skeleton-bar.gauge { width: 110px; max-width: 40%; height: 62px; border-radius: 8px; }
+.skeleton-bar.chart { height: 120px; border-radius: 8px; }
+.skeleton-bar.chart.tall { height: 300px; }
+.skeleton-bar:last-child { margin-bottom: 0; }
+.skeleton-note {
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-top: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar::after { animation: none; }
+}
