@@ -157,6 +157,7 @@ export function gpuCard(guest) {
   const models = dataTable("Loaded models", [
     { label: "Model" }, { label: "Processor" },
     { label: "VRAM", num: true }, { label: "Unloads in", num: true },
+    { label: "", num: true },
   ]);
   const procs = dataTable("GPU processes", [
     { label: "Process" }, { label: "PID", num: true }, { label: "VRAM", num: true },
@@ -213,15 +214,20 @@ export function gpuCard(guest) {
         // One decimal: the link idles well under 1 MiB/s, which rounded to "1".
         pcieRate.set(pcie.rx_kbps == null ? "–"
           : `${(pcie.rx_kbps / 1024).toFixed(1)} / ${(pcie.tx_kbps / 1024).toFixed(1)}`);
-        models.set((gpu.models || []).map(m => {
-          // Where the model actually runs. A model that spilled to system RAM
-          // is not slightly slower, it is an order of magnitude slower, and
-          // GPU utilisation alone will not tell you.
-          const proc = el("span", m.offloaded ? "offloaded" : null,
-                          m.processor || "unknown");
-          return [m.name || "?", proc,
-                  `${fmt.gib(m.size_vram)} GiB`, fmt.countdown(m.unload_in)];
-        }));
+        if (!modelsBusy()) {
+          models.set((gpu.models || []).map(m => {
+            // Where the model actually runs. A model that spilled to system RAM
+            // is not slightly slower, it is an order of magnitude slower, and
+            // GPU utilization alone will not tell you.
+            const proc = el("span", m.offloaded ? "offloaded" : null,
+                            m.processor || "unknown");
+            // Absent unless the agent says it will honour an unload, so an
+            // agent with the write path closed off shows no buttons at all.
+            const stop = gpu.can_unload && m.name ? unloadButton(m.name) : el("span");
+            return [m.name || "?", proc, `${fmt.gib(m.size_vram)} GiB`,
+                    fmt.countdown(m.unload_in), stop];
+          }));
+        }
         procs.set((gpu.procs || []).map(p => [
           p.name || "?", String(p.pid), p.vram == null ? "–" : `${fmt.gib(p.vram)} GiB`,
         ]));
@@ -239,6 +245,79 @@ export function gpuCard(guest) {
       applyStale(shell, g.gpu_status || status);
     },
   };
+}
+
+/* --- unloading a model ---------------------------------------------------
+ *
+ * The only control in this dashboard that changes anything on a monitored
+ * machine. Everything else is read-only by design, so this is deliberately
+ * two-step: the first click arms, the second releases. Dropping a 40 GiB
+ * model by misclick would mean waiting out a reload.
+ *
+ * It is recoverable rather than destructive — Ollama reloads the model on the
+ * next request to it — and it goes no further than Ollama's own memory
+ * management. Nothing is written to ml60's disk.
+ */
+const ARM_MS = 4000;
+const armed = new Map();     // model name -> when the arming lapses
+const unloading = new Set();
+
+/* The models table is rebuilt on every tick. While a button is armed or
+   working, that rebuild would replace the node mid-click, so it is held off
+   until the interaction settles; a countdown frozen for a second is a much
+   smaller problem than a button that swallows presses. */
+function modelsBusy() {
+  const now = performance.now();
+  for (const [name, until] of armed) if (until <= now) armed.delete(name);
+  return armed.size > 0 || unloading.size > 0;
+}
+
+function unloadButton(name) {
+  const btn = el("button", "stop", "Stop");
+  btn.type = "button";
+  btn.title = `Unload ${name} from VRAM — it reloads on the next request to it`;
+
+  const disarm = () => {
+    armed.delete(name);
+    btn.className = "stop";
+    btn.textContent = "Stop";
+  };
+
+  btn.addEventListener("click", async () => {
+    if (!armed.has(name)) {
+      armed.set(name, performance.now() + ARM_MS);
+      btn.className = "stop is-armed";
+      btn.textContent = "Confirm";
+      setTimeout(disarm, ARM_MS);
+      return;
+    }
+    armed.delete(name);
+    unloading.add(name);
+    btn.className = "stop is-busy";
+    btn.textContent = "Stopping…";
+    btn.disabled = true;
+    try {
+      const response = await fetch("/api/agent/unload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: name }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      // Leave the row as it is; the next poll drops it, which is the real
+      // confirmation that Ollama let go of the model.
+      btn.textContent = "Stopped";
+    } catch (err) {
+      btn.className = "stop is-failed";
+      btn.textContent = "Failed";
+      btn.title = String(err.message || err);
+      btn.disabled = false;
+      setTimeout(() => { btn.title = `Unload ${name} from VRAM`; disarm(); }, 6000);
+    } finally {
+      unloading.delete(name);
+    }
+  });
+  return btn;
 }
 
 /* --- 4.3 TrueNAS --- */

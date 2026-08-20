@@ -61,8 +61,8 @@
       <button type="button" role="radio" value="snowleopard">Snow Leopard</button>
       <button type="button" role="radio" value="nord">Nord</button>
     </div>
-    <p>Changes surfaces, ink and the two series colours. Status colours
-      (good / warning / critical) stay fixed in every theme, so a colour never
+    <p>Changes surfaces, ink and the two series colors. Status colors
+      (good / warning / critical) stay fixed in every theme, so a color never
       stops meaning what it meant.</p>
   </div>
 
@@ -147,6 +147,18 @@
     <p>Not a setting. The page reads collected state at the rate of the fastest
       source above, since refreshing faster than anything updates only redraws
       identical numbers.</p>
+  </div>
+</div>
+
+<!-- Shown until the collector has something worth drawing. The first PVE poll
+     is 10s away at worst, so an empty dashboard would otherwise be the first
+     thing you see on every launch. -->
+<div class="standby" id="standby">
+  <div class="standby-inner">
+    <div class="standby-mark" aria-hidden="true"></div>
+    <h2>PVEStats</h2>
+    <p id="standby-note">Connecting to sources…</p>
+    <ul class="standby-list" id="standby-list"></ul>
   </div>
 </div>
 

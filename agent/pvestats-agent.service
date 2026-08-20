@@ -27,6 +27,11 @@ RestartSec=5
 # Python writes .pyc on first import. ProtectSystem=strict already makes that
 # fail, but this avoids the pointless syscalls.
 Environment=PYTHONDONTWRITEBYTECODE=1
+# The agent will honour a "stop this model" request from the dashboard, which
+# sets keep_alive=0 on it — the same thing `ollama stop` does. Nothing else on
+# this host is writable through the agent. Uncomment to refuse those requests
+# and make the agent strictly read-only again.
+#Environment=PVESTATS_AGENT_ALLOW_UNLOAD=0
 
 # Both startup messages go to stderr, so stdout has nothing to carry and its
 # journal writes are pure overhead. stderr is kept: it is two lines per start

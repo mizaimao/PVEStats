@@ -55,7 +55,7 @@ function refreshInterval(sources) {
 }
 
 function render(state) {
-  updateSkeletons(state);
+  updateStandby(state);
   renderSources(state.sources);
 
   const derived = document.getElementById("set-page-derived");
@@ -107,69 +107,66 @@ async function tick() {
 
 initAppearance();
 
-/* Placeholders: the layout is drawn immediately and fills in.
+/* Standby: held until the collector has produced something worth drawing.
  *
- * The first PVE poll can be a full 10s away. Rather than hold the whole view
- * behind a loading screen and then snap into place, the page shows the shape
- * it is about to take — right column tall, left column stacked, guests in a
- * row — and each skeleton is replaced by its real card as data lands.
- *
- * Source state is not repeated here; the indicator strip in the title bar
- * already carries it, and carries on carrying it after the page has filled.
+ * The first PVE poll can be a full 10s away, so without this the first thing
+ * every launch shows is an empty dashboard. It names each source and its state
+ * rather than showing a bare spinner — if one is slow or dead, that is the
+ * thing worth knowing while waiting.
  */
-const SKELETONS = [
-  ["col-left", "node"], ["col-left", "nas"],
-  ["col-right", "gpu"],
-  ["basics", "small"], ["basics", "small"],
-  ["basics", "small"], ["basics", "small"],
-];
+const SOURCE_LABELS = {
+  pve: "Proxmox VE",
+  agent: "ml60 GPU agent",
+  truenas: "TrueNAS",
+};
+const STANDBY_GIVE_UP_MS = 25000;
 
-// How many bars each placeholder draws, roughly matching the real card it
-// stands in for, so nothing jumps far when the swap happens.
-const SKELETON_SHAPE = {
-  node:  ["tall", "gauge", "chart"],
-  nas:   ["tall", "gauge", "chart", "", "", "", "", "", "", "", ""],
-  gpu:   ["tall", "gauge", "chart tall", "", "", "", "", "", "", "", "", ""],
-  small: ["tall", "gauge", ""],
+const standby = {
+  el: document.getElementById("standby"),
+  note: document.getElementById("standby-note"),
+  list: document.getElementById("standby-list"),
+  rows: new Map(),
+  done: false,
+  since: performance.now(),
 };
 
-// Long enough that a merely slow PVE still fills the page, short enough that a
-// dead one does not leave a permanently pulsing skeleton.
-const SKELETON_GIVE_UP_MS = 25000;
+function updateStandby(state) {
+  if (standby.done || !standby.el) return;
 
-const skeletons = { els: [], since: performance.now(), done: false };
+  for (const [name, status] of Object.entries(state.sources || {})) {
+    let row = standby.rows.get(name);
+    if (!row) {
+      row = { li: el("li"), dot: el("span", "dot"),
+              label: el("span", null, SOURCE_LABELS[name] || name),
+              detail: el("span", "detail") };
+      row.li.append(row.dot, row.label, row.detail);
+      standby.list.appendChild(row.li);
+      standby.rows.set(name, row);
+    }
+    const ready = status.ok;
+    // A source that is merely "not configured" is settled, not pending —
+    // waiting on it would hang the screen forever.
+    const failed = !status.ok && !!status.error;
+    row.li.classList.toggle("is-ready", ready);
+    row.li.classList.toggle("is-failed", failed && !ready);
+    row.detail.textContent = ready ? "ready"
+                           : failed ? String(status.error).split(":")[0]
+                           : "waiting…";
+  }
 
-function showSkeletons() {
-  for (const [column, kind] of SKELETONS) {
-    const host = document.getElementById(column);
-    if (!host) continue;
-    // Decorative and duplicated — announcing seven empty cards would be noise.
-    const card = el("div", `card skeleton skeleton-${kind}`);
-    card.setAttribute("aria-hidden", "true");
-    for (const size of SKELETON_SHAPE[kind]) card.appendChild(el("div", `skeleton-bar ${size}`));
-    host.appendChild(card);
-    skeletons.els.push(card);
+  const haveSomething = state.node && (state.guests || []).length > 0;
+  const settled = Object.values(state.sources || {})
+    .every(s => s.ok || s.error);
+  const waitedLongEnough = performance.now() - standby.since > STANDBY_GIVE_UP_MS;
+
+  if (haveSomething || (settled && waitedLongEnough) || waitedLongEnough) {
+    standby.done = true;
+    standby.note.textContent = "Ready";
+    standby.el.hidden = true;
+  } else if (settled) {
+    standby.note.textContent = "Waiting for the first full poll…";
   }
 }
-
-function clearSkeletons(message) {
-  skeletons.done = true;
-  for (const card of skeletons.els) card.remove();
-  skeletons.els = [];
-  if (!message) return;
-  const host = document.getElementById("col-left");
-  if (host) host.appendChild(el("p", "skeleton-note", message));
-}
-
-function updateSkeletons(state) {
-  if (skeletons.done) return;
-  if (state.node && (state.guests || []).length > 0) { clearSkeletons(); return; }
-  if (performance.now() - skeletons.since > SKELETON_GIVE_UP_MS) {
-    clearSkeletons("No guest data from Proxmox VE yet — see the source indicators above.");
-  }
-}
-
-showSkeletons();
 
 /* Keyboard: `s` toggles settings, 1-8 pick a theme. Ignored while a control
    has focus, so typing in the panel does not fire them. */

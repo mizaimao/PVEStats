@@ -55,7 +55,10 @@ class AgentSource:
         self.source.push("gpu.power", gpu.get("power"))
         self.source.push("gpu.temp", gpu.get("temp"))
 
-        self.source.succeed({**gpu, "procs": procs, "models": models})
+        # Absent on an agent that predates the unload endpoint, which is
+        # exactly right: the dashboard then shows no stop buttons.
+        self.source.succeed({**gpu, "procs": procs, "models": models,
+                             "can_unload": bool(payload.get("can_unload"))})
 
 
 def _placement(size, size_vram):
