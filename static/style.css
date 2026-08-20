@@ -867,6 +867,7 @@ table.data .name { color: var(--ink); }
 }
 .chips button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
 
+
 .toggles { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .toggle {
   display: inline-flex;
@@ -1282,6 +1283,41 @@ body::before {
 .tile.is-warning .label,
 .tile.is-critical .label { color: var(--ink-2); }
 
+/* The unload button. Quiet until pointed at: this is the one control that
+   reaches back into a monitored machine, so it should not read as a primary
+   action sitting in a table of numbers. */
+button.stop {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in oklab, var(--ink) 18%, transparent);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+button.stop:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: color-mix(in oklab, var(--ink) 38%, transparent);
+}
+button.stop:disabled { cursor: default; }
+/* Armed. Amber, not red — the model reloads on next use, so this warrants
+   deliberation rather than alarm. */
+button.stop.is-armed {
+  color: var(--warning);
+  border-color: color-mix(in oklab, var(--warning) 55%, transparent);
+  background: color-mix(in oklab, var(--warning) 10%, transparent);
+  box-shadow: 0 0 calc(var(--glow-blur) * var(--glow-scale) * 0.5)
+              color-mix(in oklab, var(--warning) 40%, transparent);
+}
+button.stop.is-busy { color: var(--baseline); border-style: dashed; }
+button.stop.is-failed {
+  color: var(--critical);
+  border-color: color-mix(in oklab, var(--critical) 55%, transparent);
+}
+
 /* A model running partly or wholly on the CPU. Amber because it is a
    degradation to notice, not a failure — it still works, just slowly. */
 table.data .offloaded {
@@ -1289,43 +1325,80 @@ table.data .offloaded {
   font-weight: 600;
 }
 
-/* ---------- placeholders ----------
-   The layout appears immediately and fills in, rather than hiding behind a
-   loading screen: PVE's first poll can be 10s out, and an empty frame that
-   shows its shape is far less jarring than a blocked view that then snaps
-   into place. Transform-driven, so the sweep costs nothing. */
-.card.skeleton { pointer-events: none; }
-.skeleton-bar {
-  position: relative;
-  overflow: hidden;
-  height: 11px;
-  margin-bottom: 10px;
-  border-radius: 5px;
-  background: color-mix(in oklab, var(--ink) 7%, transparent);
-}
-.skeleton-bar::after {
-  content: "";
-  position: absolute;
+/* ---------- standby ----------
+   The collector needs one full poll cycle before there is anything to draw,
+   and PVE's is 10s. This covers that gap and says which source is holding
+   things up rather than showing a bare spinner. */
+.standby {
+  position: fixed;
   inset: 0;
-  background: linear-gradient(90deg,
-    transparent, color-mix(in oklab, var(--ink) 9%, transparent), transparent);
-  transform: translateX(-100%);
-  animation: pvestats-shimmer 1.9s ease-in-out infinite;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--plane);
+  transition: opacity 0.45s ease, visibility 0.45s;
 }
-.skeleton-bar.tall { height: 26px; }
-/* Stands in for an arc gauge, so it is a block rather than a bar. Sized
-   here rather than borrowing .arc — that would couple the placeholder to a
-   rule that exists for a different reason. */
-.skeleton-bar.gauge { width: 110px; max-width: 40%; height: 62px; border-radius: 8px; }
-.skeleton-bar.chart { height: 120px; border-radius: 8px; }
-.skeleton-bar.chart.tall { height: 300px; }
-.skeleton-bar:last-child { margin-bottom: 0; }
-.skeleton-note {
-  font-size: 11px;
+.standby[hidden] {
+  display: flex;          /* [hidden] would kill the fade */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.standby-inner { text-align: center; max-width: 640px; }
+.standby-inner h2 {
+  font-size: 34px;
+  font-weight: 600;
+  margin: 32px 0 8px;
+  letter-spacing: 0.02em;
+}
+.standby-inner p {
+  font-size: 24px;
   color: var(--ink-muted);
-  margin-top: 12px;
+  margin: 0 0 36px;
 }
+/* A slow breathing ring rather than a spinner: nothing here is a progress
+   bar, and a spinner implies a duration we cannot promise. */
+.standby-mark {
+  width: 108px;
+  height: 108px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: 4px solid color-mix(in oklab, var(--series-1) 30%, transparent);
+  box-shadow: 0 0 calc(var(--glow-blur) * var(--glow-scale)) var(--series-1);
+  animation: pvestats-breathe 2.4s ease-in-out infinite;
+}
+@keyframes pvestats-breathe {
+  0%, 100% { transform: scale(0.86); opacity: 0.45; }
+  50%      { transform: scale(1);    opacity: 1; }
+}
+.standby-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+.standby-list li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 24px;
+  color: var(--ink-muted);
+}
+.standby-list .dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--baseline);
+  flex: none;
+}
+.standby-list li.is-ready { color: var(--ink-2); }
+.standby-list li.is-ready .dot { background: var(--good); }
+.standby-list li.is-failed .dot { background: var(--critical); }
+.standby-list .detail { margin-left: auto; color: var(--baseline); font-size: 22px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .skeleton-bar::after { animation: none; }
+  .standby-mark { animation: none; }
+  .standby { transition: none; }
 }

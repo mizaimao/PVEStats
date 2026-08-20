@@ -27,6 +27,24 @@ PORT = int(os.environ.get("PVESTATS_AGENT_PORT", "9836"))
 GPU_INDEX = int(os.environ.get("PVESTATS_GPU_INDEX", "0"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/ps")
 
+# The one write path in this project. Everything else here — and everything on
+# the Proxmox and TrueNAS side — is strictly read-only by design (spec §1), so
+# this is deliberately narrow: it can set keep_alive=0 on a named model and
+# nothing else. It cannot pull, run, delete or configure anything.
+#
+# Set PVESTATS_AGENT_ALLOW_UNLOAD=0 to close it off entirely; the agent then
+# refuses with 403 and the dashboard hides the buttons.
+ALLOW_UNLOAD = os.environ.get("PVESTATS_AGENT_ALLOW_UNLOAD", "1") != "0"
+OLLAMA_GENERATE_URL = os.environ.get(
+    "OLLAMA_GENERATE_URL",
+    OLLAMA_URL.rsplit("/api/", 1)[0] + "/api/generate" if "/api/" in OLLAMA_URL
+    else "http://127.0.0.1:11434/api/generate",
+)
+
+# An unload waits for any in-flight generation to finish before the model is
+# released, so this gets far longer than the poll timeout above.
+UNLOAD_TIMEOUT = 30.0
+
 # The dashboard allows 2s for this whole request (spec §7), so Ollama gets a
 # fraction of that. A stalled Ollama must not cost us the GPU numbers.
 OLLAMA_TIMEOUT = 1.0
@@ -170,8 +188,30 @@ def loaded_models():
     return models
 
 
+def unload_model(name):
+    """Ask Ollama to drop a model from memory.
+
+    There is no dedicated unload endpoint: `keep_alive: 0` on an empty
+    generate request is the documented mechanism, and is exactly what
+    `ollama stop` does. A successful call comes back with
+    done_reason == "unload".
+    """
+    global _models_cache
+    body = json.dumps({"model": name, "keep_alive": 0}).encode()
+    request = urllib.request.Request(
+        OLLAMA_GENERATE_URL, data=body,
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=UNLOAD_TIMEOUT) as response:
+        result = json.loads(response.read() or b"{}")
+    # The cached list still shows the model as resident; drop it so the next
+    # poll reflects what just happened instead of waiting out the cache.
+    _models_cache = (0.0, [])
+    return {"ok": result.get("done_reason") == "unload", "result": result}
+
+
 def build_payload():
-    payload = {"gpu": None, "models": loaded_models(), "error": None}
+    payload = {"gpu": None, "models": loaded_models(),
+               "can_unload": ALLOW_UNLOAD, "error": None}
     try:
         payload["gpu"] = gpu_stats()
     except Exception as exc:
@@ -192,16 +232,40 @@ class Handler(BaseHTTPRequestHandler):
         no-writes-to-homelab-disk constraint.
         """
 
-    def do_GET(self):
-        if self.path.split("?")[0] != "/":
-            self.send_error(404)
-            return
-        body = json.dumps(build_payload()).encode()
-        self.send_response(200)
+    def reply(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        if self.path.split("?")[0] != "/unload":
+            self.send_error(404)
+            return
+        if not ALLOW_UNLOAD:
+            self.reply(403, {"ok": False, "error": "unload disabled on this agent"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            name = json.loads(self.rfile.read(length) or b"{}").get("model")
+        except Exception:
+            self.reply(400, {"ok": False, "error": "malformed request"})
+            return
+        if not isinstance(name, str) or not name.strip():
+            self.reply(400, {"ok": False, "error": "no model named"})
+            return
+        try:
+            self.reply(200, unload_model(name.strip()))
+        except Exception as exc:
+            self.reply(502, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+    def do_GET(self):
+        if self.path.split("?")[0] != "/":
+            self.send_error(404)
+            return
+        self.reply(200, build_payload())
 
 
 def main():

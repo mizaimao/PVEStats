@@ -11,6 +11,10 @@ from aiohttp import web
 
 from .sources import PVE_TIMEOUT
 
+# Unloading blocks until any in-flight generation finishes, so it needs far
+# longer than a poll. Matches the agent's own ceiling.
+UNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=35)
+
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 # rrddata accepts a fixed set of timeframes. Whitelisted rather than passed
@@ -98,6 +102,41 @@ async def handle_ui_post(request):
     return web.json_response(saved)
 
 
+async def handle_unload(request):
+    """Relay one "stop this model" request to the ml60 agent.
+
+    The browser cannot call the agent directly — it is on another host, and
+    the page has no network access beyond localhost — so this proxies it.
+    Only the model name crosses; the agent decides whether to honour it.
+
+    This is the project's only request that changes anything on a monitored
+    machine. It is confined to Ollama's own memory management: the model is
+    dropped from VRAM and reloads on the next request to it. Nothing is
+    written to ml60's disk, no configuration changes, and it goes through the
+    agent that is already there rather than opening any new path in.
+    """
+    config = request.app["collector"].config
+    if not config.agent_configured:
+        raise web.HTTPServiceUnavailable(text="no ml60 agent configured")
+    try:
+        name = (await request.json()).get("model")
+    except Exception:
+        raise web.HTTPBadRequest(text="expected a JSON object")
+    if not isinstance(name, str) or not name.strip():
+        raise web.HTTPBadRequest(text="no model named")
+
+    url = config.agent_url.rstrip("/") + "/unload"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={"model": name.strip()},
+                                    timeout=UNLOAD_TIMEOUT) as response:
+                payload = await response.json()
+                status = response.status
+    except Exception as exc:
+        raise web.HTTPBadGateway(text=f"{type(exc).__name__}: {exc}")
+    return web.json_response(payload, status=200 if status == 200 else 502)
+
+
 async def handle_index(request):
     return web.FileResponse(STATIC / "index.html",
                             headers={"Cache-Control": "no-store"})
@@ -111,5 +150,6 @@ def build_app(collector):
     app.router.add_get("/api/ui", handle_ui_get)
     app.router.add_post("/api/ui", handle_ui_post)
     app.router.add_get("/api/history/{vmid}", handle_history)
+    app.router.add_post("/api/agent/unload", handle_unload)
     app.router.add_static("/static/", STATIC)
     return app
