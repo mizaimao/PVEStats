@@ -868,6 +868,55 @@ table.data .name { color: var(--ink); }
 .chips button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
 
 
+/* Which family a theme belongs to, marked on the chip itself. Ten of the
+   twelve themes glow to some degree, so a plain glow/no-glow mark would say
+   almost nothing; the useful distinction is between the themes built around
+   glow, the glass ones that use it sparingly, and the two flat ones.
+
+   Deliberately not scaled by --glow-scale: these describe what a theme is,
+   and must still read when glow is turned off. */
+#set-theme button[value="ice"] { --chip: #3987e5; }
+#set-theme button[value="neon"] { --chip: #19a3c9; }
+#set-theme button[value="amber"] { --chip: #bd8400; }
+#set-theme button[value="synthwave"] { --chip: #8a5cf6; }
+#set-theme button[value="matrix"] { --chip: #2ea043; }
+#set-theme button[value="ember"] { --chip: #d9531e; }
+#set-theme button[value="glass"] { --chip: #3987e5; }
+#set-theme button[value="vista"] { --chip: #1b9da5; }
+#set-theme button[value="win7"] { --chip: #158ce7; }
+#set-theme button[value="snowleopard"] { --chip: #3987e5; }
+
+#set-theme button[data-glow] {
+  border-color: color-mix(in oklab, var(--chip) 45%, var(--hairline));
+}
+/* Glow family: a halo in the theme's own accent. */
+[data-glow="glow"] {
+  box-shadow: 0 0 8px color-mix(in oklab, var(--chip) 60%, transparent),
+              inset 0 0 7px color-mix(in oklab, var(--chip) 16%, transparent);
+}
+/* Glass family: no halo — a lit top edge over a translucent fill, which is
+   what the glass themes actually do to their cards. */
+[data-glow="glass"] {
+  background: linear-gradient(
+    color-mix(in oklab, var(--chip) 16%, transparent),
+    color-mix(in oklab, var(--chip) 5%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 40%, transparent);
+}
+#set-theme button[data-glow]:hover {
+  border-color: color-mix(in oklab, var(--chip) 75%, var(--hairline));
+}
+
+.chip-key { margin-top: 6px; }
+.key-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 11px;
+  vertical-align: -1px;
+  border-radius: 20px;
+  border: 1px solid color-mix(in oklab, var(--chip) 45%, var(--hairline));
+  --chip: var(--series-1);
+}
+
 .toggles { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .toggle {
   display: inline-flex;
