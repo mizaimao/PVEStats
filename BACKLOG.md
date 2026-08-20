@@ -40,6 +40,11 @@ This is the largest capability currently sitting idle.
   themes currently approximate their wallpapers with gradients. Using the actual
   images as the page background would make the frosted panes genuinely Aero.
   Needs the JPEGs kept around and referenced.
+- **The settings panel is barely legible on Snow Leopard.** The glass themes
+  give it a very translucent background, and at that theme's brightness the
+  dashboard behind shows straight through the text. Worst on Snow Leopard;
+  visible on Vista and Windows 7 too. Needs a more opaque panel backdrop for
+  the glass family specifically.
 - **Sparkline area gradient** — fade the wash downward instead of a flat fill.
 - **Lucide icons** in card headers (server / cpu / hard-drive / activity).
 

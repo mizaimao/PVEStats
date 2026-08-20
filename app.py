@@ -153,7 +153,11 @@ def main():
     # Measured: the full layout is ~1160px tall between 1280 and 1500px wide,
     # and grows to ~1280px below that as columns collapse. Open large enough to
     # show everything without a scrollbar, but never larger than the display.
-    width, height = fit_to_screen(webview, 1500, 1230)
+    #
+    # Width is three quarters of that measured 1500: the two-column row still
+    # holds at 1125px, and a window that does not dominate the screen is easier
+    # to leave open alongside other work — which is how this gets used.
+    width, height = fit_to_screen(webview, 1125, 1230)
 
     webview.create_window(
         "PVEStats", url,

@@ -48,22 +48,27 @@
     <label for="set-theme">Theme</label>
     <span class="applies ok">Live</span>
     <div class="chips" id="set-theme" role="radiogroup" aria-label="Theme">
-      <button type="button" role="radio" value="ice">Ice</button>
+      <button type="button" role="radio" value="ice" data-glow="glow">Ice</button>
       <button type="button" role="radio" value="midnight">Midnight</button>
-      <button type="button" role="radio" value="neon">Neon</button>
-      <button type="button" role="radio" value="amber">Amber</button>
-      <button type="button" role="radio" value="synthwave">Synthwave</button>
-      <button type="button" role="radio" value="matrix">Matrix</button>
-      <button type="button" role="radio" value="ember">Ember</button>
-      <button type="button" role="radio" value="glass">Glass</button>
-      <button type="button" role="radio" value="vista">Vista</button>
-      <button type="button" role="radio" value="win7">Windows 7</button>
-      <button type="button" role="radio" value="snowleopard">Snow Leopard</button>
+      <button type="button" role="radio" value="neon" data-glow="glow">Neon</button>
+      <button type="button" role="radio" value="amber" data-glow="glow">Amber</button>
+      <button type="button" role="radio" value="synthwave" data-glow="glow">Synthwave</button>
+      <button type="button" role="radio" value="matrix" data-glow="glow">Matrix</button>
+      <button type="button" role="radio" value="ember" data-glow="glow">Ember</button>
+      <button type="button" role="radio" value="glass" data-glow="glass">Glass</button>
+      <button type="button" role="radio" value="vista" data-glow="glass">Vista</button>
+      <button type="button" role="radio" value="win7" data-glow="glass">Windows 7</button>
+      <button type="button" role="radio" value="snowleopard" data-glow="glass">Snow Leopard</button>
       <button type="button" role="radio" value="nord">Nord</button>
     </div>
     <p>Changes surfaces, ink and the two series colors. Status colors
       (good / warning / critical) stay fixed in every theme, so a color never
       stops meaning what it meant.</p>
+    <p class="chip-key">Chips are marked by family: a
+      <span class="key-swatch" data-glow="glow"></span> halo for the themes
+      built around glow, a <span class="key-swatch" data-glow="glass"></span>
+      frosted edge for the glass ones, and nothing for the flat themes. The
+      halo is drawn in each theme's own accent, so the chip previews it.</p>
   </div>
 
   <div class="setting">
