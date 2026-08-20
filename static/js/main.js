@@ -55,6 +55,7 @@ function refreshInterval(sources) {
 }
 
 function render(state) {
+  updateSkeletons(state);
   renderSources(state.sources);
 
   const derived = document.getElementById("set-page-derived");
@@ -105,6 +106,70 @@ async function tick() {
 }
 
 initAppearance();
+
+/* Placeholders: the layout is drawn immediately and fills in.
+ *
+ * The first PVE poll can be a full 10s away. Rather than hold the whole view
+ * behind a loading screen and then snap into place, the page shows the shape
+ * it is about to take — right column tall, left column stacked, guests in a
+ * row — and each skeleton is replaced by its real card as data lands.
+ *
+ * Source state is not repeated here; the indicator strip in the title bar
+ * already carries it, and carries on carrying it after the page has filled.
+ */
+const SKELETONS = [
+  ["col-left", "node"], ["col-left", "nas"],
+  ["col-right", "gpu"],
+  ["basics", "small"], ["basics", "small"],
+  ["basics", "small"], ["basics", "small"],
+];
+
+// How many bars each placeholder draws, roughly matching the real card it
+// stands in for, so nothing jumps far when the swap happens.
+const SKELETON_SHAPE = {
+  node:  ["tall", "gauge", "chart"],
+  nas:   ["tall", "gauge", "chart", "", "", "", "", "", "", "", ""],
+  gpu:   ["tall", "gauge", "chart tall", "", "", "", "", "", "", "", "", ""],
+  small: ["tall", "gauge", ""],
+};
+
+// Long enough that a merely slow PVE still fills the page, short enough that a
+// dead one does not leave a permanently pulsing skeleton.
+const SKELETON_GIVE_UP_MS = 25000;
+
+const skeletons = { els: [], since: performance.now(), done: false };
+
+function showSkeletons() {
+  for (const [column, kind] of SKELETONS) {
+    const host = document.getElementById(column);
+    if (!host) continue;
+    // Decorative and duplicated — announcing seven empty cards would be noise.
+    const card = el("div", `card skeleton skeleton-${kind}`);
+    card.setAttribute("aria-hidden", "true");
+    for (const size of SKELETON_SHAPE[kind]) card.appendChild(el("div", `skeleton-bar ${size}`));
+    host.appendChild(card);
+    skeletons.els.push(card);
+  }
+}
+
+function clearSkeletons(message) {
+  skeletons.done = true;
+  for (const card of skeletons.els) card.remove();
+  skeletons.els = [];
+  if (!message) return;
+  const host = document.getElementById("col-left");
+  if (host) host.appendChild(el("p", "skeleton-note", message));
+}
+
+function updateSkeletons(state) {
+  if (skeletons.done) return;
+  if (state.node && (state.guests || []).length > 0) { clearSkeletons(); return; }
+  if (performance.now() - skeletons.since > SKELETON_GIVE_UP_MS) {
+    clearSkeletons("No guest data from Proxmox VE yet — see the source indicators above.");
+  }
+}
+
+showSkeletons();
 
 /* Keyboard: `s` toggles settings, 1-8 pick a theme. Ignored while a control
    has focus, so typing in the panel does not fire them. */
