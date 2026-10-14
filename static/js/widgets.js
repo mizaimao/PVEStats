@@ -435,12 +435,7 @@ export class Spark {
         dot.setAttribute("r", "0");
         return;
       }
-      // Fixed step across the buffer's capacity, with the newest sample pinned
-      // to the right edge, so the trace fills in from the right and then
-      // scrolls rather than stretching.
-      const span = Math.max(this.capacity || values.length, values.length);
-      const step = plot / (span - 1);
-      const x0 = plot - (values.length - 1) * step;
+      const { step, x0 } = this.xLayout(values.length);
       const y = v => body - pad - (v / max) * (body - pad * 2);
 
       // Walk the series, splitting into runs separated by gaps.
@@ -524,22 +519,52 @@ export class Spark {
     });
   }
 
+  /* Where samples sit horizontally: a fixed step across the buffer's
+     capacity, with the newest sample pinned to the right edge of the plot, so
+     the trace fills in from the right and then scrolls rather than
+     stretching. Shared by draw() and hover() so the tooltip always reads the
+     sample under the cursor. */
+  xLayout(count) {
+    const plot = Math.max(20, this.width - this.gutter);
+    const span = Math.max(this.capacity || count, count);
+    const step = plot / (span - 1);
+    return { step, x0: plot - (count - 1) * step };
+  }
+
   /* Hover enhances; it never gates a value — the current reading is always
-     printed in the tile beside the sparkline. */
+     printed in the tile beside the sparkline.
+
+     Hiding sets opacity inline; showing clears it, so the stylesheet's
+     `.spark:hover .tip` rule applies again. A lingering inline 0 would hide
+     the tip for good. */
   hover(event) {
     const values = this.data[0] || [];
-    if (values.length < 2) { this.tip.style.opacity = 0; return; }
     const rect = this.svg.getBoundingClientRect();
-    const ratio = (event.clientX - rect.left) / rect.width;
-    const index = Math.max(0, Math.min(values.length - 1,
-      Math.round(ratio * (values.length - 1))));
+    const hide = () => { this.tip.style.opacity = "0"; };
+    if (values.length < 2 || !rect.width) return hide();
+
+    const scale = rect.width / this.width;          // drawing units to pixels
+    const { step, x0 } = this.xLayout(values.length);
+    const x = (event.clientX - rect.left) / scale;
+    // Left of the oldest sample is time not collected yet.
+    if (x < x0 - step / 2) return hide();
+    const index = Math.min(values.length - 1, Math.round((x - x0) / step));
+    const samplesAgo = values.length - 1 - index;
+
+    // Series can differ in length, and each is right-aligned, so count back
+    // from each one's newest sample rather than reusing the first's index.
     const parts = this.data
-      .map((s, i) => `${this.series[i].label}: ` +
-        (s[index] == null ? "no data" : `${this.format(s[index])}${this.unit}`))
+      .map((s, i) => {
+        const v = s[s.length - 1 - samplesAgo];
+        return `${this.series[i].label}: `
+          + (v == null ? "no data" : `${this.format(v)}${this.unit}`);
+      })
       .join("  ");
-    const secondsAgo = values.length - 1 - index;
-    this.tip.textContent = secondsAgo ? `${parts}  ·  ${secondsAgo} samples ago` : parts;
-    this.tip.style.left = `${ratio * 100}%`;
+    this.tip.textContent = samplesAgo ? `${parts}  ·  ${samplesAgo} samples ago` : parts;
+    this.tip.style.opacity = "";
+    // Pinned to the sample, not the cursor, so it points at what it reads.
+    const offset = rect.left - this.el.getBoundingClientRect().left;
+    this.tip.style.left = `${(offset + (x0 + index * step) * scale).toFixed(1)}px`;
   }
 }
 
