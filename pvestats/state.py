@@ -23,6 +23,7 @@ class Source:
         self.maxlen = max(2, round(history_seconds / interval))
         self.series = {}
         self._last_poll = None
+        self.failures = 0       # consecutive failed polls since the last success
 
     def resize(self, history_seconds):
         """Change how much history is kept, preserving the newest samples."""
@@ -65,12 +66,29 @@ class Source:
         self.data = data
         self.ok = True
         self.error = None
+        self.failures = 0
         self.updated_at = time.monotonic()
 
     def fail(self, error):
         # data is deliberately left alone — last known values stay visible.
         self.ok = False
         self.error = str(error)
+        self.failures += 1
+
+    @property
+    def waiting(self):
+        """True while a source that has never answered is on its first retry.
+
+        A first failure right after launch is usually transient, and PVE
+        retries only every 10s, so its error sat on screen for a whole
+        interval while the retry was about to succeed. The error is held back
+        until the retry fails too, which for PVE is more than 10s in.
+
+        A source that never polls (not configured) is never waiting: its
+        error is final.
+        """
+        return (self.updated_at is None and self.failures == 1
+                and self._last_poll is not None)
 
     @property
     def age(self):
@@ -82,7 +100,8 @@ class Source:
     def status(self):
         return {
             "ok": self.ok,
-            "error": self.error,
+            # No error while waiting, so the page shows "waiting…", not a fault.
+            "error": None if self.waiting else self.error,
             "age": self.age,
             "interval": self.interval,
             # Ring-buffer length, so the page can hold the x-axis fixed instead

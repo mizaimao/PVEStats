@@ -505,6 +505,7 @@ body {
 }
 .src.is-stale .dot { background: var(--warning); }
 .src.is-down  .dot { background: var(--critical); }
+.src.is-waiting .dot { background: var(--baseline); }
 .src .age { color: var(--baseline); }
 
 /* ---------- cards ---------- */
@@ -1194,7 +1195,7 @@ table.data caption {
   50%      { opacity: 0.55; box-shadow: 0 0 0 3px transparent; }
 }
 .src .dot { color: var(--good); }
-.src:not(.is-stale):not(.is-down) .dot {
+.src:not(.is-stale):not(.is-down):not(.is-waiting) .dot {
   animation: pvestats-pulse 2s ease-in-out infinite;
 }
 
