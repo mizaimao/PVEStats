@@ -18,7 +18,8 @@ function renderSources(sources) {
   host.textContent = "";
   for (const [name, status] of Object.entries(sources)) {
     const item = el("span", "src");
-    if (!status.ok) item.classList.add("is-down");
+    // Not ok with no error is a source that has not answered yet: neutral.
+    if (!status.ok) item.classList.add(status.error ? "is-down" : "is-waiting");
     else if (status.stale) item.classList.add("is-stale");
     const dot = el("span", "dot");
     const label = el("span", null, name);
