@@ -109,6 +109,11 @@ Fetch on demand when a user expands a card, not on the polling loop.
 
 `GET http://ml60:9836/` — no auth (LAN only).
 
+*Update 2026-10-14:* the agent now listens on ml60's 127.0.0.1:9836 only, and
+Caddy publishes it as `https://pvestats.ml60.lan/` with a certificate from
+Frank Home CA, like every other ml60 service. The collector verifies it
+against `certs/home-root.crt`.
+
 This agent is to be written as part of this project and deployed to ml60. It
 reads NVML directly (library call, not a `nvidia-smi` subprocess) and merges in
 Ollama's loaded-model list.
@@ -172,6 +177,11 @@ passthrough. The hypervisor has no counters for a passed-through device, so
 `netin`/`netout` from the PVE API are meaningless for this guest. The numbers
 must come from inside TrueNAS.
 
+*Update 2026-10-14:* the NAS no longer uses a passed-through NIC; its traffic
+goes over the Proxmox bridge on a virtio NIC, so PVE's `netin`/`netout` are
+valid for it again. This source still earns its place: per-disk I/O and pool
+health exist only inside TrueNAS.
+
 **Endpoint discovery is required.** TrueNAS's reporting endpoints have moved
 between releases. Do not hardcode a path from memory. Fetch the interactive API
 documentation at `https://<truenas-host>/api/docs`, find the current reporting
@@ -210,7 +220,9 @@ for the slow poll.
 - Per-disk read/write (TrueNAS API, 5s)
 - Pool health and capacity (TrueNAS API, 5s)
 
-Do not display PVE's `netin`/`netout` on this card — see 3.3.
+Do not display PVE's `netin`/`netout` on this card — see 3.3. (Since
+2026-10-14 they would be valid, but the card reads throughput from inside
+TrueNAS, which also splits it per interface.)
 
 ### 4.4 All other guests
 
@@ -227,24 +239,27 @@ hosts:
   - vmid: 100
     name: ml60
     view: gpu
-    agent_url: http://ml60:9836/
   - vmid: 101
     name: truenas
     view: nas
-    api_url: https://truenas.lan/api/v2.0
   - vmid: 102
     name: hermes
     view: basic
 ```
 
 `view` selects the panel set. Unknown VMIDs returned by PVE but absent from the
-config default to `basic`.
+config default to `basic`. Addresses (the agent URL, the TrueNAS host) live in
+`.env` with the credentials, not here.
 
 ## 5. Non-goals
 
 - No alerting, no notification delivery.
 - No historical storage. The PVE `rrddata` endpoint covers history that matters.
 - No control actions. Read-only, including in the UI — no start/stop buttons.
+  One exception, added 2026-08-20: the ml60 card can unload a loaded Ollama
+  model (two clicks), through the agent. It frees VRAM only; nothing is
+  written to disk, and the model reloads on its next request. Setting
+  `PVESTATS_AGENT_ALLOW_UNLOAD=0` on the agent turns it off.
 - No authentication on the local server. It binds `127.0.0.1`.
 - No Docker, no build pipeline, no bundler.
 

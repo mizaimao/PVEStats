@@ -6,7 +6,8 @@ one agent the design permits. It reads NVML directly — a library call, not an
 `nvidia-smi` subprocess — and merges in Ollama's loaded-model list so the
 dashboard makes one request instead of two.
 
-Serves GET / on :9836. No auth; LAN only.
+Serves GET / on 127.0.0.1:9836. Caddy on ml60 publishes it over HTTPS as
+https://pvestats.ml60.lan, like every other service there. No auth.
 
 Requires `nvidia-ml-py` (the official binding). The import name is `pynvml`,
 but do NOT install the abandoned `pynvml` package from PyPI — it is a different
@@ -22,7 +23,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pynvml as nvml
 
-BIND = os.environ.get("PVESTATS_AGENT_BIND", "0.0.0.0")
+# Loopback only: ml60's services listen on 127.0.0.1 and Caddy is the one
+# way in from the network.
+BIND = os.environ.get("PVESTATS_AGENT_BIND", "127.0.0.1")
 PORT = int(os.environ.get("PVESTATS_AGENT_PORT", "9836"))
 GPU_INDEX = int(os.environ.get("PVESTATS_GPU_INDEX", "0"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/ps")

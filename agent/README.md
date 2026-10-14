@@ -1,7 +1,8 @@
 # pvestats-agent
 
 Runs on ml60. Serves GPU telemetry and Ollama's loaded-model list as JSON on
-`:9836`, no auth, LAN only.
+`127.0.0.1:9836`, no auth. Caddy on ml60 publishes it to the LAN as
+`https://pvestats.ml60.lan/`, with a certificate from Frank Home CA.
 
 This is the one agent the design permits, because ml60's GPU is PCIe
 passthrough and therefore invisible to the hypervisor (spec §3.2).
@@ -26,6 +27,17 @@ then:
 Verify:
 
     curl -s http://localhost:9836/ | python3 -m json.tool
+
+Then publish it through Caddy. Add this block to `/opt/ml60-stack/Caddyfile`
+(owned by frank, no sudo) and restart Caddy, which briefly drops every ml60
+HTTPS service:
+
+    pvestats.ml60.lan {
+    	tls internal
+    	reverse_proxy 127.0.0.1:9836
+    }
+
+From the Mac, `curl -s https://pvestats.ml60.lan/` should answer.
 
 ## Before enabling: check the service user
 
@@ -56,8 +68,9 @@ and no packages. Delete the venv and rebuild it; do not try to repair it.
 Empty `procs[]` with every other field populated means the unit's `User=` does
 not match Ollama's. NVML cannot see other users' compute processes.
 
-Success on ml60's own `curl` but a timeout from the Mac is a firewall; the
-agent binds `0.0.0.0`, so open 9836 to the LAN.
+Success on ml60's own `curl` but a failure from the Mac is Caddy: check the
+`pvestats.ml60.lan` block. A certificate error on the Mac means the collector
+is not reading `certs/home-root.crt`.
 
 ## Configuration
 
@@ -65,7 +78,7 @@ All optional, set via systemd `Environment=`:
 
 | Variable | Default |
 |---|---|
-| `PVESTATS_AGENT_BIND` | `0.0.0.0` |
+| `PVESTATS_AGENT_BIND` | `127.0.0.1` |
 | `PVESTATS_AGENT_PORT` | `9836` |
 | `PVESTATS_GPU_INDEX` | `0` |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/ps` |

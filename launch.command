@@ -13,7 +13,24 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+# Needs Python 3.11 or newer. PVEStats.app starts with launchd's bare PATH,
+# where python3 is Apple's 3.9; pyenv's shims honour .python-version instead.
+[ -d "$HOME/.pyenv/shims" ] && PATH="$HOME/.pyenv/shims:$PATH"
+new_enough() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; }
+
+if [ -x .venv/bin/python ] && ! new_enough .venv/bin/python; then
+  echo ".venv runs $(.venv/bin/python --version 2>&1); PVEStats needs 3.11 or newer."
+  echo "Remove .venv and launch again to rebuild it."
+  read -r -p "Press return to close."
+  exit 1
+fi
+
 if [ ! -x .venv/bin/python ]; then
+  if ! new_enough python3; then
+    echo "python3 is $(python3 --version 2>&1); PVEStats needs 3.11 or newer."
+    read -r -p "Press return to close."
+    exit 1
+  fi
   echo "Creating virtualenv…"
   python3 -m venv .venv || { read -r -p "venv failed. Press return."; exit 1; }
 fi

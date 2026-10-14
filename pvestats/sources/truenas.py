@@ -52,6 +52,17 @@ class TrueNasSource:
                                            ssl=False, max_msg_size=0,
                                            heartbeat=30)
         self.counter = 0
+        try:
+            await self._handshake()
+        except Exception:
+            # poll() reconnects only when the socket is closed, so a socket
+            # left open after a failed login or a timed-out discovery call
+            # would stay half set up for good: no interfaces, no disks.
+            await self.close()
+            raise
+
+    async def _handshake(self):
+        """Log in and discover what to poll, on a freshly opened socket."""
         if await self.call("auth.login_with_api_key",
                            [self.config.truenas_api_key]) is not True:
             raise RuntimeError("api key rejected")
