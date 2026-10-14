@@ -39,7 +39,8 @@ This is the largest capability currently sitting idle.
 - **Real wallpapers behind the glass themes.** The Vista / Win7 / Snow Leopard
   themes currently approximate their wallpapers with gradients. Using the actual
   images as the page background would make the frosted panes genuinely Aero.
-  Needs the JPEGs kept around and referenced.
+  The reference JPEGs are no longer in the folder, so they would need finding
+  again.
 - **The settings panel is barely legible on Snow Leopard.** The glass themes
   give it a very translucent background, and at that theme's brightness the
   dashboard behind shows straight through the text. Worst on Snow Leopard;
@@ -48,25 +49,13 @@ This is the largest capability currently sitting idle.
 - **Sparkline area gradient** — fade the wash downward instead of a flat fill.
 - **Lucide icons** in card headers (server / cpu / hard-drive / activity).
 
-## Housekeeping
-
-- **Nothing has been committed.** The whole project is staged and unreviewed.
-- **No repo-local `CLAUDE.md`.** The inherited one a directory up describes a
-  Quarto site and does not apply here.
-- **`playwright` is installed in `.venv`** for WebKit screenshot checks. Not in
-  `requirements.txt` — the app does not need it. Remove with
-  `.venv/bin/pip uninstall playwright` if the venv should stay lean.
-- **`~/Library/Caches/ms-playwright` is ~849 MB** — Chromium and WebKit, pulled
-  in for screenshot verification. Outside the project; delete whenever.
-- **Reference wallpapers** (`Aurora.jpg`, `vista.jpg`, the Windows 7 file) are
-  at the project root and gitignored. Their colours are baked into the themes,
-  so they can go unless the wallpaper-background idea above happens.
-
 ## Notes worth keeping
 
 - Verify UI work in **WebKit**, not Chromium. `playwright.webkit` matches what
   the app actually runs. Chart glow silently did nothing in WebKit for six
-  rounds because it was only ever checked in Chromium.
+  rounds because it was only ever checked in Chromium. Playwright is not in
+  `requirements.txt`; if it comes back, set `PLAYWRIGHT_BROWSERS_PATH` to a
+  git-ignored folder in the repo, or its browsers land in `~/Library/Caches`.
 - `ui.json` persists appearance settings server-side, so a setting changed
   while testing stays changed. Delete the file to return to `config.yaml`
   defaults.

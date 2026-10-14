@@ -4,8 +4,10 @@ Credentials are read once at startup and never leave the collector — they are
 not in the served page and not in /api/state (spec §6).
 """
 
+import functools
 import json
 import os
+import ssl
 import tempfile
 from pathlib import Path
 
@@ -18,6 +20,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # comments intact. Changes made in the UI are written here instead, because
 # round-tripping config.yaml through PyYAML would strip every comment in it.
 UI_STATE = ROOT / "ui.json"
+
+# Root of Frank Home CA. Caddy on ml60 serves the agent with a certificate
+# from this CA, which the Mac's Python does not trust on its own. A public
+# certificate, so it is committed; it expires 2036-10-08.
+HOME_CA = ROOT / "certs" / "home-root.crt"
 
 UI_DEFAULTS = {
     "theme": "ice",
@@ -84,6 +91,17 @@ class Config:
     @property
     def pve_base(self):
         return f"https://{self.pve_host}:8006/api2/json"
+
+    @functools.cached_property
+    def agent_ssl(self):
+        """TLS for agent requests: trust the home CA root and nothing else.
+
+        True (aiohttp's default checks) for a plain-http URL, where it is
+        unused. Verification is never switched off.
+        """
+        if not self.agent_url.startswith("https://"):
+            return True
+        return ssl.create_default_context(cafile=str(HOME_CA))
 
     @property
     def truenas_ws_url(self):

@@ -22,6 +22,10 @@ hypervisor.
 Prerequisites are performed by the operator, not the build — see spec §6 for
 the PVE token and TrueNAS API key.
 
+Needs Python 3.11 or newer; `.python-version` pins 3.13 for pyenv. Apple's
+`/usr/bin/python3` is 3.9 and will not do: it cannot parse Ollama's
+timestamps, among other things.
+
     python3 -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt
     cp .env.example .env      # then fill it in

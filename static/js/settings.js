@@ -1,9 +1,6 @@
-/* Settings panel. Opens and closes only — every control inside is
-   disabled until there is something to configure. */
-
 /* ---------------- settings panel ----------------
- * Opens and closes only. Every control inside is disabled until there is
- * something to configure.
+ * Opening and closing only. The controls inside are wired up in theme.js;
+ * the poll-rate rows are informational.
  */
 
 export function initSettings() {

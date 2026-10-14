@@ -12,7 +12,8 @@ class AgentSource:
         self.source = source
 
     async def poll(self, session):
-        async with session.get(self.config.agent_url, timeout=AGENT_TIMEOUT) as response:
+        async with session.get(self.config.agent_url, timeout=AGENT_TIMEOUT,
+                               ssl=self.config.agent_ssl) as response:
             response.raise_for_status()
             payload = await response.json()
 

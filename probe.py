@@ -47,13 +47,13 @@ def load_env():
     return env
 
 
-def fetch(url, headers=None, insecure=True):
+def fetch(url, headers=None, insecure=True, context=None):
     """GET a URL. Returns a record; never raises."""
     record = {"url": url, "status": None, "elapsed_ms": None, "error": None}
     request = urllib.request.Request(url, headers=headers or {}, method="GET")
     started = time.monotonic()
     try:
-        ctx = INSECURE if insecure and url.startswith("https") else None
+        ctx = context or (INSECURE if insecure and url.startswith("https") else None)
         with urllib.request.urlopen(request, timeout=TIMEOUT, context=ctx) as response:
             record["status"] = response.status
             raw = response.read()
@@ -293,7 +293,11 @@ def probe_agent(env):
     if not url:
         print("  skipped: ML60_AGENT_URL not set")
         return
-    record = fetch(url, insecure=False)
+    # Caddy on ml60 serves the agent with a home-CA certificate, which the
+    # default trust store does not know. Verified, never skipped.
+    context = (ssl.create_default_context(cafile=str(ROOT / "certs" / "home-root.crt"))
+               if url.startswith("https") else None)
+    record = fetch(url, insecure=False, context=context)
     summarise("agent", record)
     if record.get("error"):
         print("  (expected until the agent is built and deployed — phase 2)")

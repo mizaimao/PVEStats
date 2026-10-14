@@ -129,7 +129,8 @@ async def handle_unload(request):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json={"model": name.strip()},
-                                    timeout=UNLOAD_TIMEOUT) as response:
+                                    timeout=UNLOAD_TIMEOUT,
+                                    ssl=config.agent_ssl) as response:
                 payload = await response.json()
                 status = response.status
     except Exception as exc:
@@ -142,8 +143,38 @@ async def handle_index(request):
                             headers={"Cache-Control": "no-store"})
 
 
+@web.middleware
+async def own_page_only(request, handler):
+    """Refuse requests that did not come from this dashboard's own page.
+
+    Binding 127.0.0.1 keeps other machines out, but a browser on this Mac will
+    carry a request here on behalf of any site it has open. Two checks:
+
+    - Host must name this server. A site that points its own domain at
+      127.0.0.1 still sends its own name here, so it cannot read the state.
+    - Writes must come from this origin and carry JSON. Browsers send Origin
+      on every cross-site POST, and a JSON body cannot go cross-site without
+      a preflight, which this server never answers.
+
+    A request with no Origin at all is a local process (curl, a script), which
+    could reach anything on this Mac anyway.
+    """
+    hosts = request.app["hosts"]
+    if request.host not in hosts:
+        raise web.HTTPForbidden(text="unexpected Host header")
+    if request.method == "POST":
+        origin = request.headers.get("Origin")
+        if origin is not None and origin not in {f"http://{h}" for h in hosts}:
+            raise web.HTTPForbidden(text="cross-origin request refused")
+        if request.content_type != "application/json":
+            raise web.HTTPUnsupportedMediaType(text="expected application/json")
+    return await handler(request)
+
+
 def build_app(collector):
-    app = web.Application()
+    app = web.Application(middlewares=[own_page_only])
+    port = collector.config.port
+    app["hosts"] = {f"127.0.0.1:{port}", f"localhost:{port}"}
     app["collector"] = collector
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/state", handle_state)

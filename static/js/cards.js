@@ -235,9 +235,9 @@ export function gpuCard(guest) {
       } else {
         // Agent unreachable. Clear its panels explicitly rather than leaving
         // whatever was last drawn — the card must not imply live readings.
+        // CPU and memory are PVE's and were set above, so they stay.
         [util, temp, power, fan, clock, vramNow, pcieLink, pcieRate]
           .forEach(t => t.set("–"));
-        cpu.set(0, 100, "–");
         models.set([]);
         procs.set([]);
       }
