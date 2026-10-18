@@ -132,7 +132,7 @@ def main():
     except ImportError:
         sys.exit(
             "pywebview is not installed.\n"
-            "  .venv/bin/pip install -r requirements.txt\n"
+            "  tools/uv sync\n"
             "Or use run.py to serve to an ordinary browser instead."
         )
 

@@ -22,13 +22,16 @@ hypervisor.
 Prerequisites are performed by the operator, not the build — see spec §6 for
 the PVE token and TrueNAS API key.
 
-Needs Python 3.11 or newer; `.python-version` pins 3.13 for pyenv. Apple's
-`/usr/bin/python3` is 3.9 and will not do: it cannot parse Ollama's
-timestamps, among other things.
+Python and every package come from `tools/uv`, which keeps uv, the Python it
+manages and its cache in `.tools/` (git-ignored). Nothing depends on pyenv,
+Homebrew or the system Python; `uv.lock` pins every package by hash, and
+`.python-version` picks 3.13.
 
-    python3 -m venv .venv && source .venv/bin/activate
-    pip install -r requirements.txt
+    tools/uv sync             # fetches uv, Python and packages on first run
     cp .env.example .env      # then fill it in
+
+Add or change a dependency in `pyproject.toml`, then `tools/uv lock` and
+commit `uv.lock` with it. Never pip.
 
 ## Running it
 
@@ -46,15 +49,19 @@ build `PVEStats.app` in this folder, and double-click that instead — it is
 git-ignored and nothing is written outside the project. Re-run it if you move
 the repo.
 
-**Windows.** `python app.py`. WebView2 ships with Windows 11 and current
+`tools/uv` pins the Apple silicon build of uv. Elsewhere, install uv your own
+way and run `uv sync`.
+
+**Windows.** `uv run app.py`. WebView2 ships with Windows 11 and current
 Windows 10; otherwise install the Evergreen runtime from Microsoft.
 
-**Linux.** Needs the WebKitGTK bindings, which pip cannot supply:
+**Linux.** Needs the WebKitGTK bindings, which no package index supplies:
 
     sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1   # Debian/Ubuntu
     sudo dnf install python3-gobject webkit2gtk4.1                    # Fedora
 
-Create the venv with `--system-site-packages` so it can see them.
+They belong to the system Python, which a uv-managed one cannot see. Build
+the venv from the system Python with `--system-site-packages` instead.
 
 To serve to an ordinary browser instead of a window:
 

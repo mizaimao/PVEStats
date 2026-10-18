@@ -22,3 +22,6 @@ ui.json
 
 # macOS
 .DS_Store
+
+# uv, the Python it manages and its cache. Fetched by tools/uv.
+.tools/
