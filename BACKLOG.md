@@ -54,7 +54,7 @@ This is the largest capability currently sitting idle.
 - Verify UI work in **WebKit**, not Chromium. `playwright.webkit` matches what
   the app actually runs. Chart glow silently did nothing in WebKit for six
   rounds because it was only ever checked in Chromium. Playwright is not in
-  `requirements.txt`; if it comes back, set `PLAYWRIGHT_BROWSERS_PATH` to a
+  `pyproject.toml`; if it comes back, set `PLAYWRIGHT_BROWSERS_PATH` to a
   git-ignored folder in the repo, or its browsers land in `~/Library/Caches`.
 - `ui.json` persists appearance settings server-side, so a setting changed
   while testing stays changed. Delete the file to return to `config.yaml`

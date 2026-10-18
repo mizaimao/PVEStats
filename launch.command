@@ -25,39 +25,14 @@ if [ ! -f .env ]; then
   fail "No .env found. Copy .env.example to .env and fill it in."
 fi
 
-# Needs Python 3.11 or newer. PVEStats.app starts with launchd's bare PATH,
-# where python3 is Apple's 3.9; pyenv's shims honour .python-version instead.
-[ -d "$HOME/.pyenv/shims" ] && PATH="$HOME/.pyenv/shims:$PATH"
-new_enough() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; }
+# Python and every package come from tools/uv, inside this repo. This brings
+# .venv in line with uv.lock, using a Python uv downloaded into .tools/python,
+# and replaces a .venv built from any other Python. Instant when nothing has
+# changed; only the very first launch needs the network.
+if ! problem=$(tools/uv sync --frozen --quiet 2>&1); then
+  fail "Setting up Python failed.
 
-if [ -x .venv/bin/python ] && ! new_enough .venv/bin/python; then
-  fail ".venv runs $(.venv/bin/python --version 2>&1); PVEStats needs 3.11 or newer. Remove .venv and launch again to rebuild it."
-fi
-
-if [ ! -x .venv/bin/python ]; then
-  if ! new_enough python3; then
-    fail "python3 is $(python3 --version 2>&1); PVEStats needs 3.11 or newer."
-  fi
-  echo "Creating virtualenv…"
-  python3 -m venv .venv || fail "Creating the virtualenv failed."
-fi
-
-# Every source is HTTPS and pip needs ssl too. A pyenv Python built against
-# Homebrew's OpenSSL loses it when Homebrew removes that version, and
-# reinstalling packages cannot fix that, so name the cause.
-if ! problem=$(.venv/bin/python -c "import ssl" 2>&1); then
-  fail "Python's ssl module does not load, so nothing can connect.
-
-$(printf '%s\n' "$problem" | grep -m1 'Error')
-
-If the missing library is Homebrew's OpenSSL, reinstall that version, e.g. brew install openssl@3."
-fi
-
-# Cheap check that dependencies are present; installs only when something is
-# missing, so normal launches stay instant.
-if ! .venv/bin/python -c "import aiohttp, yaml, dotenv, webview" 2>/dev/null; then
-  echo "Installing dependencies…"
-  .venv/bin/pip install -q -r requirements.txt || fail "pip install failed."
+$(printf '%s\n' "$problem" | tail -5)"
 fi
 
 exec .venv/bin/python app.py

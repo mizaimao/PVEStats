@@ -1,0 +1,48 @@
+#!/bin/bash
+# uv, confined to this repo. Use it for everything Python here:
+#
+#     tools/uv sync          # make .venv match uv.lock
+#     tools/uv run app.py
+#
+# uv lives in .tools/uv, the Python it manages in .tools/python and its
+# download cache in .tools/uv-cache, all git-ignored. Nothing here leans on
+# pyenv, Homebrew or the system Python: a pyenv Python built against
+# Homebrew's OpenSSL lost its ssl module when Homebrew removed openssl@3,
+# and with it the whole app.
+#
+# uv is pinned. To move to a newer one, change both lines below to a release
+# from https://github.com/astral-sh/uv/releases (the .sha256 file beside the
+# tarball), then delete .tools/uv.
+
+UV_VERSION=0.13.1
+UV_SHA256=cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2
+
+set -euo pipefail
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+
+export UV_PYTHON_INSTALL_DIR="$REPO/.tools/python"
+export UV_CACHE_DIR="$REPO/.tools/uv-cache"
+# uv would otherwise link python3.x into ~/.local/bin.
+export UV_PYTHON_INSTALL_BIN=0
+
+UV="$REPO/.tools/uv/uv"
+if [ ! -x "$UV" ]; then
+  if [ "$(uname -s)-$(uname -m)" != "Darwin-arm64" ]; then
+    echo "tools/uv pins the Apple silicon build. Install uv another way here." >&2
+    exit 1
+  fi
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  echo "Fetching uv ${UV_VERSION}…" >&2
+  curl -fsSL --max-time 120 -o "$work/uv.tar.gz" \
+    "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-aarch64-apple-darwin.tar.gz"
+  if [ "$(shasum -a 256 "$work/uv.tar.gz" | cut -d' ' -f1)" != "$UV_SHA256" ]; then
+    echo "uv download does not match its pinned checksum; not installing it." >&2
+    exit 1
+  fi
+  tar -xzf "$work/uv.tar.gz" -C "$work"
+  mkdir -p "$REPO/.tools/uv"
+  mv "$work/uv-aarch64-apple-darwin/uv" "$UV"
+fi
+
+exec "$UV" "$@"
