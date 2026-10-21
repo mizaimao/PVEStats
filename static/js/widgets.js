@@ -139,7 +139,13 @@ export function arcGauge(label, { nested = false, sublabel = "" } = {}) {
       if (inner) inner(innerRatio);
       setAnimated(number, text, shown);
       shown = String(text);
-      if (footText != null) foot.textContent = footText;
+      // Attached on first use: the foot used to be added only for a sublabel
+      // or a nested ring, so memory's "used / total GiB" went into a detached
+      // node and never showed.
+      if (footText != null) {
+        foot.textContent = footText;
+        if (foot.parentNode !== root) root.appendChild(foot);
+      }
     },
   };
 }
@@ -328,6 +334,15 @@ export class Spark {
       const w = Math.max(40, Math.round(entries[0].contentRect.width));
       if (w !== this.width) { this.width = w; this.draw(); }
     }).observe(this.el);
+  }
+
+  /* The current reading, printed at the right of the caption line. For a
+     chart whose card has no tile for its value, so the figure is always on
+     screen rather than only under the pointer. Uses the slot the auto-scaled
+     charts print their peak in, which fixed-axis charts leave empty. */
+  setReadout(text) {
+    this.peak.classList.add("now");
+    this.peak.textContent = text;
   }
 
   /* Recolour a series in place — used when a value crosses into a status

@@ -462,6 +462,9 @@ export const nodeCard = (() => {
       `${fmt.pct(node.maxmem ? (node.mem / node.maxmem) * 100 : null)}%`,
       null, `${fmt.gib(node.mem)} / ${fmt.gib(node.maxmem)} GiB`);
     built.spark.update(history, status && status.capacity);
+    // The card has no CPU tile (spec §4.1 lists CPU % first), so the current
+    // figure goes on the chart's caption line rather than only under hover.
+    built.spark.setReadout(node.cpu_pct == null ? "–" : `${fmt.pct(node.cpu_pct)}%`);
     applyStale({ el: root, error: built.error }, status);
   };
 })();
