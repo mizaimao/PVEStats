@@ -13,27 +13,37 @@ const POLL_MS = 1000;
 
 /* ---------------- source strip ---------------- */
 
+/* Built once per source and updated in place: a dot recreated every second
+   restarted its 2 s pulse each time, which made it a 1 Hz blink. */
+const strip = new Map();     // source name -> { item, age }
+
 function renderSources(sources) {
   const host = document.getElementById("sources");
-  host.textContent = "";
   for (const [name, status] of Object.entries(sources)) {
-    const item = el("span", "src");
+    let entry = strip.get(name);
+    if (!entry) {
+      entry = { item: el("span", "src"), age: el("span", "age") };
+      entry.item.append(el("span", "dot"), el("span", null, name), entry.age);
+      host.appendChild(entry.item);
+      strip.set(name, entry);
+    }
     // Not ok with no error is a source that has not answered yet: neutral.
-    if (!status.ok) item.classList.add(status.error ? "is-down" : "is-waiting");
-    else if (status.stale) item.classList.add("is-stale");
-    const dot = el("span", "dot");
-    const label = el("span", null, name);
-    // Counting down to the next poll reads as "something is about to happen";
-    // counting up just says how stale things are.
-    const remaining = status.age == null || !status.interval
-      ? null
-      : Math.max(0, Math.ceil(status.interval - status.age));
-    const age = el("span", "age",
-      status.age == null ? "never" : `${remaining}s`);
-    item.append(dot, label, age);
+    const state = !status.ok ? (status.error ? " is-down" : " is-waiting")
+                : status.stale ? " is-stale" : "";
+    if (entry.item.className !== `src${state}`) entry.item.className = `src${state}`;
+    // A healthy source counts down to its next poll: "something is about to
+    // happen". One that is failing says how long ago it last answered; the
+    // countdown used to sit at "0s" for it, as if it had just updated.
+    let text;
+    if (status.age == null) text = "never";
+    else if (status.ok && !status.stale && status.interval) {
+      text = `${Math.max(0, Math.ceil(status.interval - status.age))}s`;
+    } else {
+      text = `${Math.round(status.age)}s ago`;
+    }
+    if (entry.age.textContent !== text) entry.age.textContent = text;
     // The dot says that something is wrong; hovering says what.
-    if (status.error) item.title = status.error;
-    host.appendChild(item);
+    entry.item.title = status.error || "";
   }
 }
 
@@ -77,7 +87,20 @@ function updatePveNote(state) {
     : "Waiting for Proxmox VE's first answer…";
 }
 
+/* Cards sit in VMID order, the order the server sends them in. A card that
+   arrives later (a guest started, or stopped and started again) used to be
+   appended at the end of its column. */
+function insertByVmid(host, node, vmid) {
+  const after = [...host.children].find(c => c.dataset.vmid && +c.dataset.vmid > vmid);
+  if (after) host.insertBefore(node, after);
+  else host.appendChild(node);
+}
+
 function render(state) {
+  // Cards made while the standby is still up come in staggered as it lifts.
+  // Later ones come in at once: their delays used to keep growing, and
+  // replayed each time focus mode showed their column again.
+  const staggering = !standby.done;
   updateStandby(state);
   updatePveNote(state);
   renderSources(state.sources);
@@ -94,16 +117,23 @@ function render(state) {
   for (const guest of state.guests) {
     seen.add(guest.vmid);
     let card = cards.get(guest.vmid);
+    if (card && card.view !== guest.view) {
+      // Its view changed (config.yaml edited, server restarted under run.py):
+      // a different kind of card.
+      card.el.remove();
+      card = null;
+    }
     if (!card) {
       card = controllerFor(guest);
+      card.view = guest.view;
+      card.el.dataset.vmid = String(guest.vmid);
       cards.set(guest.vmid, card);
       // NAS joins the host in the left column; the GPU card owns the right.
       const host = guest.view === "gpu" ? right
                  : guest.view === "nas" ? left
                  : basics;
-      // Position in the arrival order drives the entrance stagger.
-      card.el.style.setProperty("--enter", String(entered++));
-      host.appendChild(card.el);
+      card.el.style.setProperty("--enter", staggering ? String(entered++) : "0");
+      insertByVmid(host, card.el, guest.vmid);
     }
     card.update(guest, state.history, state.sources.pve);
   }
@@ -126,6 +156,13 @@ async function tick() {
     // Hold the previous render rather than flashing an empty page.
     offline.hidden = false;
     document.body.style.opacity = "0.6";
+    // The standby's own give-up runs only on a successful render, so a
+    // collector that died before its first full poll left "Connecting to
+    // sources…" up for good, over the banner that explains it.
+    if (!standby.done && performance.now() - standby.since > STANDBY_GIVE_UP_MS) {
+      standby.done = true;
+      standby.el.hidden = true;
+    }
   }
 }
 

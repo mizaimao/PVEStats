@@ -37,6 +37,7 @@ class TrueNasSource:
         self.nics = {}          # interface name -> {role, media, addresses}
         self.disk_sizes = {}    # device name -> bytes
         self.pools = []         # last pool.query result
+        self.usable = {}        # pool name -> (used, usable) bytes
         self._pool_countdown = 0
         self._discover_countdown = 0
 
@@ -154,6 +155,7 @@ class TrueNasSource:
         self._pool_countdown -= 1
         if self._pool_countdown <= 0 or not self.pools:
             self.pools = await self.call("pool.query", []) or []
+            self.usable = await self._usable_space(self.pools)
             self._pool_countdown = 6      # x TRUENAS_INTERVAL = every 30s
         pools = self.pools
 
@@ -192,8 +194,36 @@ class TrueNasSource:
                 "size": p.get("size"),
                 "allocated": p.get("allocated"),
                 "free": p.get("free"),
+                # What the pool can hold and holds, from its root dataset.
+                **dict(zip(("used_bytes", "usable"),
+                           self.usable.get(p.get("name"), (None, None)))),
             } for p in reversed(pools or [])],
         })
+
+    async def _usable_space(self, pools):
+        """Pool name -> (used, used + available) bytes, from root datasets.
+
+        zpool's size counts parity, so a RAIDZ2 pool's "size" is about twice
+        what it can store (CompoundZ2FS: 58.2 TiB raw, 28.1 TiB usable); its
+        root dataset's used + available is what TrueNAS's Storage page shows.
+        A method error leaves this empty, and the card falls back to raw.
+        """
+        names = [p.get("name") for p in pools if p.get("name")]
+        if not names:
+            return {}
+        try:
+            datasets = await self.call(
+                "pool.dataset.query",
+                [[["id", "in", names]], {"extra": {"retrieve_children": False}}]) or []
+        except RpcError:
+            return {}
+        usable = {}
+        for d in datasets:
+            used = (d.get("used") or {}).get("parsed")
+            available = (d.get("available") or {}).get("parsed")
+            if isinstance(used, int) and isinstance(available, int):
+                usable[d.get("id")] = (used, used + available)
+        return usable
 
     async def close(self):
         if self.ws is not None and not self.ws.closed:

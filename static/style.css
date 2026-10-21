@@ -537,6 +537,8 @@ body {
 
 /* A source that has gone quiet recedes; it never blanks (spec §2, §7). */
 .card.is-stale { opacity: 0.55; }
+/* The PVE-fed panels of the ml60 and NAS cards, when only PVE is stale. */
+.pve-stale { opacity: 0.55; }
 .card .card-error {
   font-size: 11px;
   color: var(--warning);
@@ -966,7 +968,11 @@ table.data .name { color: var(--ink); }
   position: fixed;
   left: 50%; bottom: 16px;
   transform: translateX(-50%);
-  background: var(--surface);
+  /* Above the standby (z-index 100), which it explains when the collector
+     is gone; and opaque, since --surface is see-through in the glass
+     themes. */
+  z-index: 110;
+  background: var(--plane);
   border: 1px solid var(--critical);
   border-radius: var(--radius);
   padding: 8px 14px;

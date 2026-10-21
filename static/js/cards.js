@@ -42,6 +42,27 @@ export function baseGuestPanels(shell) {
   return { cpu, up, mem };
 }
 
+/* A guest's name can change while it runs; the card follows. */
+function setTitle(shell, name) {
+  const text = name || "?";
+  if (shell.title.textContent !== text) shell.title.textContent = text;
+}
+
+/* The ml60 and NAS cards lead on their own source, but some of their panels
+   are PVE's (CPU, memory, network). When PVE fails those keep its last
+   values, and used to look live: they are dimmed now, with the reason on
+   hover, the way other cards go stale whole (spec §7). */
+function markPve(parts, status) {
+  const stale = !(status && status.ok);
+  const why = stale && status && status.error
+    ? `Proxmox VE: ${status.error}${status.age != null ? ` · last good ${Math.round(status.age)}s ago` : ""}`
+    : "";
+  for (const part of parts) {
+    part.classList.toggle("pve-stale", stale);
+    part.title = why;
+  }
+}
+
 export function applyStale(shell, status) {
   const stale = !status || !status.ok;
   shell.el.classList.toggle("is-stale", stale);
@@ -104,6 +125,7 @@ export function basicCard(guest) {
   return {
     el: shell.el,
     update(g, history, status) {
+      setTitle(shell, g.name);
       setSub(shell, [`vmid ${g.vmid}`, (g.addresses || [])[0],
                      `up ${fmt.uptime(g.uptime)}`]);
       cpu.set(g.cpu_pct || 0, 100, fmt.pctText(g.cpu_pct));
@@ -171,23 +193,30 @@ export function gpuCard(guest) {
   procs.el.classList.add("divided");
   shell.el.append(heroWrap, spark.el, gpuLegend, tiles, usage, io.el,
                   models.el, procs.el);
+  // One per model, kept across ticks: see the models table below.
+  const stopButtons = new Map();
 
   return {
     el: shell.el,
     update(g, history, status) {
       // PVE panels (10s) update regardless of the agent's state, and the
       // agent panels (1s) never wait on PVE — §4.2.
+      setTitle(shell, g.name);
       cpu.set(g.cpu_pct || 0, 100, fmt.pctText(g.cpu_pct));
       setSub(shell, [`vmid ${g.vmid}`, "GPU", (g.addresses || [])[0],
                      `up ${fmt.uptime(g.uptime)}`]);
       mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
       io.update(g);
+      markPve([usage, io.el], status);
 
       const gpu = g.gpu;
       if (gpu) {
         util.set(fmt.pct(gpu.util));
         temp.set(fmt.pct(gpu.temp));
         power.set(gpu.power == null ? "–" : Math.round(gpu.power));
+        // Draw against the cap (spec §4.2), so throttling at the limit shows.
+        power.setLabel(gpu.power_limit ? `Power · limit ${Math.round(gpu.power_limit)} W`
+                                       : "Power");
         fan.set(gpu.fan == null ? "–" : fmt.pct(gpu.fan));
         clock.set(fmt.int(gpu.clock_sm));
         vramNow.set(`${fmt.gib(gpu.vram_used)} / ${fmt.gib(gpu.vram_total)}`);
@@ -216,8 +245,18 @@ export function gpuCard(guest) {
         // One decimal: the link idles well under 1 MiB/s, which rounded to "1".
         pcieRate.set(pcie.rx_kbps == null ? "–"
           : `${(pcie.rx_kbps / 1024).toFixed(1)} / ${(pcie.tx_kbps / 1024).toFixed(1)}`);
-        if (!modelsBusy()) {
-          models.set((gpu.models || []).map(m => {
+        // The same models update in place, each Stop keeping its node, so a
+        // press or keyboard focus survives the tick; the table used to be
+        // rebuilt every second, which could swallow a first click. Only a
+        // different set of models rebuilds it, and that waits while a
+        // button is mid-interaction.
+        const list = gpu.models || [];
+        const keys = list.map(m => m.name || "?");
+        if (models.sameKeys(keys) || !modelsBusy()) {
+          for (const name of [...stopButtons.keys()]) {
+            if (!keys.includes(name)) stopButtons.delete(name);
+          }
+          models.set(list.map(m => {
             // Where the model actually runs. A model that spilled to system RAM
             // is not slightly slower, it is an order of magnitude slower, and
             // GPU utilization alone will not tell you.
@@ -225,10 +264,16 @@ export function gpuCard(guest) {
                             m.processor || "unknown");
             // Absent unless the agent says it will honour an unload, so an
             // agent with the write path closed off shows no buttons at all.
-            const stop = gpu.can_unload && m.name ? unloadButton(m.name) : el("span");
+            let stop = "";
+            if (gpu.can_unload && m.name) {
+              let button = stopButtons.get(m.name);
+              if (!button) stopButtons.set(m.name, button = unloadButton(m.name));
+              button.refresh();
+              stop = button.el;
+            }
             return [m.name || "?", proc, `${fmt.gib(m.size_vram)} GiB`,
                     fmt.countdown(m.unload_in), stop];
-          }));
+          }), keys);
           // Visible, not only in the button's tooltip.
           const note = unloadFailureNote();
           models.setCaption(note ? `Loaded models · ${note}` : "Loaded models");
@@ -296,22 +341,29 @@ function unloadFailureNote() {
   return latest && `stopping ${latest.name} failed: ${latest.message}`;
 }
 
+/* One per model, kept across ticks by the card; refresh() brings it in line
+   with the model's last outcome whenever it is not mid-interaction. */
 function unloadButton(name) {
   const btn = el("button", "stop", "Stop");
   btn.type = "button";
-  btn.title = `Unload ${name} from VRAM — it reloads on the next request to it`;
+  const idle = `Unload ${name} from VRAM — it reloads on the next request to it`;
+  btn.title = idle;
 
-  // Rebuilt every tick, so start from the model's last outcome.
-  const now = performance.now();
-  const failure = failures.get(name);
-  if (failure && failure.until > now) {
-    btn.className = "stop is-failed";
-    btn.textContent = "Failed";
-    btn.title = failure.message;
-  } else if ((stopped.get(name) || 0) > now) {
-    btn.textContent = "Stopped";
-    btn.disabled = true;
-  }
+  const show = (className, text, title, disabled) => {
+    if (btn.className !== className) btn.className = className;
+    if (btn.textContent !== text) btn.textContent = text;
+    if (btn.title !== title) btn.title = title;
+    btn.disabled = disabled;
+  };
+  const refresh = () => {
+    const now = performance.now();
+    // Armed or in flight: the click handler owns the button until it settles.
+    if (unloading.has(name) || (armed.get(name) || 0) > now) return;
+    const failure = failures.get(name);
+    if (failure && failure.until > now) show("stop is-failed", "Failed", failure.message, false);
+    else if ((stopped.get(name) || 0) > now) show("stop", "Stopped", idle, true);
+    else show("stop", "Stop", idle, false);
+  };
 
   btn.addEventListener("click", async () => {
     if (!((armed.get(name) || 0) > performance.now())) {
@@ -349,7 +401,8 @@ function unloadButton(name) {
       unloading.delete(name);
     }
   });
-  return btn;
+  refresh();
+  return { el: btn, refresh };
 }
 
 /* --- 4.3 TrueNAS --- */
@@ -381,10 +434,16 @@ export function nasCard(guest) {
   shell.el.append(ifSpark, ifTable.el, disks.el, pools.el);
 
   let spark = null;
+  // Kept across ticks, so each capacity bar keeps its state: recreated every
+  // second, a bar restarted its shimmer and never saw a band change, so the
+  // threshold flare could not fire.
+  const poolRows = new Map();   // pool name -> { badge, dot, label, bar }
 
   return {
     el: shell.el,
     update(g, history, status) {
+      setTitle(shell, g.name);
+      markPve([row], status);
       cpu.set((g.cpu_pct || 0) / 100, fmt.pctText(g.cpu_pct));
       mem.set(g.maxmem ? g.mem / g.maxmem : 0,
               fmt.pctText(g.maxmem ? (g.mem / g.maxmem) * 100 : null),
@@ -427,19 +486,37 @@ export function nasCard(guest) {
           d.size ? `${(d.size / 1024 ** 4).toFixed(1)} TiB` : "–",
           fmt.rate(d.read_bps), fmt.rate(d.write_bps),
         ]));
-        pools.set((nas.pools || []).map(p => {
-          const badge = el("span", "pool-status");
-          const dot = el("span", "dot");
-          dot.style.background = p.healthy ? "var(--good)" : "var(--critical)";
-          // Icon plus label — pool state never rides on colour alone.
-          badge.append(dot, document.createTextNode(p.status || "?"));
-          const used = p.size ? Math.round((p.allocated / p.size) * 100) : null;
-          // Graded: a ZFS pool past 80% is a genuine performance concern.
-          const bar = meter("", { graded: true, compact: true });
-          bar.set(p.allocated, p.size, "");
-          return [p.name, badge, bar.el,
-            used == null ? "–" : `${used}% of ${(p.size / 1024 ** 4).toFixed(1)} TiB`];
-        }));
+        const poolList = nas.pools || [];
+        const poolKeys = poolList.map(p => p.name);
+        for (const name of [...poolRows.keys()]) {
+          if (!poolKeys.includes(name)) poolRows.delete(name);
+        }
+        pools.set(poolList.map(p => {
+          let entry = poolRows.get(p.name);
+          if (!entry) {
+            // Icon plus label — pool state never rides on colour alone.
+            const badge = el("span", "pool-status");
+            const dot = el("span", "dot");
+            const label = document.createTextNode("");
+            badge.append(dot, label);
+            // Graded: a ZFS pool past 80% is a genuine performance concern.
+            entry = { badge, dot, label, bar: meter("", { graded: true, compact: true }) };
+            poolRows.set(p.name, entry);
+          }
+          entry.dot.style.background = p.healthy ? "var(--good)" : "var(--critical)";
+          entry.label.nodeValue = p.status || "?";
+          // Usable space where TrueNAS gave it: the raw zpool size counts
+          // parity, about twice what a RAIDZ2 pool can hold. Raw, and said so,
+          // only as a fallback.
+          const usable = p.usable && p.used_bytes != null;
+          const used = usable ? p.used_bytes : p.allocated;
+          const total = usable ? p.usable : p.size;
+          entry.bar.set(used, total, "");
+          const pct = total ? Math.round((used / total) * 100) : null;
+          return [p.name, entry.badge, entry.bar.el,
+            pct == null ? "–"
+              : `${pct}% of ${(total / 1024 ** 4).toFixed(1)} TiB${usable ? "" : " raw"}`];
+        }), poolKeys);
       } else {
         ifTable.set([]);
         disks.set([]);
