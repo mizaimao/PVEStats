@@ -47,12 +47,15 @@ StandardError=journal
 # costs more than the ~20 MB this process idles at (spec §3.2).
 
 NoNewPrivileges=true
-# The whole filesystem is read-only to this unit, so a stray write cannot
-# reach ml60's disk even if the code changes.
+# The whole filesystem is read-only to this unit, apart from the API trees
+# (/dev, /proc, /sys) and the temp dirs below, so a stray write cannot reach
+# ml60's disk even if the code changes.
 ProtectSystem=strict
 ProtectHome=true
-# Private /tmp and /var/tmp, both tmpfs — memory-backed, never the disk.
-PrivateTmp=true
+# /tmp and /var/tmp of its own, each a fresh tmpfs: memory-backed, never the
+# disk. PrivateTmp=true would not do this: it keeps the private dirs inside
+# the host's /tmp and /var/tmp, and /var/tmp is on disk. Needs systemd 238+.
+TemporaryFileSystem=/tmp:mode=1777 /var/tmp:mode=1777
 # PrivateDevices is NOT set — NVML needs /dev/nvidia*.
 
 [Install]
