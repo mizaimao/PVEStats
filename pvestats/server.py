@@ -4,6 +4,7 @@ Serves the static page and the collector's state. Credentials live in the
 collector and never reach the browser — the page only ever talks to localhost.
 """
 
+import html
 from pathlib import Path
 
 import aiohttp
@@ -151,8 +152,21 @@ async def handle_unload(request):
 
 
 async def handle_index(request):
-    return web.FileResponse(STATIC / "index.html",
-                            headers={"Cache-Control": "no-store"})
+    """The page, with the saved appearance already on its <html> element.
+
+    pywebview's private mode wipes the page's storage at every launch, so the
+    first-paint cache in theme.js is always empty in the app: each launch
+    painted the default theme and then faded to the saved one. Rendered here,
+    the first paint is right with no client storage at all.
+    """
+    ui = request.app["collector"].config.ui()
+    attrs = [f'data-theme="{html.escape(str(ui["theme"]), quote=True)}"',
+             f'style="--glow-scale: {max(0.0, min(3.0, float(ui["glow"])))}"']
+    attrs += [f'data-{name}="on"' for name in ("scanlines", "grain", "aurora") if ui.get(name)]
+    page = (STATIC / "index.html").read_text().replace(
+        '<html lang="en">', f'<html lang="en" {" ".join(attrs)}>', 1)
+    return web.Response(text=page, content_type="text/html",
+                        headers={"Cache-Control": "no-store"})
 
 
 @web.middleware

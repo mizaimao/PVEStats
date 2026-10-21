@@ -102,10 +102,16 @@ class Backend:
 
 
 def wait_for_server(url, deadline):
-    """Block until the server answers, so the window never opens on an error."""
+    """Block until the server answers, so the window never opens on an error.
+
+    Asked directly, never through a proxy: urllib honours the system proxy
+    settings, and a proxy cannot reach this Mac's loopback, so the app quit
+    with "did not come up" while the server was running.
+    """
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=1):
+            with opener.open(url, timeout=1):
                 return True
         except (urllib.error.URLError, OSError):
             time.sleep(0.2)

@@ -1,9 +1,9 @@
 /* Appearance: theme and glow strength.
  *
  * Both persist server-side via /api/ui, so they survive a reinstall and are
- * shared by any browser pointed at the collector. localStorage is kept only
- * as a first-paint cache — waiting for a round trip before styling would
- * flash the default theme.
+ * shared by any browser pointed at the collector. The server also renders
+ * them onto <html>, so the first paint is right before any round trip;
+ * localStorage is only a fallback cache for that.
  */
 
 const CACHE = "pvestats.appearance";
@@ -54,9 +54,25 @@ export function apply(settings) {
   return stored;
 }
 
+/* The saved appearance the server rendered onto <html> (handle_index). It
+   wins over the localStorage cache, which pywebview's private mode empties
+   at every launch: starting from it, the first paint is already right. */
+function rendered() {
+  const root = document.documentElement;
+  if (!root.dataset.theme) return {};
+  const glow = parseFloat(root.style.getPropertyValue("--glow-scale"));
+  return {
+    theme: root.dataset.theme,
+    ...(Number.isFinite(glow) ? { glow } : {}),
+    scanlines: root.dataset.scanlines === "on",
+    grain: root.dataset.grain === "on",
+    aurora: root.dataset.aurora === "on",
+  };
+}
+
 /* The full settings as this page knows them, and the ones changed here
    since it loaded. */
-let current = cached();
+let current = { ...cached(), ...rendered() };
 const changedHere = {};
 
 /* Apply a change and save only that change.
