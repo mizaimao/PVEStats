@@ -160,24 +160,36 @@ class RateTracker:
     """
 
     def __init__(self):
-        self._previous = {}
+        self._previous = {}     # key -> (time, value, last rate)
 
     def rate(self, key, value, now=None):
+        """Bytes/sec since the previous sample of `key`.
+
+        `now` may be any monotonic time base; PVE's guests use their own
+        uptime, which comes with the counters in one snapshot. A sample at
+        the same time as the last is that snapshot again and keeps its rate;
+        time going backwards (a guest's uptime after a reboot) starts over.
+        """
         if value is None:
             return None
         now = now if now is not None else clock()
         previous = self._previous.get(key)
-        self._previous[key] = (now, value)
         if previous is None:
+            self._previous[key] = (now, value, None)
             return None  # first sample has nothing to diff against
-        prev_time, prev_value = previous
+        prev_time, prev_value, prev_rate = previous
         elapsed = now - prev_time
-        if elapsed <= 0:
+        if elapsed == 0:
+            return prev_rate
+        if elapsed < 0:
+            self._previous[key] = (now, value, None)
             return None
         delta = value - prev_value
         if delta < 0:
             delta = 0
-        return delta / elapsed
+        rate = delta / elapsed
+        self._previous[key] = (now, value, rate)
+        return rate
 
     def forget(self, prefix):
         """Drop counters for a guest that has gone away."""
