@@ -179,11 +179,12 @@ TRUENAS_METHODS = [
 ]
 
 
-async def _truenas_rpc(host, key):
+async def _truenas_rpc(host, key, out):
+    """Fill `out` as it goes, so whatever was learnt survives a failure."""
     import aiohttp
 
     url = f"wss://{host}/api/current"
-    out = {"_endpoint": url}
+    out["_endpoint"] = url
     counter = [0]
 
     session_timeout = aiohttp.ClientTimeout(total=60)
@@ -214,7 +215,9 @@ async def _truenas_rpc(host, key):
             auth = await call("auth.login_with_api_key", [key])
             out["auth"] = auth
             if auth.get("result") is not True:
-                summarise("auth.login_with_api_key", {"error": auth.get("error")})
+                # A bad key comes back as result false with no error at all.
+                reason = auth.get("error") or "api key rejected"
+                print(f"  auth.login_with_api_key: FAILED — {str(reason)[:120]}")
                 return out
             print("  auth.login_with_api_key: ok")
 
@@ -277,7 +280,14 @@ def probe_truenas(env):
         return
 
     import asyncio
-    out = asyncio.run(_truenas_rpc(host, key))
+    out = {}
+    try:
+        asyncio.run(_truenas_rpc(host, key, out))
+    except Exception as exc:
+        # Recorded and saved the way fetch() does it, so a NAS that is down
+        # does not end the run before the agent is probed.
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        print(f"  FAILED — {out['error'][:200]}")
     save("truenas", out)
 
     for name in out.get("_reporting_methods", []):
