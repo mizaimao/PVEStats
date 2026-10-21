@@ -31,7 +31,10 @@ async def run_poller(source, interval, poll):
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
-            source.fail(f"timeout after {interval}s")
+            # How long the poll actually waited. The limit that fired is a
+            # request's own timeout (5s for PVE, 2s for the agent, aiohttp's
+            # connect limit on a TrueNAS reconnect), never the poll interval.
+            source.fail(f"timed out after {time.monotonic() - started:.0f}s")
         except Exception as exc:
             source.fail(f"{type(exc).__name__}: {exc}")
         # One slot per series per poll, so a failed poll is drawn as a gap.
