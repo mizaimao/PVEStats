@@ -605,7 +605,8 @@ export function legend(series) {
 
 export function dataTable(caption, columns) {
   const table = el("table", "data");
-  table.appendChild(el("caption", null, caption));
+  const captionNode = el("caption", null, caption);
+  table.appendChild(captionNode);
   const head = el("tr");
   for (const c of columns) head.appendChild(el("th", c.num ? "num" : null, c.label));
   const thead = document.createElement("thead");
@@ -614,6 +615,9 @@ export function dataTable(caption, columns) {
   table.append(thead, tbody);
   return {
     el: table,
+    setCaption(text) {
+      if (captionNode.textContent !== text) captionNode.textContent = text;
+    },
     set(rows) {
       tbody.textContent = "";
       if (!rows.length) {

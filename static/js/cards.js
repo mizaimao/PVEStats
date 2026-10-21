@@ -230,6 +230,9 @@ export function gpuCard(guest) {
             return [m.name || "?", proc, `${fmt.gib(m.size_vram)} GiB`,
                     fmt.countdown(m.unload_in), stop];
           }));
+          // Visible, not only in the button's tooltip.
+          const note = unloadFailureNote();
+          models.setCaption(note ? `Loaded models · ${note}` : "Loaded models");
         }
         procs.set((gpu.procs || []).map(p => [
           p.name || "?", String(p.pid), p.vram == null ? "–" : `${fmt.gib(p.vram)} GiB`,
@@ -262,17 +265,36 @@ export function gpuCard(guest) {
  * management. Nothing is written to ml60's disk.
  */
 const ARM_MS = 4000;
+const FAILED_MS = 8000;      // long enough to read why
+const STOPPED_MS = 10000;    // until the agent's list drops the model
 const armed = new Map();     // model name -> when the arming lapses
 const unloading = new Set();
+// Outcomes live here, not on the button: the table is rebuilt every tick, so
+// an outcome kept on the node went with it, and "Failed" showed for under a
+// second before a fresh "Stop" replaced it, reason and all.
+const failures = new Map();  // model name -> { message, until }
+const stopped = new Map();   // model name -> until
 
 /* The models table is rebuilt on every tick. While a button is armed or
    working, that rebuild would replace the node mid-click, so it is held off
    until the interaction settles; a countdown frozen for a second is a much
-   smaller problem than a button that swallows presses. */
+   smaller problem than a button that swallows presses. An arming that lapses
+   needs no timer of its own: the next rebuild draws a plain "Stop". */
 function modelsBusy() {
   const now = performance.now();
   for (const [name, until] of armed) if (until <= now) armed.delete(name);
   return armed.size > 0 || unloading.size > 0;
+}
+
+/* Why the most recent unload failed, while that is still news. */
+function unloadFailureNote() {
+  const now = performance.now();
+  let latest = null;
+  for (const [name, failure] of failures) {
+    if (failure.until <= now) failures.delete(name);
+    else if (!latest || failure.until > latest.until) latest = { name, ...failure };
+  }
+  return latest && `stopping ${latest.name} failed: ${latest.message}`;
 }
 
 function unloadButton(name) {
@@ -280,18 +302,24 @@ function unloadButton(name) {
   btn.type = "button";
   btn.title = `Unload ${name} from VRAM — it reloads on the next request to it`;
 
-  const disarm = () => {
-    armed.delete(name);
-    btn.className = "stop";
-    btn.textContent = "Stop";
-  };
+  // Rebuilt every tick, so start from the model's last outcome.
+  const now = performance.now();
+  const failure = failures.get(name);
+  if (failure && failure.until > now) {
+    btn.className = "stop is-failed";
+    btn.textContent = "Failed";
+    btn.title = failure.message;
+  } else if ((stopped.get(name) || 0) > now) {
+    btn.textContent = "Stopped";
+    btn.disabled = true;
+  }
 
   btn.addEventListener("click", async () => {
-    if (!armed.has(name)) {
+    if (!((armed.get(name) || 0) > performance.now())) {
+      failures.delete(name);
       armed.set(name, performance.now() + ARM_MS);
       btn.className = "stop is-armed";
       btn.textContent = "Confirm";
-      setTimeout(disarm, ARM_MS);
       return;
     }
     armed.delete(name);
@@ -307,15 +335,17 @@ function unloadButton(name) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      // Leave the row as it is; the next poll drops it, which is the real
-      // confirmation that Ollama let go of the model.
+      // The next poll dropping the row is the real confirmation that Ollama
+      // let go of the model; until then it reads "Stopped".
+      stopped.set(name, performance.now() + STOPPED_MS);
       btn.textContent = "Stopped";
     } catch (err) {
+      const message = String(err.message || err);
+      failures.set(name, { message, until: performance.now() + FAILED_MS });
       btn.className = "stop is-failed";
       btn.textContent = "Failed";
-      btn.title = String(err.message || err);
+      btn.title = message;
       btn.disabled = false;
-      setTimeout(() => { btn.title = `Unload ${name} from VRAM`; disarm(); }, 6000);
     } finally {
       unloading.delete(name);
     }
