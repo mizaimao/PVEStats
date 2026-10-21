@@ -6,6 +6,7 @@ not in the served page and not in /api/state (spec §6).
 
 import functools
 import json
+import math
 import os
 import ssl
 import tempfile
@@ -38,6 +39,35 @@ UI_DEFAULTS = {
 }
 
 
+def clean_ui(values):
+    """The known appearance settings whose values have the default's type.
+
+    config.yaml and ui.json are edited by hand, and /api/ui takes whatever a
+    local client sends. A value of the wrong type is dropped, so the default
+    stands, rather than being saved, or stopping the next launch the way a
+    null or "5m" window did. Not a dict at all means nothing usable.
+    """
+    if not isinstance(values, dict):
+        return {}
+    clean = {}
+    for key, default in UI_DEFAULTS.items():
+        if key not in values:
+            continue
+        value = values[key]
+        if isinstance(default, bool):
+            ok = isinstance(value, bool)
+        elif isinstance(default, (int, float)):
+            # bool is an int in Python, and NaN or infinity cannot size a
+            # buffer.
+            ok = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                  and math.isfinite(value))
+        else:
+            ok = isinstance(value, type(default))
+        if ok:
+            clean[key] = value
+    return clean
+
+
 class Config:
     def __init__(self, env_path=None, config_path=None):
         load_dotenv(env_path or ROOT / ".env")
@@ -55,25 +85,24 @@ class Config:
 
         raw = yaml.safe_load((config_path or ROOT / "config.yaml").read_text())
         self.hosts = {int(h["vmid"]): h for h in (raw or {}).get("hosts", [])}
-        self.ui_defaults = {**UI_DEFAULTS, **((raw or {}).get("ui") or {})}
+        self.ui_defaults = {**UI_DEFAULTS, **clean_ui((raw or {}).get("ui"))}
 
     def ui(self):
         """Appearance settings: config.yaml defaults, overridden by ui.json."""
         settings = dict(self.ui_defaults)
         try:
-            settings.update(json.loads(UI_STATE.read_text()))
+            settings.update(clean_ui(json.loads(UI_STATE.read_text())))
         except (OSError, ValueError):
             pass        # absent or unreadable — defaults stand
         return settings
 
     def save_ui(self, changes):
-        """Persist appearance settings, keeping unknown keys out.
+        """Persist appearance settings, keeping unknown keys and bad values out.
 
         Written atomically so a crash mid-write cannot leave a truncated file
         that would then be silently ignored on next start.
         """
-        settings = {**self.ui(), **{k: v for k, v in changes.items()
-                                    if k in UI_DEFAULTS}}
+        settings = {**self.ui(), **clean_ui(changes)}
         handle, temporary = tempfile.mkstemp(dir=str(ROOT), suffix=".tmp")
         try:
             with os.fdopen(handle, "w") as fh:
