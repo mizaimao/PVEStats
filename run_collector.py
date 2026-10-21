@@ -16,6 +16,18 @@ from pvestats.collector import Collector
 from pvestats.config import Config
 
 
+def num(value, spec, scale=1):
+    """A number formatted, or "–" when a source sent none.
+
+    An offline pool has a null size, NVML can fail to report memory, and a
+    GPU or NAS card shown before PVE answers has no PVE fields at all: any of
+    them used to end the run with a TypeError or KeyError.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "–"
+    return format(value / scale, spec)
+
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true",
@@ -43,34 +55,39 @@ async def main():
                       f"{status['error'] or ''}")
             node = snapshot["node"]
             if node:
-                print(f"  node {node['name']}: cpu={node['cpu_pct']:.1f}% "
-                      f"mem={node['mem'] / 2**30:.1f}/{node['maxmem'] / 2**30:.1f} GiB "
-                      f"load={node['loadavg']} "
-                      f"guests={node['guests_running']}/{node['guests_total']}")
+                print(f"  node {node.get('name')}: cpu={num(node.get('cpu_pct'), '.1f')}% "
+                      f"mem={num(node.get('mem'), '.1f', 2**30)}/"
+                      f"{num(node.get('maxmem'), '.1f', 2**30)} GiB "
+                      f"load={node.get('loadavg')} "
+                      f"guests={node.get('guests_running')}/{node.get('guests_total')}")
             for guest in snapshot["guests"]:
-                line = (f"  {guest['vmid']:>5} {guest['name']:<14} "
-                        f"{guest['view']:<6} cpu={guest['cpu_pct']:5.1f}% "
-                        f"mem={guest['mem'] / 2**30:5.1f}/{guest['maxmem'] / 2**30:.0f}G")
+                line = (f"  {guest['vmid']:>5} {str(guest.get('name')):<14} "
+                        f"{str(guest.get('view')):<6} cpu={num(guest.get('cpu_pct'), '5.1f')}% "
+                        f"mem={num(guest.get('mem'), '5.1f', 2**30)}/"
+                        f"{num(guest.get('maxmem'), '.0f', 2**30)}G")
                 if guest.get("net_in_bps") is not None:
-                    line += (f" net={guest['net_in_bps'] / 1e6:.1f}/"
-                             f"{guest['net_out_bps'] / 1e6:.1f} MB/s")
+                    line += (f" net={num(guest['net_in_bps'], '.1f', 1e6)}/"
+                             f"{num(guest.get('net_out_bps'), '.1f', 1e6)} MB/s")
                 print(line)
                 if "gpu" in guest:
                     gpu = guest["gpu"]
-                    print(f"        gpu {gpu['util']}% "
-                          f"vram={gpu['vram_used'] / 2**30:.1f}/"
-                          f"{gpu['vram_total'] / 2**30:.1f}G "
-                          f"{gpu['temp']}C {gpu['power']}/{gpu['power_limit']}W "
-                          f"models={[m['name'] for m in gpu['models']]}")
+                    print(f"        gpu {num(gpu.get('util'), '.0f')}% "
+                          f"vram={num(gpu.get('vram_used'), '.1f', 2**30)}/"
+                          f"{num(gpu.get('vram_total'), '.1f', 2**30)}G "
+                          f"{num(gpu.get('temp'), '.0f')}C "
+                          f"{num(gpu.get('power'), '.0f')}/{num(gpu.get('power_limit'), '.0f')}W "
+                          f"models={[m.get('name') for m in gpu.get('models') or []]}")
                 if "nas" in guest:
                     nas = guest["nas"]
-                    for name, iface in nas["interfaces"].items():
-                        print(f"        if {name}: rx={iface['rx_bps'] / 1e6:.1f} "
-                              f"tx={iface['tx_bps'] / 1e6:.1f} MB/s")
-                    for pool in nas["pools"]:
-                        used = pool["allocated"] / pool["size"] * 100
-                        print(f"        pool {pool['name']}: {pool['status']} "
-                              f"{used:.0f}% of {pool['size'] / 2**40:.1f} TiB")
+                    for name, iface in (nas.get("interfaces") or {}).items():
+                        print(f"        if {name}: rx={num(iface.get('rx_bps'), '.1f', 1e6)} "
+                              f"tx={num(iface.get('tx_bps'), '.1f', 1e6)} MB/s")
+                    for pool in nas.get("pools") or []:
+                        size, allocated = pool.get("size"), pool.get("allocated")
+                        used = (num(allocated / size * 100, ".0f")
+                                if size and isinstance(allocated, (int, float)) else "–")
+                        print(f"        pool {pool.get('name')}: {pool.get('status')} "
+                              f"{used}% of {num(size, '.1f', 2**40)} TiB")
     finally:
         await collector.stop()
 
