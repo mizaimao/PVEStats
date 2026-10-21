@@ -81,37 +81,45 @@ class Config:
         self.truenas_api_key = os.getenv("TRUENAS_API_KEY", "").strip()
 
         self.agent_url = os.getenv("ML60_AGENT_URL", "").strip()
-        self.port = int(os.getenv("DASHBOARD_PORT", "8080"))
+        # `DASHBOARD_PORT=` with nothing after it reads as "", not unset.
+        self.port = int(os.getenv("DASHBOARD_PORT", "").strip() or "8080")
 
         raw = yaml.safe_load((config_path or ROOT / "config.yaml").read_text())
-        self.hosts = {int(h["vmid"]): h for h in (raw or {}).get("hosts", [])}
+        # `hosts:` with every entry commented out reads as None, not [].
+        self.hosts = {int(h["vmid"]): h for h in ((raw or {}).get("hosts") or [])}
         self.ui_defaults = {**UI_DEFAULTS, **clean_ui((raw or {}).get("ui"))}
+
+    def _saved_ui(self):
+        """Just what the settings panel has changed, as stored in ui.json."""
+        try:
+            return clean_ui(json.loads(UI_STATE.read_text()))
+        except (OSError, ValueError):
+            return {}   # absent or unreadable — nothing changed here
 
     def ui(self):
         """Appearance settings: config.yaml defaults, overridden by ui.json."""
-        settings = dict(self.ui_defaults)
-        try:
-            settings.update(clean_ui(json.loads(UI_STATE.read_text())))
-        except (OSError, ValueError):
-            pass        # absent or unreadable — defaults stand
-        return settings
+        return {**self.ui_defaults, **self._saved_ui()}
 
     def save_ui(self, changes):
         """Persist appearance settings, keeping unknown keys and bad values out.
 
+        ui.json holds only the settings changed here. Writing the whole merged
+        set pinned config.yaml's values too, so later edits to its ui block
+        were silently ignored.
+
         Written atomically so a crash mid-write cannot leave a truncated file
         that would then be silently ignored on next start.
         """
-        settings = {**self.ui(), **clean_ui(changes)}
+        saved = {**self._saved_ui(), **clean_ui(changes)}
         handle, temporary = tempfile.mkstemp(dir=str(ROOT), suffix=".tmp")
         try:
             with os.fdopen(handle, "w") as fh:
-                json.dump(settings, fh, indent=2)
+                json.dump(saved, fh, indent=2)
             os.replace(temporary, UI_STATE)
         except BaseException:
             Path(temporary).unlink(missing_ok=True)
             raise
-        return settings
+        return {**self.ui_defaults, **saved}
 
     @property
     def pve_auth_header(self):

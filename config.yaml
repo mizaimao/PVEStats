@@ -1,5 +1,7 @@
 # Appearance. Editable here; changing it in the settings panel writes to
-# ui.json instead, so the comments in this file survive.
+# ui.json instead, so the comments in this file survive. A setting changed
+# in the panel then overrides its line here (only that one); delete ui.json
+# to hand all of them back to this block.
 #   theme: ice | midnight | neon | amber | synthwave | matrix | ember | nord
 #          | glass | vista | win7 | snowleopard
 #   glow:  0 = off, 1 = normal, 2.5 = maximum

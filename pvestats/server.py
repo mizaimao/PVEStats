@@ -121,15 +121,21 @@ async def handle_unload(request):
     written to ml60's disk, no configuration changes, and it goes through the
     agent that is already there rather than opening any new path in.
     """
+    # Every answer is JSON in the agent's own shape, failures included: the
+    # Stop button reads the reason from `error`, and a plain-text body left
+    # it with nothing but "HTTP 502".
+    def failed(status, message):
+        return web.json_response({"ok": False, "error": message}, status=status)
+
     config = request.app["collector"].config
     if not config.agent_configured:
-        raise web.HTTPServiceUnavailable(text="no ml60 agent configured")
+        return failed(503, "no ml60 agent configured")
     try:
         name = (await request.json()).get("model")
     except Exception:
-        raise web.HTTPBadRequest(text="expected a JSON object")
+        return failed(400, "expected a JSON object")
     if not isinstance(name, str) or not name.strip():
-        raise web.HTTPBadRequest(text="no model named")
+        return failed(400, "no model named")
 
     url = config.agent_url.rstrip("/") + "/unload"
     try:
@@ -140,7 +146,7 @@ async def handle_unload(request):
                 payload = await response.json()
                 status = response.status
     except Exception as exc:
-        raise web.HTTPBadGateway(text=f"{type(exc).__name__}: {exc}")
+        return failed(502, f"{type(exc).__name__}: {exc}")
     return web.json_response(payload, status=200 if status == 200 else 502)
 
 
@@ -154,20 +160,26 @@ async def own_page_only(request, handler):
     """Refuse requests that did not come from this dashboard's own page.
 
     Binding 127.0.0.1 keeps other machines out, but a browser on this Mac will
-    carry a request here on behalf of any site it has open. Two checks:
+    carry a request here on behalf of any site it has open. Three checks:
 
     - Host must name this server. A site that points its own domain at
       127.0.0.1 still sends its own name here, so it cannot read the state.
+    - Browsers say where every request comes from (Sec-Fetch-Site). A
+      cross-site GET cannot read the reply, but each /api/history call still
+      spends the PVE token, so anything from another site is refused.
     - Writes must come from this origin and carry JSON. Browsers send Origin
       on every cross-site POST, and a JSON body cannot go cross-site without
       a preflight, which this server never answers.
 
-    A request with no Origin at all is a local process (curl, a script), which
-    could reach anything on this Mac anyway.
+    A request with neither header is a local process (curl, a script, app.py's
+    own readiness check), which could reach anything on this Mac anyway.
     """
     hosts = request.app["hosts"]
     if request.host not in hosts:
         raise web.HTTPForbidden(text="unexpected Host header")
+    site = request.headers.get("Sec-Fetch-Site")
+    if site is not None and site not in ("same-origin", "none"):
+        raise web.HTTPForbidden(text="cross-site request refused")
     if request.method == "POST":
         origin = request.headers.get("Origin")
         if origin is not None and origin not in {f"http://{h}" for h in hosts}:
@@ -177,10 +189,25 @@ async def own_page_only(request, handler):
     return await handler(request)
 
 
+async def response_headers(request, response):
+    # Never inside another page: a hidden frame could turn two clicks on a
+    # lure into Stop and Confirm. The window loads the page top-level.
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    # The page's modules revalidate on every load (cheap: they carry an
+    # ETag), so a browser never runs an update against stale scripts.
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+
+
 def build_app(collector):
     app = web.Application(middlewares=[own_page_only])
     port = collector.config.port
     app["hosts"] = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    if port == 80:
+        # Browsers leave the default port out of Host and Origin.
+        app["hosts"] |= {"127.0.0.1", "localhost"}
+    app.on_response_prepare.append(response_headers)
     app["collector"] = collector
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/state", handle_state)
