@@ -43,6 +43,10 @@ if [ ! -x "$UV" ]; then
   tar -xzf "$work/uv.tar.gz" -C "$work"
   mkdir -p "$REPO/.tools/uv"
   mv "$work/uv-aarch64-apple-darwin/uv" "$UV"
+  # Cleaned up here: bash runs no EXIT trap on the exec below, so the
+  # download used to stay behind in $TMPDIR.
+  rm -rf "$work"
+  trap - EXIT
 fi
 
 exec "$UV" "$@"

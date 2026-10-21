@@ -1,5 +1,7 @@
 # The Mac side: collector, local server and window. Managed with tools/uv;
-# uv.lock pins every package by hash. The ml60 agent has its own
+# uv.lock pins every installed package by hash. One of them, proxy-tools
+# (via pywebview), exists only as a source release, so the first install
+# builds it, with the setuptools pinned below. The ml60 agent has its own
 # requirements in agent/, installed on ml60.
 [project]
 name = "pvestats"
@@ -17,9 +19,17 @@ dependencies = [
     "pywebview>=5.0",
 ]
 
+[dependency-groups]
+# Only for redrawing the app icon (tools/render_icon.py), so not installed
+# into the app's .venv: `tools/uv run --group icon ...` brings it in.
+icon = ["pillow"]
+
 [tool.uv]
 # An app, not a library: nothing to build or install from this folder.
 package = false
 # Only Pythons uv downloaded into .tools/python, never pyenv's, Homebrew's
 # or the system's.
 python-preference = "only-managed"
+# The build backend for proxy-tools' source release, held to the version it
+# was locked with, so a later setuptools cannot break a fresh install.
+build-constraint-dependencies = ["setuptools==84.0.0"]

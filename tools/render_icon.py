@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Draw the gauge icon directly, instead of generating it.
 
-    .venv/bin/python tools/render_icon.py --preview
-    .venv/bin/python tools/render_icon.py --value 0.72 --size 1024 -o icon.png
+    tools/uv run --group icon tools/render_icon.py --preview
+    tools/uv run --group icon tools/render_icon.py --value 0.72 --size 1024 -o icon.png
+    tools/uv run --group icon tools/render_icon.py --icns     # assets/AppIcon.icns
+
+Pillow lives in the `icon` dependency group, so the app's own .venv does not
+carry it; `--group icon` brings it in for the run. PNGs land in icons/
+(git-ignored) unless -o says otherwise.
 
 The diffusion model would not take needle position — "seven o'clock" and
 "twelve o'clock" produced the same angle — so the needle is drawn here, where
@@ -195,6 +200,7 @@ def main():
                         (x, cell + 30))
             x += px + 22
         out = ROOT / "icons" / "render-preview.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
         strip.save(out)
         print(f"wrote {out.relative_to(ROOT)}")
         return
@@ -202,6 +208,7 @@ def main():
     image = rounded(draw_icon(args.size, args.value, args.ticks,
                               show_ticks=not args.no_ticks))
     out = Path(args.out) if args.out else ROOT / "icons" / "render.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
     image.save(out)
     print(f"wrote {out}")
 
