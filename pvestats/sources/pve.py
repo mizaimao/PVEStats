@@ -3,7 +3,7 @@
 import asyncio
 import re
 
-from ..state import RateTracker, clock
+from ..state import RateTracker
 from .base import PVE_TIMEOUT
 
 # --------------------------------------------------------------------------
@@ -17,13 +17,19 @@ VIRTUAL_NIC = re.compile(r"^(lo|docker|br-|veth|virbr|cni|kube|flannel|tap)")
 
 # Guest addresses barely change, and each lookup is a separate API call per
 # guest. So they are fetched once at startup and then only when a guest needs
-# it — newly seen, no address yet, or rebooted (uptime went backwards). The
-# backstop catches a DHCP lease change on a guest that never restarts.
+# it — newly seen, or rebooted (uptime went backwards). The backstop catches a
+# DHCP lease change on a guest that never restarts.
 IP_BACKSTOP_EVERY = 90      # x PVE_INTERVAL = every 15 minutes
 
 # Filesystem usage also comes from the guest agent, one call per guest. It
 # moves slowly, so it refreshes on its own slow cycle.
 FS_REFRESH_EVERY = 30       # x PVE_INTERVAL = every 5 minutes
+
+# A guest whose agent has not answered yet (still booting, or none at all) is
+# asked again at this pace rather than on every poll: often enough that a
+# freshly started guest fills in within a minute, rarely enough that a guest
+# with no agent is not an extra API call and pveproxy log line every 10s.
+MISSING_RETRY_EVERY = 6     # x PVE_INTERVAL = every minute
 
 # Pseudo-filesystems that would otherwise crowd out the real ones.
 SKIP_FS = {"tmpfs", "devtmpfs", "overlay", "squashfs", "efivarfs", "ramfs"}
@@ -60,6 +66,11 @@ class PveSource:
         self._backstop = 0
         self.filesystems = {}   # vmid -> {"used": int, "total": int, "mount": str}
         self._fs_countdown = 0
+        self._polls = 0
+        # vmid -> poll number before which a guest with no answer yet is not
+        # asked again (MISSING_RETRY_EVERY).
+        self._ip_retry = {}
+        self._fs_retry = {}
 
     async def refresh_ips(self, session, guests, headers, base):
         """Ask each running guest's agent for its addresses.
@@ -97,8 +108,10 @@ class PveSource:
     async def refresh_filesystems(self, session, guests, headers, base):
         """Read in-guest filesystem usage from the agent.
 
-        `/cluster/resources` reports `disk` as 0 for every guest, so the agent
-        is the only source of real usage. Best effort per guest.
+        `/cluster/resources` reports `disk` as 0 for every VM, so for a VM
+        the agent is the only source of real usage. (Containers are the
+        exception: there `disk` is the real usage, used directly in poll().)
+        Best effort per guest.
         """
         async def one(guest):
             vmid, kind = guest.get("vmid"), guest.get("type", "qemu")
@@ -148,12 +161,6 @@ class PveSource:
         async with session.get(f"{base}/cluster/resources?type=vm", **kwargs) as response:
             response.raise_for_status()
             resources = (await response.json()).get("data") or []
-        # The counters were read just now, so the rates are timed from here,
-        # not after the status call and guest-agent lookups below, whose
-        # latency varies from poll to poll (a dead agent costs ~3 s a call).
-        # The clock counts sleep: hours of counter growth divide by hours,
-        # not by the few seconds the Mac was awake between two polls.
-        now = clock()
 
         async with session.get(f"{base}/nodes/{self.node}/status", **kwargs) as response:
             response.raise_for_status()
@@ -163,35 +170,57 @@ class PveSource:
         # their stale counters would pollute the rate tracker.
         running_raw = [g for g in resources if g.get("status") == "running"
                        and not g.get("template")]
+        self._polls += 1
+        polls = self._polls
+        live_ids = {g.get("vmid") for g in running_raw}
+
+        # Forget guests that are no longer running, so a later start re-reads.
+        for table in (self.ips, self.filesystems, self.seen_uptime,
+                      self._ip_retry, self._fs_retry):
+            for gone in [v for v in table if v not in live_ids]:
+                del table[gone]
+
         # Only ask about guests that actually need an answer.
         self._backstop -= 1
         due = self._backstop <= 0
         if due:
             self._backstop = IP_BACKSTOP_EVERY
-        stale = []
+        ask_ips = []
         for guest in running_raw:
             vmid, uptime = guest.get("vmid"), guest.get("uptime")
             if vmid is None:
                 continue
             was = self.seen_uptime.get(vmid)
-            rebooted = was is not None and uptime is not None and uptime < was
-            if due or rebooted or vmid not in self.ips:
-                stale.append(guest)
+            if was is not None and uptime is not None and uptime < was:
+                # Rebooted in place. The old address and usage may not hold,
+                # and its agent is still starting: ask until it answers.
+                for table in (self.ips, self.filesystems, self._ip_retry, self._fs_retry):
+                    table.pop(vmid, None)
             self.seen_uptime[vmid] = uptime
-        if stale:
-            await self.refresh_ips(session, stale, headers, base)
+            missing = vmid not in self.ips and self._ip_retry.get(vmid, 0) <= polls
+            if due or missing:
+                ask_ips.append(guest)
+        if ask_ips:
+            await self.refresh_ips(session, ask_ips, headers, base)
+            for guest in ask_ips:
+                if guest["vmid"] not in self.ips:
+                    self._ip_retry[guest["vmid"]] = polls + MISSING_RETRY_EVERY
 
+        # All of them on the slow cycle; in between, only guests with no usage
+        # yet (newly started or rebooted), at the retry pace.
         self._fs_countdown -= 1
         if self._fs_countdown <= 0:
-            await self.refresh_filesystems(session, running_raw, headers, base)
+            ask_fs = running_raw
             self._fs_countdown = FS_REFRESH_EVERY
-
-        # Forget guests that are no longer running, so a later start re-reads.
-        live_ids = {g.get("vmid") for g in running_raw}
-        for gone in [v for v in self.ips if v not in live_ids]:
-            del self.ips[gone]
-        for gone in [v for v in self.filesystems if v not in live_ids]:
-            del self.filesystems[gone]
+        else:
+            ask_fs = [g for g in running_raw if g.get("type", "qemu") == "qemu"
+                      and g.get("vmid") not in self.filesystems
+                      and self._fs_retry.get(g.get("vmid"), 0) <= polls]
+        if ask_fs:
+            await self.refresh_filesystems(session, ask_fs, headers, base)
+            for guest in ask_fs:
+                if guest.get("vmid") not in self.filesystems:
+                    self._fs_retry[guest.get("vmid")] = polls + MISSING_RETRY_EVERY
 
         guests = {}
         running = running_raw
@@ -202,6 +231,25 @@ class PveSource:
                 continue
             key = f"{vmid}"
             cpu_fraction = guest.get("cpu")  # 0.0-1.0, NOT a percentage
+            # The counters are pvestatd's last snapshot, republished every
+            # ~10s, not a reading taken now. Timing them by the Mac's clock
+            # made a poll that saw the same snapshot twice read 0 and the
+            # next read double. The guest's uptime comes from that same
+            # snapshot, so it times them exactly; an unchanged uptime is a
+            # repeat. It also ignores the Mac sleeping, and how long this
+            # poll's other calls took.
+            snapshot = guest.get("uptime")
+            if snapshot is not None:
+                rates = {name: self.rates.rate(f"{key}.{name}", guest.get(name), snapshot)
+                         for name in ("netin", "netout", "diskread", "diskwrite")}
+            else:
+                rates = dict.fromkeys(("netin", "netout", "diskread", "diskwrite"))
+            # A container's disk is the real usage of its root filesystem,
+            # with no agent involved.
+            filesystem = self.filesystems.get(vmid)
+            if guest.get("type") == "lxc" and guest.get("maxdisk"):
+                filesystem = {"used": guest.get("disk"), "total": guest.get("maxdisk"),
+                              "mount": "/"}
             entry = {
                 "vmid": vmid,
                 "name": guest.get("name"),
@@ -215,15 +263,15 @@ class PveSource:
                 "memhost": guest.get("memhost"),
                 "view": self.config.view_for(vmid),
                 "addresses": self.ips.get(vmid) or [],
-                "filesystem": self.filesystems.get(vmid),
+                "filesystem": filesystem,
                 # Whether the host can actually see this guest's disk traffic.
                 "disk_io_visible": _disk_io_visible(guest),
                 # Cumulative counters converted to bytes/sec. None until the
-                # second poll, since a rate needs two samples.
-                "net_in_bps": self.rates.rate(f"{key}.netin", guest.get("netin"), now),
-                "net_out_bps": self.rates.rate(f"{key}.netout", guest.get("netout"), now),
-                "disk_read_bps": self.rates.rate(f"{key}.diskread", guest.get("diskread"), now),
-                "disk_write_bps": self.rates.rate(f"{key}.diskwrite", guest.get("diskwrite"), now),
+                # second snapshot, since a rate needs two.
+                "net_in_bps": rates["netin"],
+                "net_out_bps": rates["netout"],
+                "disk_read_bps": rates["diskread"],
+                "disk_write_bps": rates["diskwrite"],
             }
             # maxdisk comes back as 0 for some guests, in which case there is
             # nothing meaningful to show. PVE reports allocation, never
