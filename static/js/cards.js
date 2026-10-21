@@ -313,17 +313,18 @@ const FAILED_MS = 8000;      // long enough to read why
 const STOPPED_MS = 10000;    // until the agent's list drops the model
 const armed = new Map();     // model name -> when the arming lapses
 const unloading = new Set();
-// Outcomes live here, not on the button: the table is rebuilt every tick, so
-// an outcome kept on the node went with it, and "Failed" showed for under a
-// second before a fresh "Stop" replaced it, reason and all.
+// Outcomes live here, not on the button: refresh() redraws each button from
+// them every tick, the caption reads the failure from here, and they outlast
+// a button dropped when its model leaves the list. Kept on the node, as they
+// once were, "Failed" vanished with the next rebuild, reason and all.
 const failures = new Map();  // model name -> { message, until }
 const stopped = new Map();   // model name -> until
 
-/* The models table is rebuilt on every tick. While a button is armed or
-   working, that rebuild would replace the node mid-click, so it is held off
-   until the interaction settles; a countdown frozen for a second is a much
-   smaller problem than a button that swallows presses. An arming that lapses
-   needs no timer of its own: the next rebuild draws a plain "Stop". */
+/* While the list of models is unchanged, the table updates in place and each
+   Stop keeps its node. A changed list rebuilds the body, which detaches the
+   buttons and would lose a press or focus, so that rebuild waits while a
+   button is armed or its request is in flight. An arming that lapses needs
+   no timer of its own: the next refresh() draws a plain "Stop". */
 function modelsBusy() {
   const now = performance.now();
   for (const [name, until] of armed) if (until <= now) armed.delete(name);
