@@ -37,8 +37,10 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/ps")
 # nothing else. It cannot pull, run, delete or configure anything.
 #
 # Set PVESTATS_AGENT_ALLOW_UNLOAD=0 to close it off entirely; the agent then
-# refuses with 403 and the dashboard hides the buttons.
-ALLOW_UNLOAD = os.environ.get("PVESTATS_AGENT_ALLOW_UNLOAD", "1") != "0"
+# refuses with 403 and the dashboard hides the buttons. Fails closed: only
+# 1/true/yes/on (any case) leave it open, so "false" or "off" close it too.
+ALLOW_UNLOAD = (os.environ.get("PVESTATS_AGENT_ALLOW_UNLOAD", "1").strip().lower()
+                in {"1", "true", "yes", "on"})
 OLLAMA_GENERATE_URL = os.environ.get(
     "OLLAMA_GENERATE_URL",
     OLLAMA_URL.rsplit("/api/", 1)[0] + "/api/generate" if "/api/" in OLLAMA_URL
@@ -54,9 +56,10 @@ UNLOAD_TIMEOUT = 30.0
 OLLAMA_TIMEOUT = 1.0
 
 # Ollama's loaded-model list changes only when a model loads or unloads, but
-# the dashboard polls at 1 Hz. Caching briefly cuts ~86k requests a day to the
-# inference server down to a few thousand, with no visible staleness.
-OLLAMA_CACHE_SECONDS = 5.0
+# the dashboard polls at 1 Hz, and Ollama logs a line per request on ml60's
+# disk. A 30 s cache cuts 86,400 calls a day to 2,880. An unload from the
+# dashboard clears it, so only a model loaded by someone else shows up late.
+OLLAMA_CACHE_SECONDS = 30.0
 
 _handle = None
 _handle_lock = threading.Lock()    # requests are served on several threads
@@ -263,8 +266,14 @@ def build_payload():
     return payload
 
 
+# {"model": "<name>"} is a few dozen bytes; anything near this is not one.
+MAX_BODY = 4096
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # A client that stalls mid-request frees its thread instead of holding it.
+    timeout = 10
 
     def log_message(self, *args):
         """No-op. Spec §3.2.
@@ -274,40 +283,88 @@ class Handler(BaseHTTPRequestHandler):
         no-writes-to-homelab-disk constraint.
         """
 
-    def reply(self, status, payload):
+    def reply(self, status, payload, close=False):
+        """Send JSON. `close` for a reply that leaves the request body unread.
+
+        On a kept-alive connection the unread bytes would be parsed as the
+        next request, so the connection goes with the reply.
+        """
         body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            if close:
+                self.send_header("Connection", "close")   # sets close_connection
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            # The client hung up first (the dashboard closed mid-unload, say).
+            # Nothing to tell it, and no second reply on a dead socket.
+            self.close_connection = True
 
     def do_POST(self):
         if self.path.split("?")[0] != "/unload":
             self.send_error(404)
             return
+        # Any web page can make a browser send a cross-site POST with a
+        # text/plain body and no preflight, and Caddy forwards it. Browsers
+        # always mark those with Origin, and a JSON body would need a
+        # preflight this agent never answers. The dashboard's relay sends
+        # JSON and no Origin.
+        if self.headers.get("Origin") is not None:
+            self.reply(403, {"ok": False, "error": "cross-site request refused"}, close=True)
+            return
+        if self.headers.get_content_type() != "application/json":
+            self.reply(415, {"ok": False, "error": "expected application/json"}, close=True)
+            return
         if not ALLOW_UNLOAD:
-            self.reply(403, {"ok": False, "error": "unload disabled on this agent"})
+            self.reply(403, {"ok": False, "error": "unload disabled on this agent"}, close=True)
+            return
+        length = (self.headers.get("Content-Length") or "").strip()
+        if not length.isdigit():
+            # Missing (chunked), negative or garbage: read(-1) would block
+            # until the client hangs up.
+            self.reply(411, {"ok": False, "error": "Content-Length required"}, close=True)
+            return
+        if int(length) > MAX_BODY:
+            self.reply(413, {"ok": False, "error": "request too large"}, close=True)
             return
         try:
-            length = int(self.headers.get("Content-Length") or 0)
-            name = json.loads(self.rfile.read(length) or b"{}").get("model")
+            name = json.loads(self.rfile.read(int(length)) or b"{}").get("model")
         except Exception:
-            self.reply(400, {"ok": False, "error": "malformed request"})
+            self.reply(400, {"ok": False, "error": "malformed request"}, close=True)
             return
         if not isinstance(name, str) or not name.strip():
             self.reply(400, {"ok": False, "error": "no model named"})
             return
         try:
-            self.reply(200, unload_model(name.strip()))
+            result = unload_model(name.strip())
         except Exception as exc:
             self.reply(502, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return
+        self.reply(200, result)
 
     def do_GET(self):
         if self.path.split("?")[0] != "/":
             self.send_error(404)
             return
         self.reply(200, build_payload())
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """Stay quiet about a client that hung up.
+
+        Its BrokenPipe or ConnectionReset would otherwise print a full
+        traceback into ml60's journal (constraint 3). Anything else still
+        does: that is a real fault worth seeing.
+        """
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)
 
 
 def main():
@@ -318,8 +375,7 @@ def main():
     except Exception as exc:
         print(f"warning: NVML unavailable at startup: {exc}", file=sys.stderr)
 
-    server = ThreadingHTTPServer((BIND, PORT), Handler)
-    server.daemon_threads = True
+    server = Server((BIND, PORT), Handler)
     print(f"pvestats-agent listening on {BIND}:{PORT}", file=sys.stderr)
     try:
         server.serve_forever()
