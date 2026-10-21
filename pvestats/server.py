@@ -9,6 +9,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
+from .config import UI_DEFAULTS, clean_ui
 from .sources import PVE_TIMEOUT
 
 # Unloading blocks until any in-flight generation finishes, so it needs far
@@ -90,6 +91,11 @@ async def handle_ui_post(request):
         raise web.HTTPBadRequest(text="expected a JSON object")
     if not isinstance(changes, dict):
         raise web.HTTPBadRequest(text="expected a JSON object")
+    # Refused before anything is written: a bad window used to be saved and
+    # then stop every later launch.
+    bad = sorted(k for k in changes if k in UI_DEFAULTS and k not in clean_ui(changes))
+    if bad:
+        raise web.HTTPBadRequest(text=f"invalid value for {', '.join(bad)}")
     collector = request.app["collector"]
     try:
         saved = collector.config.save_ui(changes)
