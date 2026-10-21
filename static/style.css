@@ -537,8 +537,10 @@ body {
 
 /* A source that has gone quiet recedes; it never blanks (spec §2, §7). */
 .card.is-stale { opacity: 0.55; }
-/* The PVE-fed panels of the ml60 and NAS cards, when only PVE is stale. */
-.pve-stale { opacity: 0.55; }
+/* The PVE-fed panels of the ml60 and NAS cards, when only PVE is stale. In a
+   card that is stale already, its own dimming covers them; both together
+   multiplied to about 0.30. */
+.card:not(.is-stale) .pve-stale { opacity: 0.55; }
 .card .card-error {
   font-size: 11px;
   color: var(--warning);
@@ -1115,9 +1117,6 @@ table.data.divided caption {
     0 0 calc(var(--glow-wide) * var(--glow-scale)) color-mix(in oklab,
       var(--meter-color, var(--series-1)) 55%, transparent);
 }
-/* drop-shadow with no colour argument uses the element's own `color`, which
-   the chart sets to the series hue — so each mark glows in its own colour.
-   Stacked twice for a bright core inside a soft halo. */
 /* SVG clips to its viewport by default, which cropped the halo into a visible
    square patch. The marks themselves stay inside; only the light spills. */
 .spark svg,

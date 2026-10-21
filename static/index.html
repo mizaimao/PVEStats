@@ -104,31 +104,33 @@
     <b>1</b>–<b>8</b> switch the first eight themes. Theme, glow, texture
     and the history window below save to <code>ui.json</code> beside
     config.yaml; focus mode lasts for the session. The poll rates below are
-    for reference: each is set by what its source can honour.</p>
+    fixed and shown for reference; each badge says whether its source could
+    honour a different rate.</p>
 
   <div class="setting">
     <label for="set-agent">ml60 GPU agent</label>
     <span class="derived">1s</span>
-    <span class="applies ok">Applies</span>
-    <p>NVML reads take microseconds, so this is genuinely real-time and can be
-      raised or lowered freely.</p>
+    <span class="applies ok">Would apply</span>
+    <p>NVML reads take microseconds, so this is genuinely real-time and could
+      be raised or lowered freely.</p>
   </div>
 
   <div class="setting">
     <label for="set-truenas">TrueNAS</label>
     <span class="derived">5s</span>
-    <span class="applies ok">Applies</span>
-    <p>Netdata keeps per-second samples, so a faster poll returns real data.
-      Each poll is a round trip over the WebSocket.</p>
+    <span class="applies ok">Would apply</span>
+    <p>Netdata keeps per-second samples, so a faster poll would return real
+      data. Each poll is a round trip over the WebSocket.</p>
   </div>
 
   <div class="setting">
     <label for="set-pve">Proxmox VE</label>
     <span class="derived">10s</span>
     <span class="applies capped">Floor 10s</span>
-    <p>Ignored below 10s. <code>pvestatd</code> recomputes guest statistics on
-      its own 10s cycle, so polling faster returns the same numbers and only
-      adds load and log lines. A hard property of PVE, not a preference.</p>
+    <p>Nothing faster would help. <code>pvestatd</code> recomputes guest
+      statistics on its own 10s cycle, so polling faster returns the same
+      numbers and only adds load and log lines. A hard property of PVE, not a
+      preference.</p>
   </div>
 
   <div class="setting">

@@ -57,11 +57,16 @@ way and run `uv sync`.
 Windows 10; otherwise install the Evergreen runtime from Microsoft.
 
 **Linux.** Untested with the uv setup. The window needs the WebKitGTK
-bindings, which no package index supplies and which belong to the system
-Python, where a uv-managed Python cannot see them; and `uv sync` here replaces
-any venv not built from a uv-managed Python. So on Linux serve to a browser
-with `run.py` (below), or build a venv by hand from the system Python with
-`--system-site-packages` and install the dependencies into it yourself.
+bindings, which no package index supplies:
+
+    sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1   # Debian/Ubuntu
+    sudo dnf install python3-gobject webkit2gtk4.1                    # Fedora
+
+They belong to the system Python, where a uv-managed Python cannot see them,
+and `uv sync` here replaces any venv not built from a uv-managed Python. So
+on Linux serve to a browser with `run.py` (below), or build a venv by hand
+from the system Python with `--system-site-packages` and install the
+dependencies into it yourself.
 
 To serve to an ordinary browser instead of a window:
 
