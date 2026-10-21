@@ -3,7 +3,8 @@
 
     .venv/bin/python run.py
 
-Binds 127.0.0.1 only. Nothing is written to disk.
+Binds 127.0.0.1 only. The one file written is ui.json (appearance settings
+changed in the page's settings panel), in this folder.
 """
 
 import asyncio
