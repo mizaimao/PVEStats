@@ -93,7 +93,12 @@ def _placement(size, size_vram):
 
 
 def _seconds_until(timestamp):
-    """Seconds from now until an ISO-8601 instant, or None."""
+    """Seconds from now until an ISO-8601 instant, or None.
+
+    Negative once it has passed, not clamped to 0: a model still listed well
+    past its expiry is busy (Ollama moves the expiry only when a request
+    finishes), and the page needs that to say so.
+    """
     if not timestamp:
         return None
     from datetime import datetime, timezone
@@ -103,4 +108,4 @@ def _seconds_until(timestamp):
         return None
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
-    return max(0, round((when - datetime.now(timezone.utc)).total_seconds()))
+    return round((when - datetime.now(timezone.utc)).total_seconds())

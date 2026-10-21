@@ -25,6 +25,13 @@ export const fmt = {
 
   countdown(seconds) {
     if (seconds == null) return "–";
+    // keep_alive -1 (or OLLAMA_KEEP_ALIVE=-1) puts the expiry ~292 years out;
+    // `ollama ps` calls that Forever.
+    if (seconds > 20 * 365 * 86400) return "never";
+    // Ollama moves a model's expiry only when a request finishes, so a model
+    // still listed well past it is busy, not about to leave. The margin
+    // covers the agent's 30 s model cache plus a poll.
+    if (seconds < -40) return "in use";
     if (seconds <= 0) return "now";
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
