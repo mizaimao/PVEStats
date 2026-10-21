@@ -9,14 +9,17 @@ set -e
 REPO="$(cd "$(dirname "$0")" && pwd)"
 APP="$REPO/PVEStats.app"
 
+# Regenerate the icon if it is missing; otherwise reuse the committed one, so
+# building the app does not need Pillow. Settled before the old bundle goes:
+# a failure here used to leave no app at all.
+if [ ! -f "$REPO/assets/AppIcon.icns" ]; then
+  "$REPO/tools/uv" run --group icon "$REPO/tools/render_icon.py" --icns || {
+    echo "No icon at assets/AppIcon.icns, and rendering one failed."
+    read -r -p "Press return to close."; exit 1; }
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-
-# Regenerate the icon if it is missing; otherwise reuse the committed one, so
-# building the app does not require Pillow.
-if [ ! -f "$REPO/assets/AppIcon.icns" ] && [ -x "$REPO/.venv/bin/python" ]; then
-  "$REPO/.venv/bin/python" "$REPO/tools/render_icon.py" --icns || true
-fi
 cp "$REPO/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST

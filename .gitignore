@@ -23,5 +23,9 @@ ui.json
 # macOS
 .DS_Store
 
-# uv, the Python it manages and its cache. Fetched by tools/uv.
-.tools/
+# uv, the Python it manages and its cache. Fetched by tools/uv. No trailing
+# slash, so a .tools link is ignored too.
+.tools
+
+# PNGs from tools/render_icon.py
+icons/
