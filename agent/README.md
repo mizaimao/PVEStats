@@ -4,6 +4,14 @@ Runs on ml60. Serves GPU telemetry and Ollama's loaded-model list as JSON on
 `127.0.0.1:9836`, no auth. Caddy on ml60 publishes it to the LAN as
 `https://pvestats.ml60.lan/`, with a certificate from Frank Home CA.
 
+It also takes one write: `POST /unload` with `{"model": "<name>"}` sets
+`keep_alive: 0` on that model, which is what `ollama stop` does, so the
+dashboard's Stop button can free VRAM. Nothing is written to disk, and the
+model reloads on its next request. It is on by default and, like `GET /`,
+reaches the whole LAN through Caddy with no auth. Set
+`PVESTATS_AGENT_ALLOW_UNLOAD=0` to refuse it (403); the dashboard then hides
+its Stop buttons.
+
 This is the one agent the design permits, because ml60's GPU is PCIe
 passthrough and therefore invisible to the hypervisor (spec §3.2).
 
@@ -82,6 +90,8 @@ All optional, set via systemd `Environment=`:
 | `PVESTATS_AGENT_PORT` | `9836` |
 | `PVESTATS_GPU_INDEX` | `0` |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/ps` |
+| `PVESTATS_AGENT_ALLOW_UNLOAD` | `1`; `0` refuses `POST /unload` |
+| `OLLAMA_GENERATE_URL` | `OLLAMA_URL` with `/api/ps` swapped for `/api/generate` |
 
 ## Disk writes
 
@@ -95,7 +105,7 @@ request. What is left is incidental, and the unit closes it:
 | Python bytecode (`.pyc`) | `PYTHONDONTWRITEBYTECODE=1`, and `ProtectSystem=strict` blocks it anyway |
 | stdout | `StandardOutput=null` — both startup messages go to stderr, so nothing is lost |
 | stderr | kept: two lines per start, plus a traceback if it dies |
-| `/tmp`, `/var/tmp` | `PrivateTmp=true` — tmpfs, memory-backed |
+| `/tmp`, `/var/tmp` | `TemporaryFileSystem=` — a fresh tmpfs each, memory-backed (`PrivateTmp=true` would keep them in the host's on-disk `/var/tmp`) |
 | Anything else | `ProtectSystem=strict` makes the filesystem read-only to the unit |
 
 For zero journal writes, set `StandardError=null` too — the cost is that a
@@ -112,10 +122,12 @@ If Ollama runs in Docker, its PIDs are namespaced, so `procs[].name` will not
 say "ollama". This is expected; VRAM is attributed through the `models` array
 rather than by matching process names.
 
-Metrics are read individually and tolerate `NVML_ERROR_NOT_SUPPORTED` — an
-unsupported field (fan speed on a fanless datacenter board, for instance)
-comes back `null` instead of costing the whole payload.
+Metrics are read individually, and one the board does not offer
+(`NOT_SUPPORTED`, `NOT_FOUND`, `NO_PERMISSION`, `FUNCTION_NOT_FOUND`), such as
+fan speed on a fanless datacenter board, comes back `null` instead of costing
+the whole payload.
 
-If NVML fails entirely, the agent still serves `models` and reports the reason
-in a top-level `error` field, so the dashboard can show why the GPU panel is
-empty instead of showing zeros.
+Any other NVML error (a GPU lost from the bus, for instance) fails the read:
+the agent still serves `models`, reports the reason in a top-level `error`
+field so the dashboard can say why the GPU panel is empty, and initialises
+NVML afresh on the next request.
