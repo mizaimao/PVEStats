@@ -60,10 +60,16 @@ OLLAMA_TIMEOUT = 1.0
 # disk. A 30 s cache cuts 86,400 calls a day to 2,880. An unload from the
 # dashboard clears it, so only a model loaded by someone else shows up late.
 OLLAMA_CACHE_SECONDS = 30.0
+# Shorter while the answer is about to change: a stopped model that is still
+# listed (a busy one unloads only when its request ends), or Ollama down.
+OLLAMA_RECHECK_SECONDS = 5.0
+# How long a stopped model is watched for at the short pace.
+STOP_WATCH_SECONDS = 120.0
 
 _handle = None
 _handle_lock = threading.Lock()    # requests are served on several threads
-_models_cache = (0.0, [])
+_models_cache = (0.0, [])          # (expires at, models)
+_stopping = {}                     # model name -> watched until
 
 # NVML errors that mean "this one metric is not available here". Anything
 # else (GPU_IS_LOST, UNKNOWN, UNINITIALIZED...) means the device read failed.
@@ -206,17 +212,17 @@ def gpu_stats():
 def loaded_models():
     """Ollama's currently-resident models, cached briefly. Never raises."""
     global _models_cache
-    cached_at, cached = _models_cache
+    expires, cached = _models_cache
     now = time.monotonic()
-    if now - cached_at < OLLAMA_CACHE_SECONDS:
+    if now < expires:
         return cached
     try:
         with urllib.request.urlopen(OLLAMA_URL, timeout=OLLAMA_TIMEOUT) as response:
             data = json.loads(response.read())
     except Exception:
         # Ollama down; GPU data is still worth serving. Cache the empty result
-        # too, so a dead Ollama is not retried at full poll rate.
-        _models_cache = (now, [])
+        # too, so a dead Ollama is not retried at full poll rate, but briefly.
+        _models_cache = (now + OLLAMA_RECHECK_SECONDS, [])
         return []
 
     models = []
@@ -228,7 +234,15 @@ def loaded_models():
             "expires_at": entry.get("expires_at"),
             "context_length": entry.get("context_length"),
         })
-    _models_cache = (now, models)
+    # A model stopped from the dashboard while busy stays listed until its
+    # request ends; recheck soon while one is, so it leaves the page with
+    # its last request rather than up to 30 s later.
+    listed = {m["name"] for m in models}
+    for name, until in list(_stopping.items()):
+        if name not in listed or until <= now:
+            _stopping.pop(name, None)
+    keep = OLLAMA_RECHECK_SECONDS if _stopping else OLLAMA_CACHE_SECONDS
+    _models_cache = (now + keep, models)
     return models
 
 
@@ -248,7 +262,9 @@ def unload_model(name):
     with urllib.request.urlopen(request, timeout=UNLOAD_TIMEOUT) as response:
         result = json.loads(response.read() or b"{}")
     # The cached list still shows the model as resident; drop it so the next
-    # poll reflects what just happened instead of waiting out the cache.
+    # poll reflects what just happened instead of waiting out the cache, and
+    # watch the model until it is gone.
+    _stopping[name] = time.monotonic() + STOP_WATCH_SECONDS
     _models_cache = (0.0, [])
     return {"ok": result.get("done_reason") == "unload", "result": result}
 
@@ -322,12 +338,16 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(403, {"ok": False, "error": "unload disabled on this agent"}, close=True)
             return
         length = (self.headers.get("Content-Length") or "").strip()
-        if not length.isdigit():
+        # ASCII digits only: "²" passes isdigit() but int() rejects it, which
+        # used to raise outside any handler and print a traceback.
+        if not (length.isascii() and length.isdigit()):
             # Missing (chunked), negative or garbage: read(-1) would block
             # until the client hangs up.
             self.reply(411, {"ok": False, "error": "Content-Length required"}, close=True)
             return
-        if int(length) > MAX_BODY:
+        # Over the limit by length before converting: int() refuses strings
+        # of more than 4300 digits.
+        if len(length) > 6 or int(length) > MAX_BODY:
             self.reply(413, {"ok": False, "error": "request too large"}, close=True)
             return
         try:
