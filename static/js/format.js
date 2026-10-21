@@ -7,6 +7,8 @@ export const MiB = 1024 ** 2;
 
 export const fmt = {
   pct: v => (v == null ? "–" : Math.round(v)),
+  // With its sign, and a bare dash when missing rather than "–%".
+  pctText: v => (v == null ? "–" : `${Math.round(v)}%`),
   gib: v => (v == null ? "–" : (v / GiB).toFixed(1)),
   rate: v => (v == null ? "–" : (v / MiB).toFixed(1)),
   int: v => (v == null ? "–" : Math.round(v).toLocaleString()),

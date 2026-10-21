@@ -31,6 +31,8 @@ function renderSources(sources) {
     const age = el("span", "age",
       status.age == null ? "never" : `${remaining}s`);
     item.append(dot, label, age);
+    // The dot says that something is wrong; hovering says what.
+    if (status.error) item.title = status.error;
     host.appendChild(item);
   }
 }
@@ -55,8 +57,29 @@ function refreshInterval(sources) {
   return intervals.length ? Math.min(...intervals) : 1;
 }
 
+/* While PVE has given no data the host card cannot exist, so a note in its
+   place says why, instead of an empty column and a red dot (spec §2: show the
+   error, do not blank the page). Gone once PVE answers. */
+function updatePveNote(state) {
+  let note = document.getElementById("pve-note");
+  if (state.node || !standby.done) {
+    if (note) note.remove();
+    return;
+  }
+  if (!note) {
+    note = el("p", "source-note");
+    note.id = "pve-note";
+    document.getElementById("col-left").prepend(note);
+  }
+  const pve = (state.sources || {}).pve || {};
+  note.textContent = pve.error
+    ? `Proxmox VE has not answered: ${pve.error}`
+    : "Waiting for Proxmox VE's first answer…";
+}
+
 function render(state) {
   updateStandby(state);
+  updatePveNote(state);
   renderSources(state.sources);
 
   const derived = document.getElementById("set-page-derived");
@@ -156,16 +179,16 @@ function updateStandby(state) {
   }
 
   const haveSomething = state.node && (state.guests || []).length > 0;
+  // Every source has answered or failed for good, so there is nothing left
+  // to wait for: show the page, with the failures said on it.
   const settled = Object.values(state.sources || {})
     .every(s => s.ok || s.error);
   const waitedLongEnough = performance.now() - standby.since > STANDBY_GIVE_UP_MS;
 
-  if (haveSomething || (settled && waitedLongEnough) || waitedLongEnough) {
+  if (haveSomething || settled || waitedLongEnough) {
     standby.done = true;
     standby.note.textContent = "Ready";
     standby.el.hidden = true;
-  } else if (settled) {
-    standby.note.textContent = "Waiting for the first full poll…";
   }
 }
 

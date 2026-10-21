@@ -78,11 +78,14 @@ function ioRow({ diskIo = true } = {}) {
       }
       net.set(fmt.rate(g.net_in_bps), fmt.rate(g.net_out_bps));
 
+      // PVE sends null when the guest agent gave no usage. A card PVE has
+      // not reported yet (a placeholder) has no field at all: no data, not
+      // no agent.
       const fs = g.filesystem;
       usage.set(fs
         ? `${Math.round((fs.used / fs.total) * 100)}% · `
           + `${fmt.gib(fs.used)} / ${fmt.gib(fs.total)} GiB`
-        : "no guest agent");
+        : fs === null ? "no guest agent" : "–");
     },
   };
 }
@@ -103,7 +106,7 @@ export function basicCard(guest) {
     update(g, history, status) {
       setSub(shell, [`vmid ${g.vmid}`, (g.addresses || [])[0],
                      `up ${fmt.uptime(g.uptime)}`]);
-      cpu.set(g.cpu_pct || 0, 100, `${fmt.pct(g.cpu_pct)}%`);
+      cpu.set(g.cpu_pct || 0, 100, fmt.pctText(g.cpu_pct));
       mem.set(g.mem, g.maxmem,
         `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
       io.update(g);
@@ -174,7 +177,7 @@ export function gpuCard(guest) {
     update(g, history, status) {
       // PVE panels (10s) update regardless of the agent's state, and the
       // agent panels (1s) never wait on PVE — §4.2.
-      cpu.set(g.cpu_pct || 0, 100, `${fmt.pct(g.cpu_pct)}%`);
+      cpu.set(g.cpu_pct || 0, 100, fmt.pctText(g.cpu_pct));
       setSub(shell, [`vmid ${g.vmid}`, "GPU", (g.addresses || [])[0],
                      `up ${fmt.uptime(g.uptime)}`]);
       mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
@@ -353,9 +356,9 @@ export function nasCard(guest) {
   return {
     el: shell.el,
     update(g, history, status) {
-      cpu.set((g.cpu_pct || 0) / 100, `${fmt.pct(g.cpu_pct)}%`);
+      cpu.set((g.cpu_pct || 0) / 100, fmt.pctText(g.cpu_pct));
       mem.set(g.maxmem ? g.mem / g.maxmem : 0,
-              `${fmt.pct(g.maxmem ? (g.mem / g.maxmem) * 100 : null)}%`,
+              fmt.pctText(g.maxmem ? (g.mem / g.maxmem) * 100 : null),
               null, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
       setSub(shell, [`vmid ${g.vmid}`, "NAS", (g.addresses || [])[0],
                      `up ${fmt.uptime(g.uptime)}`]);
@@ -459,12 +462,12 @@ export const nodeCard = (() => {
     built.up.set(fmt.uptime(node.uptime));
     built.guests.set(`${node.guests_running} / ${node.guests_total}`);
     built.mem.set(node.maxmem ? node.mem / node.maxmem : 0,
-      `${fmt.pct(node.maxmem ? (node.mem / node.maxmem) * 100 : null)}%`,
+      fmt.pctText(node.maxmem ? (node.mem / node.maxmem) * 100 : null),
       null, `${fmt.gib(node.mem)} / ${fmt.gib(node.maxmem)} GiB`);
     built.spark.update(history, status && status.capacity);
     // The card has no CPU tile (spec §4.1 lists CPU % first), so the current
     // figure goes on the chart's caption line rather than only under hover.
-    built.spark.setReadout(node.cpu_pct == null ? "–" : `${fmt.pct(node.cpu_pct)}%`);
+    built.spark.setReadout(fmt.pctText(node.cpu_pct));
     applyStale({ el: root, error: built.error }, status);
   };
 })();
