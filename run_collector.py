@@ -83,11 +83,17 @@ async def main():
                         print(f"        if {name}: rx={num(iface.get('rx_bps'), '.1f', 1e6)} "
                               f"tx={num(iface.get('tx_bps'), '.1f', 1e6)} MB/s")
                     for pool in nas.get("pools") or []:
-                        size, allocated = pool.get("size"), pool.get("allocated")
-                        used = (num(allocated / size * 100, ".0f")
-                                if size and isinstance(allocated, (int, float)) else "–")
+                        # Usable space where TrueNAS gave it, as the card
+                        # shows; zpool's raw size counts parity, so it is
+                        # labelled raw when it is the fallback.
+                        usable = bool(pool.get("usable")) and pool.get("used_bytes") is not None
+                        held, total = ((pool["used_bytes"], pool["usable"]) if usable
+                                       else (pool.get("allocated"), pool.get("size")))
+                        used = (num(held / total * 100, ".0f")
+                                if total and isinstance(held, (int, float)) else "–")
                         print(f"        pool {pool.get('name')}: {pool.get('status')} "
-                              f"{used}% of {num(size, '.1f', 2**40)} TiB")
+                              f"{used}% of {num(total, '.1f', 2**40)} TiB"
+                              f"{'' if usable else ' raw'}")
     finally:
         await collector.stop()
 

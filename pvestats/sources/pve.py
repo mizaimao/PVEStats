@@ -273,12 +273,10 @@ class PveSource:
                 "disk_read_bps": rates["diskread"],
                 "disk_write_bps": rates["diskwrite"],
             }
-            # maxdisk comes back as 0 for some guests, in which case there is
-            # nothing meaningful to show. PVE reports allocation, never
-            # in-guest usage (spec §3.1), so it is labelled accordingly.
-            if guest.get("maxdisk"):
-                entry["disk_allocated"] = guest.get("disk")
-                entry["maxdisk"] = guest.get("maxdisk")
+            # PVE's disk/maxdisk are not passed on as such: for a VM `disk` is
+            # always 0 (usage comes from its agent, above), and for a container
+            # it is real usage, already in `filesystem`. Nothing read the old
+            # disk_allocated field, which said "allocation" for both.
             guests[vmid] = entry
             self.source.push(f"cpu.{vmid}", entry["cpu_pct"])
 

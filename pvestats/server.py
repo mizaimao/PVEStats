@@ -180,7 +180,9 @@ async def own_page_only(request, handler):
       127.0.0.1 still sends its own name here, so it cannot read the state.
     - Browsers say where every request comes from (Sec-Fetch-Site). A
       cross-site GET cannot read the reply, but each /api/history call still
-      spends the PVE token, so anything from another site is refused.
+      spends the PVE token, so anything from another site is refused, except
+      following a link to the page itself: that is a top-level navigation,
+      it spends nothing, and the page then talks to the API same-origin.
     - Writes must come from this origin and carry JSON. Browsers send Origin
       on every cross-site POST, and a JSON body cannot go cross-site without
       a preflight, which this server never answers.
@@ -192,7 +194,10 @@ async def own_page_only(request, handler):
     if request.host not in hosts:
         raise web.HTTPForbidden(text="unexpected Host header")
     site = request.headers.get("Sec-Fetch-Site")
-    if site is not None and site not in ("same-origin", "none"):
+    opening_page = (request.method in ("GET", "HEAD") and request.path == "/"
+                    and request.headers.get("Sec-Fetch-Mode") == "navigate"
+                    and request.headers.get("Sec-Fetch-Dest") == "document")
+    if site is not None and site not in ("same-origin", "none") and not opening_page:
         raise web.HTTPForbidden(text="cross-site request refused")
     if request.method == "POST":
         origin = request.headers.get("Origin")

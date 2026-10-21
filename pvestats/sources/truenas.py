@@ -98,8 +98,9 @@ class TrueNasSource:
         # Interface roles, derived rather than hardcoded by name. Proxmox
         # stamps BC:24:11 on the virtio NICs it creates; a passed-through card
         # reports a real media subtype ("2500Mb/s Twisted Pair") where virtio
-        # reports "Unknown Other".
-        self.nics = {}
+        # reports "Unknown Other". Built aside and swapped in whole, like the
+        # tables around it, so a failed call leaves the old one intact.
+        nics = {}
         for iface in await self.call("interface.query", []):
             state = iface.get("state") or {}
             mac = (state.get("hardware_link_address") or "").upper()
@@ -110,12 +111,13 @@ class TrueNasSource:
                 role = "physical"
             else:
                 role = "unknown"
-            self.nics[iface.get("name")] = {
+            nics[iface.get("name")] = {
                 "role": role,
                 "media": media,
                 "addresses": [a.get("address") for a in (state.get("aliases") or [])
                               if a.get("type") == "INET"],
             }
+        self.nics = nics
 
         # Disk capacities, joined onto the throughput rows by device name.
         self.disk_sizes = {d.get("name"): d.get("size")
@@ -139,7 +141,13 @@ class TrueNasSource:
     async def _read(self):
         self._discover_countdown -= 1
         if self._discover_countdown <= 0:
-            await self._discover()
+            try:
+                await self._discover()
+            except RpcError:
+                # The tables from the last discovery still hold; this poll
+                # serves data with them, and the next try is in
+                # DISCOVER_EVERY polls (_discover resets the countdown first).
+                pass
 
         targets = [{"name": "interface", "identifier": i}
                    for i in self.identifiers.get("interface", [])]
