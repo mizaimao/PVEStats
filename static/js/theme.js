@@ -54,30 +54,39 @@ export function apply(settings) {
   return stored;
 }
 
-async function save(settings) {
-  apply(settings);
+/* The full settings as this page knows them, and the ones changed here
+   since it loaded. */
+let current = cached();
+const changedHere = {};
+
+/* Apply a change and save only that change.
+
+   Posting every setting on every pick used to save whatever the controls
+   happened to show for the others: a group with no chip lit (a value from
+   config.yaml that is not a chip, or the settings not loaded yet) read as
+   its first chip, so picking a theme could switch glow off and cut the
+   history window to 60s. The server merges partial changes. */
+async function save(change) {
+  Object.assign(changedHere, change);
+  current = { ...current, ...change };
+  apply(current);
   try {
     await fetch("/api/ui", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify(change),
     });
   } catch {
     // Already applied locally; it will simply not persist.
   }
 }
 
-/* A chip group behaves like a <select> for our purposes: read the checked
-   value, mark one checked, and call back on click. */
+/* A chip group: one chip marked, and a callback with the picked value. */
 function group(id, onPick) {
   const root = document.getElementById(id);
   if (!root) return null;
   const buttons = [...root.querySelectorAll("button")];
   const api = {
-    get value() {
-      const on = buttons.find(b => b.getAttribute("aria-checked") === "true");
-      return on ? on.value : buttons[0] && buttons[0].value;
-    },
     set(value) {
       const wanted = String(value);
       buttons.forEach(b =>
@@ -86,7 +95,7 @@ function group(id, onPick) {
   };
   buttons.forEach(b => b.addEventListener("click", () => {
     api.set(b.value);
-    onPick();
+    onPick(b.value);
   }));
   return api;
 }
@@ -95,59 +104,42 @@ let groups = {};
 
 /* Set the theme from outside the panel — used by the keyboard shortcuts. */
 export function selectTheme(name) {
-  if (groups.theme) {
-    groups.theme.set(name);
-    save(readAll());
-  } else {
-    apply({ ...cached(), theme: name });
-  }
-}
-
-function readAll() {
-  return {
-    theme: groups.theme ? groups.theme.value : cached().theme,
-    glow: groups.glow ? +groups.glow.value : cached().glow,
-    window: groups.window ? +groups.window.value : cached().window,
-    scanlines: !!(groups.scanlines && groups.scanlines.checked),
-    grain: !!(groups.grain && groups.grain.checked),
-    aurora: !!(groups.aurora && groups.aurora.checked),
-  };
+  if (groups.theme) groups.theme.set(name);
+  save({ theme: name });
 }
 
 export async function initAppearance() {
-  const onPick = () => save(readAll());
-
   groups = {
-    theme: group("set-theme", onPick),
-    glow: group("set-glow", onPick),
-    window: group("set-window", onPick),
+    theme: group("set-theme", value => save({ theme: value })),
+    glow: group("set-glow", value => save({ glow: +value })),
+    window: group("set-window", value => save({ window: +value })),
     scanlines: document.getElementById("fx-scanlines"),
     grain: document.getElementById("fx-grain"),
     aurora: document.getElementById("fx-aurora"),
   };
+  for (const name of ["scanlines", "grain", "aurora"]) {
+    const box = groups[name];
+    if (box) box.addEventListener("change", () => save({ [name]: box.checked }));
+  }
 
   // Paint immediately from cache, then reconcile with the server.
-  let settings = cached();
-  apply(settings);
+  apply(current);
 
   try {
     const response = await fetch("/api/ui", { cache: "no-store" });
     if (response.ok) {
-      settings = { ...settings, ...(await response.json()) };
-      apply(settings);
+      // A pick made while this was in flight is newer than the reply.
+      current = { ...current, ...(await response.json()), ...changedHere };
+      apply(current);
     }
   } catch {
     // Offline or starting up — the cached values stand.
   }
 
   if (groups.theme) groups.theme.set(document.documentElement.dataset.theme);
-  if (groups.glow) groups.glow.set(settings.glow ?? 1);
-  if (groups.window) groups.window.set(settings.window ?? 180);
+  if (groups.glow) groups.glow.set(current.glow ?? 1);
+  if (groups.window) groups.window.set(current.window ?? 180);
   for (const name of ["scanlines", "grain", "aurora"]) {
-    const box = groups[name];
-    if (box) {
-      box.checked = !!settings[name];
-      box.addEventListener("change", onPick);
-    }
+    if (groups[name]) groups[name].checked = !!current[name];
   }
 }
