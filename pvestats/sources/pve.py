@@ -148,6 +148,12 @@ class PveSource:
         async with session.get(f"{base}/cluster/resources?type=vm", **kwargs) as response:
             response.raise_for_status()
             resources = (await response.json()).get("data") or []
+        # The counters were read just now, so the rates are timed from here,
+        # not after the status call and guest-agent lookups below, whose
+        # latency varies from poll to poll (a dead agent costs ~3 s a call).
+        # The clock counts sleep: hours of counter growth divide by hours,
+        # not by the few seconds the Mac was awake between two polls.
+        now = clock()
 
         async with session.get(f"{base}/nodes/{self.node}/status", **kwargs) as response:
             response.raise_for_status()
@@ -187,9 +193,6 @@ class PveSource:
         for gone in [v for v in self.filesystems if v not in live_ids]:
             del self.filesystems[gone]
 
-        # Counts sleep: hours of counter growth divide by hours, not by the
-        # few seconds the Mac was awake between two polls.
-        now = clock()
         guests = {}
         running = running_raw
 
