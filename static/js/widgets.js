@@ -613,12 +613,38 @@ export function dataTable(caption, columns) {
   thead.appendChild(head);
   const tbody = document.createElement("tbody");
   table.append(thead, tbody);
+  let keys = null;      // row keys of the body as drawn, when given
   return {
     el: table,
     setCaption(text) {
       if (captionNode.textContent !== text) captionNode.textContent = text;
     },
-    set(rows) {
+    sameKeys(next) {
+      return !!keys && next.length === keys.length && next.every((k, i) => k === keys[i]);
+    },
+    /* With `rowKeys` matching the rows already drawn, cells change in place:
+       a node already in its cell stays there (a button keeps a press or
+       focus, a bar keeps its animation) and only changed text is written.
+       Anything else rebuilds the body. */
+    set(rows, rowKeys = null) {
+      if (rowKeys && rows.length && this.sameKeys(rowKeys)) {
+        rows.forEach((row, r) => {
+          const tr = tbody.children[r];
+          row.forEach((cell, i) => {
+            const td = tr.children[i];
+            if (cell instanceof Node) {
+              if (td.firstChild !== cell || td.childNodes.length !== 1) {
+                td.textContent = "";
+                td.appendChild(cell);
+              }
+            } else if (td.textContent !== String(cell)) {
+              td.textContent = cell;
+            }
+          });
+        });
+        return;
+      }
+      keys = rowKeys;
       tbody.textContent = "";
       if (!rows.length) {
         const tr = el("tr");
