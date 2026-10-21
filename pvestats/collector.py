@@ -87,7 +87,19 @@ class Collector:
         for vmid, host in self.config.hosts.items():
             guest = guests.get(vmid)
             if guest is None:
-                continue
+                # Until PVE first answers there is no list of running guests,
+                # but the gpu and nas cards have sources of their own and must
+                # not wait for PVE's (spec §2, §4.2): they get a placeholder
+                # whose PVE fields read "–". Once PVE has answered, a guest
+                # missing from it is not running, and its card goes.
+                if pve.updated_at is not None or host.get("view") not in ("gpu", "nas"):
+                    continue
+                guest = {"vmid": vmid, "name": host.get("name") or str(vmid),
+                         "view": host.get("view"), "addresses": []}
+            else:
+                # A copy: the entry belongs to the PVE source's last result.
+                guest = dict(guest)
+            guests[vmid] = guest
             # The status always travels, even with no data yet — otherwise the
             # card has no way to say *why* it is empty, and a dead source looks
             # identical to one that simply reads zero (spec §7).

@@ -542,6 +542,17 @@ body {
   margin-top: 10px;
   word-break: break-word;
 }
+/* Stands in for the host card while PVE has given no data (main.js). */
+.source-note {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--warning);
+  word-break: break-word;
+}
 
 /* Row 1: two columns. Host and NAS stack on the left; ml60 stretches to match
    their combined height, since neither of those two changes size. */
