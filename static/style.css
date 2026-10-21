@@ -591,11 +591,18 @@ body {
 }
 .arc-value { font-size: 19px; font-weight: 600; line-height: 1.1; }
 .arc-label { font-size: 10px; color: var(--ink-muted); margin-top: 1px; }
+/* Sits in the ring's open bottom, below the arc's ends, so it takes no
+   height: an arc with a foot stays level with one without. */
 .arc-foot {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
   font-size: 10px;
+  line-height: 1.2;
   color: var(--ink-muted);
   text-align: center;
-  margin-top: 2px;
+  white-space: nowrap;
 }
 .arc.is-nested { width: 128px; }
 .arc.is-nested .arc-value { font-size: 16px; }
@@ -680,12 +687,20 @@ body {
 .spark-head {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   gap: 12px;
   font-size: 11px;
   color: var(--ink-muted);
   margin-bottom: 2px;
 }
 .spark .peak { color: var(--ink-muted); white-space: nowrap; }
+/* A current reading (Spark.setReadout) reads as a figure, not a caption. */
+.spark .peak.now {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
 .meter-row.is-compact { margin-top: 0; min-width: 70px; }
 .meter-row.is-compact .meter { margin-top: 0; height: 6px; }
 .spark .tip {
