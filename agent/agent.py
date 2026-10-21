@@ -17,6 +17,7 @@ project and its API has drifted.
 import json
 import os
 import sys
+import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -58,7 +59,17 @@ OLLAMA_TIMEOUT = 1.0
 OLLAMA_CACHE_SECONDS = 5.0
 
 _handle = None
+_handle_lock = threading.Lock()    # requests are served on several threads
 _models_cache = (0.0, [])
+
+# NVML errors that mean "this one metric is not available here". Anything
+# else (GPU_IS_LOST, UNKNOWN, UNINITIALIZED...) means the device read failed.
+PER_METRIC_ERRORS = {
+    nvml.NVML_ERROR_NOT_SUPPORTED,
+    nvml.NVML_ERROR_NOT_FOUND,
+    nvml.NVML_ERROR_NO_PERMISSION,
+    nvml.NVML_ERROR_FUNCTION_NOT_FOUND,
+}
 
 
 def gpu_handle():
@@ -66,26 +77,49 @@ def gpu_handle():
 
     Deliberately not re-initialised per request: NVML init is far more
     expensive than the ~20 MB the process idles at, which is also why the
-    systemd unit does not use socket activation.
+    systemd unit does not use socket activation. reset_gpu() drops it after
+    a failed read, so a GPU that comes back gets a fresh handle.
     """
     global _handle
-    if _handle is None:
-        nvml.nvmlInit()
-        _handle = nvml.nvmlDeviceGetHandleByIndex(GPU_INDEX)
-    return _handle
+    with _handle_lock:
+        if _handle is None:
+            nvml.nvmlInit()
+            try:
+                _handle = nvml.nvmlDeviceGetHandleByIndex(GPU_INDEX)
+            except Exception:
+                nvml.nvmlShutdown()    # init is counted; keep it balanced
+                raise
+        return _handle
+
+
+def reset_gpu():
+    """Forget the handle so the next request initialises NVML again."""
+    global _handle
+    with _handle_lock:
+        if _handle is not None:
+            try:
+                nvml.nvmlShutdown()
+            except nvml.NVMLError:
+                pass
+            _handle = None
 
 
 def attempt(fn, default=None):
-    """Read one metric, tolerating NVML_ERROR_NOT_SUPPORTED.
+    """Read one metric, tolerating the ones this board does not offer.
 
     Support varies by board — datacenter cards report no fan speed, some
     report no enforced power limit. One unsupported metric must not cost us
-    the entire GPU payload.
+    the entire GPU payload. Any other NVML error is raised: swallowing them
+    all turned a lost GPU into a healthy-looking one with every field null.
     """
     try:
         return fn()
-    except Exception:
-        return default
+    except nvml.NVMLError as exc:
+        if getattr(exc, "value", None) in PER_METRIC_ERRORS:
+            return default
+        raise
+    except AttributeError:
+        return default      # an older binding without this call
 
 
 def process_name(pid):
@@ -95,7 +129,11 @@ def process_name(pid):
     "ollama" (spec §3.2). That is expected — VRAM is attributed through the
     `models` array, never by matching on this string.
     """
-    name = attempt(lambda: nvml.nvmlSystemGetProcessName(pid))
+    # A name is cosmetic, so no NVML error here may cost the GPU payload.
+    try:
+        name = nvml.nvmlSystemGetProcessName(pid)
+    except nvml.NVMLError:
+        name = None
     if isinstance(name, bytes):
         name = name.decode("utf-8", "replace")
     if name:
@@ -221,6 +259,7 @@ def build_payload():
         # Serve models anyway, and let the dashboard show why the GPU panel is
         # empty rather than showing zeros.
         payload["error"] = f"{type(exc).__name__}: {exc}"
+        reset_gpu()
     return payload
 
 
@@ -287,7 +326,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        attempt(nvml.nvmlShutdown)
+        reset_gpu()
 
 
 if __name__ == "__main__":
