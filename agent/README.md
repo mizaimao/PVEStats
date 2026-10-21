@@ -59,6 +59,15 @@ the same way, then:
     sudo systemctl daemon-reload
     sudo systemctl restart pvestats-agent
 
+That replaces the unit file, so never edit the installed unit for this
+host: put local settings (`User=`, `Environment=` such as the unload off
+switch) in a drop-in, which updates leave alone:
+
+    sudo systemctl edit pvestats-agent     # writes .../pvestats-agent.service.d/override.conf
+    systemctl cat pvestats-agent           # shows the unit and the drop-in together
+
+A setting in the drop-in wins over the unit's own line.
+
 ## Before enabling: check the service user
 
 The unit ships with `User=ollama`. It must match whichever user Ollama
@@ -67,7 +76,15 @@ comes back empty while every other field looks fine — a quiet failure.
 
     systemctl show ollama -p User
 
-Set the unit's `User=`/`Group=` to match, or use `root`.
+If it differs, set `User=`/`Group=` to match (or `root`) in a drop-in, not in
+the unit file, which updates replace: after installing the unit and running
+`daemon-reload`, run `sudo systemctl edit pvestats-agent` and add
+
+    [Service]
+    User=<that user>
+    Group=<that user>
+
+then `sudo systemctl restart pvestats-agent`.
 
 `/opt` matters too: the unit sets `ProtectHome=true`, so installing under a
 home directory will not start.
@@ -94,7 +111,8 @@ is not reading `certs/home-root.crt`.
 
 ## Configuration
 
-All optional, set via systemd `Environment=`:
+All optional, set with `Environment=` lines in a drop-in (`sudo systemctl
+edit pvestats-agent`, under `[Service]`), so an update keeps them:
 
 | Variable | Default |
 |---|---|
