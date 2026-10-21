@@ -17,11 +17,6 @@ class AgentSource:
             response.raise_for_status()
             payload = await response.json()
 
-        gpu = payload.get("gpu")
-        if gpu is None:
-            # NVML failed on ml60 but Ollama data may still be present.
-            raise RuntimeError(payload.get("error") or "agent reported no GPU")
-
         models = []
         for model in payload.get("models") or []:
             models.append({
@@ -35,6 +30,18 @@ class AgentSource:
                 # offset rather than the documented Z form.
                 "unload_in": _seconds_until(model.get("expires_at")),
             })
+        # Absent on an agent that predates the unload endpoint, which is
+        # exactly right: the dashboard then shows no stop buttons.
+        can_unload = bool(payload.get("can_unload"))
+
+        gpu = payload.get("gpu")
+        if gpu is None:
+            # NVML failed on ml60, but the agent still serves Ollama's models
+            # for exactly this case. Keep them current (and Stop usable), and
+            # still fail, so the card says why its GPU readings are old.
+            self.source.data = {**self.source.data, "models": models,
+                                "can_unload": can_unload}
+            raise RuntimeError(payload.get("error") or "agent reported no GPU")
 
         procs = []
         for proc in gpu.get("procs") or []:
@@ -50,16 +57,14 @@ class AgentSource:
         self.source.push("gpu.vram_used", gpu.get("vram_used"))
         # VRAM as a percentage too, so utilisation and memory can share one
         # 0-100 plot the way nvtop draws them.
-        if gpu.get("vram_total"):
-            self.source.push("gpu.vram_pct",
-                             gpu["vram_used"] / gpu["vram_total"] * 100)
+        used, total = gpu.get("vram_used"), gpu.get("vram_total")
+        self.source.push("gpu.vram_pct",
+                         used / total * 100 if total and used is not None else None)
         self.source.push("gpu.power", gpu.get("power"))
         self.source.push("gpu.temp", gpu.get("temp"))
 
-        # Absent on an agent that predates the unload endpoint, which is
-        # exactly right: the dashboard then shows no stop buttons.
         self.source.succeed({**gpu, "procs": procs, "models": models,
-                             "can_unload": bool(payload.get("can_unload"))})
+                             "can_unload": can_unload})
 
 
 def _placement(size, size_vram):

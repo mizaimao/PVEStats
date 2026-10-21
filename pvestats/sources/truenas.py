@@ -12,11 +12,20 @@ from .base import TRUENAS_TIMEOUT
 # TrueNAS — JSON-RPC 2.0 over WebSocket
 # --------------------------------------------------------------------------
 
+# Disks, interfaces and their identifiers change rarely (a disk swapped, a
+# NIC added), but they do change, and the socket can stay up for weeks.
+DISCOVER_EVERY = 60     # x TRUENAS_INTERVAL = every 5 minutes
+
+
+class RpcError(RuntimeError):
+    """TrueNAS answered, with an error: the connection itself is fine."""
+
+
 class TrueNasSource:
     """Holds one authenticated WebSocket open and polls over it.
 
-    Reconnects on any failure. The connection is only ever used by this single
-    task, so request ids need no locking.
+    Reconnects after any failure except a method error. The connection is
+    only ever used by this single task, so request ids need no locking.
     """
 
     def __init__(self, config, source):
@@ -29,6 +38,7 @@ class TrueNasSource:
         self.disk_sizes = {}    # device name -> bytes
         self.pools = []         # last pool.query result
         self._pool_countdown = 0
+        self._discover_countdown = 0
 
     async def call(self, method, params):
         self.counter += 1
@@ -43,7 +53,7 @@ class TrueNasSource:
             if payload.get("id") != request_id:
                 continue  # server notification; not ours
             if "error" in payload:
-                raise RuntimeError(str(payload["error"])[:200])
+                raise RpcError(str(payload["error"])[:200])
             return payload.get("result")
 
     async def connect(self, session):
@@ -72,7 +82,11 @@ class TrueNasSource:
         if await self.call("auth.login_with_api_key",
                            [self.config.truenas_api_key]) is not True:
             raise RuntimeError("api key rejected")
+        await self._discover()
 
+    async def _discover(self):
+        """Find the disks and interfaces to poll, and what each one is."""
+        self._discover_countdown = DISCOVER_EVERY
         # Identifiers are discovered, never invented. Disk identifiers are
         # full descriptive strings ("sdb | Type: HDD | Model: … | Serial: …");
         # passing a bare device name returns no series and no error.
@@ -109,6 +123,22 @@ class TrueNasSource:
     async def poll(self, session):
         if self.ws is None or self.ws.closed:
             await self.connect(session)
+        try:
+            await self._read()
+        except RpcError:
+            raise
+        except Exception:
+            # A timeout or a dropped connection: the socket may be no good,
+            # and poll() reconnects only once it is closed. A method error is
+            # left alone; reconnecting would not help, and each login is an
+            # audit entry on the NAS.
+            await self.close()
+            raise
+
+    async def _read(self):
+        self._discover_countdown -= 1
+        if self._discover_countdown <= 0:
+            await self._discover()
 
         targets = [{"name": "interface", "identifier": i}
                    for i in self.identifiers.get("interface", [])]
