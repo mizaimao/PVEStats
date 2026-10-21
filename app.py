@@ -14,6 +14,8 @@ Use run.py instead to serve to an ordinary browser with no window.
 """
 
 import asyncio
+import errno
+import subprocess
 import sys
 import threading
 import time
@@ -28,6 +30,26 @@ from pvestats.server import build_app
 
 HOST = "127.0.0.1"
 STARTUP_TIMEOUT = 15
+
+
+def die(message):
+    """Exit with a message that is seen however the app was started.
+
+    From PVEStats.app there is no Terminal: stderr goes nowhere and the app
+    simply never opens. So, like launch.command, say it in a dialog then.
+    """
+    print(message, file=sys.stderr)
+    if sys.platform == "darwin" and not (sys.stdin and sys.stdin.isatty()):
+        try:
+            subprocess.run(
+                ["osascript", "-e", "on run argv",
+                 "-e", 'display alert "PVEStats could not start" '
+                       "message (item 1 of argv) as critical",
+                 "-e", "end run", message],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+    sys.exit(1)
 
 
 class Backend:
@@ -130,13 +152,16 @@ def main():
     try:
         import webview
     except ImportError:
-        sys.exit(
-            "pywebview is not installed.\n"
+        die("pywebview is not installed.\n"
             "  tools/uv sync\n"
-            "Or use run.py to serve to an ordinary browser instead."
-        )
+            "Or use run.py to serve to an ordinary browser instead.")
 
-    config = Config()
+    try:
+        config = Config()
+    except Exception as exc:
+        # config.yaml and .env are edited by hand; a typo stops here.
+        die(f"Could not read the configuration (config.yaml or .env): "
+            f"{type(exc).__name__}: {exc}")
     # Held for the process lifetime; dropping it re-enables App Nap.
     activity = keep_awake()      # noqa: F841
     backend = Backend(config)
@@ -144,11 +169,15 @@ def main():
 
     url = f"http://{HOST}:{config.port}/"
     backend.ready.wait(timeout=STARTUP_TIMEOUT)
-    if backend.error is not None:
-        sys.exit(f"collector failed to start: {backend.error}")
+    error = backend.error
+    if isinstance(error, OSError) and error.errno == errno.EADDRINUSE:
+        die(f"Port {config.port} is already in use. PVEStats may already be "
+            f"running; check with:\n  lsof -nP -iTCP:{config.port} -sTCP:LISTEN")
+    if error is not None:
+        die(f"The collector failed to start: {type(error).__name__}: {error}")
     if not wait_for_server(url, time.monotonic() + STARTUP_TIMEOUT):
         backend.stop()
-        sys.exit(f"server did not come up on {url}")
+        die(f"The dashboard server did not come up on {url}")
 
     # Measured: the full layout is ~1160px tall between 1280 and 1500px wide,
     # and grows to ~1280px below that as columns collapse. Open large enough to
@@ -174,4 +203,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        # Anything unforeseen still reaches a dialog rather than a lost
+        # traceback.
+        die(f"PVEStats stopped: {type(exc).__name__}: {exc}")
