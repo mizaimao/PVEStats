@@ -26,10 +26,16 @@ const NUMERIC = /^(-?\d+(?:\.\d+)?)(\D*)$/;
 const DURATION = 320;
 
 export function setAnimated(node, text, previous) {
+  // One animation per node: each call supersedes any still running. Loops
+  // used to stack up while the window was hidden (frames are held, polling
+  // is not), then all ran at once and left older values on screen.
+  const token = (node._animation || 0) + 1;
+  node._animation = token;
   const to = NUMERIC.exec(String(text));
   const from = NUMERIC.exec(String(previous ?? ""));
-  // Same trailing unit, both numeric, motion allowed — otherwise just set it.
-  if (!to || !from || to[2] !== from[2] || REDUCED.matches) {
+  // Same trailing unit, both numeric, motion allowed, page visible —
+  // otherwise just set it.
+  if (!to || !from || to[2] !== from[2] || REDUCED.matches || document.hidden) {
     node.nodeValue = text;
     return;
   }
@@ -40,6 +46,7 @@ export function setAnimated(node, text, previous) {
   const t0 = performance.now();
 
   const step = now => {
+    if (node._animation !== token) return;     // a newer value took over
     const p = Math.min(1, (now - t0) / DURATION);
     const eased = 1 - (1 - p) ** 3;          // ease-out cubic
     node.nodeValue = (start + (end - start) * eased).toFixed(decimals) + to[2];

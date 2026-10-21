@@ -925,8 +925,11 @@ table.data .name { color: var(--ink); }
               inset 0 0 7px color-mix(in oklab, var(--chip) 16%, transparent);
 }
 /* Glass family: no halo — a lit top edge over a translucent fill, which is
-   what the glass themes actually do to their cards. */
-[data-glow="glass"] {
+   what the glass themes actually do to their cards. On the chips it has to
+   outrank `.chips button`'s transparent background, which used to win, so
+   only the key swatch showed the fill. */
+[data-glow="glass"],
+#set-theme button[data-glow="glass"]:not([aria-checked="true"]) {
   background: linear-gradient(
     color-mix(in oklab, var(--chip) 16%, transparent),
     color-mix(in oklab, var(--chip) 5%, transparent));
@@ -934,6 +937,11 @@ table.data .name { color: var(--ink); }
 }
 #set-theme button[data-glow]:hover {
   border-color: color-mix(in oklab, var(--chip) 75%, var(--hairline));
+}
+/* The checked chip's highlight wins over the family border above, which is
+   more specific than the base checked rule and used to hide it. */
+#set-theme button[data-glow][aria-checked="true"] {
+  border-color: color-mix(in oklab, var(--series-1) 60%, var(--hairline));
 }
 
 .chip-key { margin-top: 6px; }
@@ -985,9 +993,11 @@ table.data .name { color: var(--ink); }
 .after-chart { margin-top: 18px; }
 
 /* Visible section dividers on the ml60 card. Swap the border for extra
-   margin if these read as too heavy. */
-table.data.divided {
-  margin-top: 18px;
+   margin if these read as too heavy. On the caption, not the table: a
+   collapsed-border table has no padding, and its border sits below the
+   caption, so the rule landed between caption and header row. */
+table.data.divided { margin-top: 18px; }
+table.data.divided caption {
   padding-top: 14px;
   border-top: 1px solid var(--baseline);
 }
@@ -1113,15 +1123,19 @@ table.data.divided {
 .spark svg,
 .arc svg { overflow: visible; }
 
-/* Three passes with graduated radii. drop-shadow spreads the source alpha
-   across the blur, so a single wide pass leaves a 2px line almost invisible;
-   a tight pass close to the stroke is what actually reads as light. */
-.arc svg .glowable {
-  filter:
-    drop-shadow(0 0 calc(var(--glow-blur) * 0.3 * var(--glow-scale)))
-    drop-shadow(0 0 calc(var(--glow-blur) * 0.3 * var(--glow-scale)))
-    drop-shadow(0 0 calc(var(--glow-blur) * var(--glow-scale)))
-    drop-shadow(0 0 calc(var(--glow-wide) * var(--glow-scale)));
+/* Arc glow is drawn too (arcRing in widgets.js): CSS filters on SVG children
+   do nothing in WKWebView. --w is the arc's own stroke width. */
+.arc svg .arc-halo-a {
+  stroke-width: calc(var(--w) + var(--glow-blur) * 0.30 * var(--glow-scale));
+  opacity: calc(0.26 * var(--glow-scale));
+}
+.arc svg .arc-halo-b {
+  stroke-width: calc(var(--w) + var(--glow-blur) * 0.70 * var(--glow-scale));
+  opacity: calc(0.12 * var(--glow-scale));
+}
+.arc svg .arc-halo-c {
+  stroke-width: calc(var(--w) + var(--glow-wide) * 0.80 * var(--glow-scale));
+  opacity: calc(0.05 * var(--glow-scale));
 }
 /* Chart glow is drawn rather than filtered — see widgets.js. Three strokes of
    the same path under the line, widening and fading. Width and opacity both
@@ -1218,6 +1232,11 @@ table.data caption {
   background: color-mix(in oklab, var(--surface) 82%, transparent);
   backdrop-filter: blur(var(--panel-blur)) saturate(130%);
   -webkit-backdrop-filter: blur(var(--panel-blur)) saturate(130%);
+}
+/* Midnight keeps --panel-blur at 0 ("a plain opaque panel"), so with no
+   blur behind it the 82% fill above left the dashboard showing through. */
+:root[data-theme="midnight"] .panel {
+  background: var(--surface);
 }
 
 /* ---------- live indicator ----------
