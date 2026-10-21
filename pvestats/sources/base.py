@@ -32,8 +32,10 @@ async def run_poller(source, interval, poll):
             raise
         except asyncio.TimeoutError:
             # How long the poll actually waited. The limit that fired is a
-            # request's own timeout (5s for PVE, 2s for the agent, aiohttp's
-            # connect limit on a TrueNAS reconnect), never the poll interval.
+            # request's own timeout (5s per PVE request, 2s for the agent, 5s
+            # per TrueNAS step: the connect or one call's reply), never the
+            # poll interval. A poll makes several requests in turn, so the
+            # total can be more than one limit.
             source.fail(f"timed out after {time.monotonic() - started:.0f}s")
         except Exception as exc:
             source.fail(f"{type(exc).__name__}: {exc}")
