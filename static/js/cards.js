@@ -197,16 +197,15 @@ export function gpuCard(guest) {
         const vramRatio = gpu.vram_total ? gpu.vram_used / gpu.vram_total : 0;
         const band = vramRatio >= 0.9 ? "critical"
                    : vramRatio >= 0.8 ? "warning" : "ok";
+        // The tile carries the band, in colour and in its figure. The VRAM
+        // trace keeps --series-2: recoloured to warning or critical it sat
+        // too close to the utilisation trace in ember, matrix and amber
+        // (ΔE 2-5 against the gate of 8), and its legend swatch with it, so
+        // the two lines could not be told apart.
         if (band !== vramBand) {
           vramBand = band;
-          const colour = band === "critical" ? "var(--critical)"
-                       : band === "warning" ? "var(--warning)"
-                       : "var(--series-2)";
           vramNow.el.classList.toggle("is-critical", band === "critical");
           vramNow.el.classList.toggle("is-warning", band === "warning");
-          // The VRAM trace changes with it, so the chart agrees with the tile.
-          spark.setSeriesColor(1, colour);
-          gpuLegend.setColor(1, colour);
         }
         const pcie = gpu.pcie || {};
         // One string, e.g. "1.0 x16". NVIDIA parks the link at Gen1 when idle

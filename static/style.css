@@ -47,9 +47,10 @@
 }
 
 /* ---------- themes ----------
-   Surfaces, ink and the two series hues change; the status palette does not.
-   good/warning/critical mean the same thing in every theme, so theming them
-   would make a colour stop being a fixed signal.
+   Surfaces, ink and the two series hues change. Each theme also tunes the
+   shade of good/warning/critical to its palette, but never their role: they
+   mean the same thing in every theme. Status colours are never used for a
+   series, since they are not checked against the series hues.
 
    Every series pair below passes the CVD validator against its own surface:
      midnight  ΔE 26.8   neon  ΔE 11.0   amber  ΔE 12.5   nord  ΔE 26.8
