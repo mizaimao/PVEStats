@@ -8,7 +8,9 @@ It also takes one write: `POST /unload` with `{"model": "<name>"}` sets
 `keep_alive: 0` on that model, which is what `ollama stop` does, so the
 dashboard's Stop button can free VRAM. Nothing is written to disk, and the
 model reloads on its next request. It is on by default and, like `GET /`,
-reaches the whole LAN through Caddy with no auth. Set
+reaches the whole LAN through Caddy with no auth. It takes only a JSON body
+of at most 4 KiB and refuses anything a browser sends cross-site (any
+request with an `Origin` header), so a web page cannot use it. Set
 `PVESTATS_AGENT_ALLOW_UNLOAD=0` to refuse it (403); the dashboard then hides
 its Stop buttons.
 
@@ -22,13 +24,16 @@ stock install. Match the version to the system Python:
 
     sudo apt install -y python3-venv     # or python3.13-venv, etc.
 
-Copy `agent.py` and `requirements.txt` to ml60 under `/opt/pvestats-agent/`,
-then:
+Copy `agent.py`, `requirements.txt` and `pvestats-agent.service` to ml60
+under `/opt/pvestats-agent/`, then build the venv:
 
     sudo python3 -m venv /opt/pvestats-agent/.venv
     sudo /opt/pvestats-agent/.venv/bin/pip install -r /opt/pvestats-agent/requirements.txt
 
-    sudo cp pvestats-agent.service /etc/systemd/system/
+Check the service user (next section) and adjust the unit if needed, then
+install and start it:
+
+    sudo cp /opt/pvestats-agent/pvestats-agent.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable --now pvestats-agent
 
@@ -46,6 +51,13 @@ HTTPS service:
     }
 
 From the Mac, `curl -s https://pvestats.ml60.lan/` should answer.
+
+To update a running install, copy the new files into `/opt/pvestats-agent/`
+the same way, then:
+
+    sudo cp /opt/pvestats-agent/pvestats-agent.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl restart pvestats-agent
 
 ## Before enabling: check the service user
 
@@ -90,7 +102,7 @@ All optional, set via systemd `Environment=`:
 | `PVESTATS_AGENT_PORT` | `9836` |
 | `PVESTATS_GPU_INDEX` | `0` |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/ps` |
-| `PVESTATS_AGENT_ALLOW_UNLOAD` | `1`; `0` refuses `POST /unload` |
+| `PVESTATS_AGENT_ALLOW_UNLOAD` | `1`; `0`, `false`, `no` or `off` refuse `POST /unload` |
 | `OLLAMA_GENERATE_URL` | `OLLAMA_URL` with `/api/ps` swapped for `/api/generate` |
 
 ## Disk writes
