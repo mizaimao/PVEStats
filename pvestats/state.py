@@ -5,8 +5,23 @@ age, rather than being zeroed — a blank card and a stale reading have to look
 different to a reader (spec §7).
 """
 
+import sys
 import time
 from collections import deque
+
+# time.monotonic() is mach_absolute_time() on macOS, which stops while the Mac
+# sleeps: a closed lid read as no time at all, so rates spiked on wake and the
+# sleep left no gap in the charts. CLOCK_MONOTONIC there (CLOCK_BOOTTIME on
+# Linux) keeps counting through sleep.
+_CLOCK = (time.CLOCK_MONOTONIC if sys.platform == "darwin"
+          else getattr(time, "CLOCK_BOOTTIME", None))
+
+
+def clock():
+    """Monotonic seconds that keep counting while the computer sleeps."""
+    if _CLOCK is None:
+        return time.monotonic()
+    return time.clock_gettime(_CLOCK)
 
 
 class Source:
@@ -18,11 +33,12 @@ class Source:
         self.ok = False
         self.error = None
         self.data = {}          # last known good; survives failures
-        self.updated_at = None  # time.monotonic() of last success
+        self.updated_at = None  # clock() of last success
         # Roughly `history_seconds` of samples at this source's poll rate.
         self.maxlen = max(2, round(history_seconds / interval))
         self.series = {}
         self._last_poll = None
+        self._filled = set()    # series that got a slot in the current poll
         self.failures = 0       # consecutive failed polls since the last success
 
     def resize(self, history_seconds):
@@ -35,23 +51,42 @@ class Source:
             self.series[key] = deque(buf, maxlen=maxlen)
 
     def push(self, key, value):
-        """Append one sample to a named ring buffer."""
-        if value is None:
-            return
+        """Append one sample to a named ring buffer.
+
+        None marks a gap in a series that already exists, so series drawn on
+        one chart stay aligned when one of them misses a value. It never
+        creates a series.
+        """
         buf = self.series.get(key)
         if buf is None:
+            if value is None:
+                return
             buf = self.series[key] = deque(maxlen=self.maxlen)
         buf.append(round(value, 4) if isinstance(value, float) else value)
+        self._filled.add(key)
+
+    def end_poll(self):
+        """Give every series exactly one slot for the poll that just ended.
+
+        Charts place samples one interval apart, so a failed poll that added
+        nothing would draw an outage as a continuous line and misdate every
+        older sample. Each series that got no value this poll gets a gap.
+        """
+        for key, buf in self.series.items():
+            if key not in self._filled:
+                buf.append(None)
+        self._filled.clear()
 
     def note_poll(self, interval):
         """Insert nulls for polls that never happened.
 
         Charts place samples one interval apart, so a stall — App Nap, a
-        closed lid, a dead source — would otherwise be drawn as a continuous
-        line across time that was never sampled. Padding keeps the x-axis
-        honest and renders the stall as a visible break.
+        closed lid — would otherwise be drawn as a continuous line across
+        time that was never sampled. Padding keeps the x-axis honest and
+        renders the stall as a visible break. Polls that ran and failed are
+        covered by end_poll().
         """
-        now = time.monotonic()
+        now = clock()
         previous, self._last_poll = self._last_poll, now
         if previous is None:
             return
@@ -67,7 +102,7 @@ class Source:
         self.ok = True
         self.error = None
         self.failures = 0
-        self.updated_at = time.monotonic()
+        self.updated_at = clock()
 
     def fail(self, error):
         # data is deliberately left alone — last known values stay visible.
@@ -95,7 +130,7 @@ class Source:
         """Seconds since the last successful poll, or None if never."""
         if self.updated_at is None:
             return None
-        return round(time.monotonic() - self.updated_at, 1)
+        return round(clock() - self.updated_at, 1)
 
     def status(self):
         return {
@@ -109,7 +144,7 @@ class Source:
             "capacity": self.maxlen,
             # True once a source has gone missing for more than two polls.
             "stale": self.updated_at is not None
-            and (time.monotonic() - self.updated_at) > self.interval * 2,
+            and (clock() - self.updated_at) > self.interval * 2,
         }
 
     def history(self):
@@ -130,7 +165,7 @@ class RateTracker:
     def rate(self, key, value, now=None):
         if value is None:
             return None
-        now = now if now is not None else time.monotonic()
+        now = now if now is not None else clock()
         previous = self._previous.get(key)
         self._previous[key] = (now, value)
         if previous is None:

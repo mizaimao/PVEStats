@@ -2,9 +2,8 @@
 
 import asyncio
 import re
-import time
 
-from ..state import RateTracker
+from ..state import RateTracker, clock
 from .base import PVE_TIMEOUT
 
 # --------------------------------------------------------------------------
@@ -188,7 +187,9 @@ class PveSource:
         for gone in [v for v in self.filesystems if v not in live_ids]:
             del self.filesystems[gone]
 
-        now = time.monotonic()
+        # Counts sleep: hours of counter growth divide by hours, not by the
+        # few seconds the Mac was awake between two polls.
+        now = clock()
         guests = {}
         running = running_raw
 

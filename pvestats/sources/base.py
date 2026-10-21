@@ -34,5 +34,7 @@ async def run_poller(source, interval, poll):
             source.fail(f"timeout after {interval}s")
         except Exception as exc:
             source.fail(f"{type(exc).__name__}: {exc}")
+        # One slot per series per poll, so a failed poll is drawn as a gap.
+        source.end_poll()
         # Drift-free: subtract however long the poll actually took.
         await asyncio.sleep(max(0.0, interval - (time.monotonic() - started)))
