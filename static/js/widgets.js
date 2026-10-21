@@ -96,18 +96,26 @@ export function arcRing(svg, radius, width, colour) {
   });
   const fill = svgEl("circle", {
     ...common, stroke: colour, "stroke-dasharray": `0 ${circumference}`,
-    // `color` feeds drop-shadow() so the glow matches the mark; the class
-    // keeps the effect off the dim track behind it.
-    class: "glowable", style: `color: ${colour}`,
     // Butt, not round: a round cap paints a full-width dot even at near-zero
     // length, so an idle guest at 0.3% grew a blob that read as a real value.
     // Square at the origin is also the correct treatment for a value scale.
     "stroke-linecap": "butt",
   });
-  svg.append(track, fill);
-  return value => fill.setAttribute(
-    "stroke-dasharray",
-    `${circumference * ARC_SWEEP * Math.max(0, Math.min(1, value || 0))} ${circumference}`);
+  // The glow is drawn, not filtered: WKWebView's SVG renderer ignores CSS
+  // filter functions on SVG children, so the drop-shadow these arcs used
+  // never showed in the app. Three wider, fainter copies of the arc under
+  // it, as the charts draw theirs; widths and opacity come from the glow
+  // tokens, so a glow of 0 leaves nothing.
+  const halos = ["a", "b", "c"].map(n => svgEl("circle", {
+    ...common, stroke: colour, "stroke-dasharray": `0 ${circumference}`,
+    "stroke-linecap": "butt", class: `arc-halo arc-halo-${n}`, style: `--w: ${width}px`,
+  }));
+  svg.append(track, halos[2], halos[1], halos[0], fill);
+  return value => {
+    const dash = `${circumference * ARC_SWEEP * Math.max(0, Math.min(1, value || 0))} ${circumference}`;
+    fill.setAttribute("stroke-dasharray", dash);
+    halos.forEach(h => h.setAttribute("stroke-dasharray", dash));
+  };
 }
 
 export function arcGauge(label, { nested = false, sublabel = "" } = {}) {
@@ -303,8 +311,12 @@ export class Spark {
       // Comet trail: the last stretch of the line redrawn over itself with a
       // gradient that fades to nothing, so the eye is pulled to `now`.
       const gradientId = `${this.uid}-${i}`;
+      // In drawing coordinates, set from the tail on every draw. The default
+      // (the path's bounding box) ignores the gradient when the box has no
+      // height, so a flat tail, an idle GPU or NIC, lost its comet entirely.
       const gradient = svgEl("linearGradient", {
-        id: gradientId, x1: "0", x2: "1", y1: "0", y2: "0",
+        id: gradientId, gradientUnits: "userSpaceOnUse",
+        x1: "0", x2: "1", y1: "0", y2: "0",
       });
       const stopFrom = svgEl("stop", {
         offset: "0", "stop-color": s.color, "stop-opacity": "0" });
@@ -323,12 +335,16 @@ export class Spark {
 
       // Order matters: wash, then halo widest-first, then the crisp line.
       this.svg.append(area, halo[2], halo[1], halo[0], line, comet, dot);
-      return { halo, area, line, comet, dot, stopFrom, stopTo };
+      return { halo, area, line, comet, dot, gradient, stopFrom, stopTo };
     });
 
     this.tip = el("div", "tip");
     this.el.appendChild(this.tip);
-    this.svg.addEventListener("mousemove", e => this.hover(e));
+    // Remembered so update() can re-read the sample under a resting pointer;
+    // the trace scrolls beneath it every tick.
+    this.pointerX = null;
+    this.svg.addEventListener("mousemove", e => { this.pointerX = e.clientX; this.hover(e); });
+    this.svg.addEventListener("mouseleave", () => { this.pointerX = null; });
 
     new ResizeObserver(entries => {
       const w = Math.max(40, Math.round(entries[0].contentRect.width));
@@ -368,16 +384,20 @@ export class Spark {
     if (!paths.length) return;
     this._drawn = true;
     for (const path of paths) {
-      const length = path.getTotalLength();
-      if (!length) continue;
-      path.style.strokeDasharray = `${length}`;
-      path.style.strokeDashoffset = `${length}`;
+      // Measured in units of the path itself (pathLength 1): the first draw
+      // can happen at the 240px placeholder width, and the ResizeObserver
+      // redraws at the real width before the first paint, so a dash measured
+      // in pixels slid along the longer line and then popped.
+      path.setAttribute("pathLength", "1");
+      path.style.strokeDasharray = "1";
+      path.style.strokeDashoffset = "1";
       path.getBoundingClientRect();               // force layout before animating
       path.style.transition = "stroke-dashoffset 900ms ease-out";
       path.style.strokeDashoffset = "0";
       setTimeout(() => {
         path.style.transition = path.style.strokeDasharray =
           path.style.strokeDashoffset = "";
+        path.removeAttribute("pathLength");
       }, 1000);
     }
   }
@@ -399,6 +419,7 @@ export class Spark {
     }
     this.draw();
     this.playDrawIn();
+    if (this.pointerX != null) this.hover({ clientX: this.pointerX });
   }
 
   scale() {
@@ -463,8 +484,13 @@ export class Spark {
         else runs.push(run = [point]);
       });
 
-      const stroke = runs.map(r =>
-        "M" + r.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" L")).join(" ");
+      // A run of one point (a reading between two gaps) is a zero-length
+      // segment, which the round cap draws as a dot; a lone "M" is never
+      // stroked, so it used to vanish.
+      const stroke = runs.map(r => {
+        const pts = r.length === 1 ? [r[0], r[0]] : r;
+        return "M" + pts.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" L");
+      }).join(" ");
       line.setAttribute("d", stroke);
       halo.forEach(h => h.setAttribute("d", stroke));
       // One closed shape per run, so the wash does not span a gap either.
@@ -480,6 +506,8 @@ export class Spark {
         const tail = newest.slice(-Math.min(newest.length, 14));
         comet.setAttribute("d",
           "M" + tail.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" L"));
+        this.parts[i].gradient.setAttribute("x1", tail[0][0].toFixed(1));
+        this.parts[i].gradient.setAttribute("x2", tail[tail.length - 1][0].toFixed(1));
       } else {
         comet.setAttribute("d", "");
       }
@@ -500,7 +528,10 @@ export class Spark {
      no sense of how far back it reaches. */
   drawTimeTicks(plot, body, h) {
     if (!this.xTicks || !this.capacity) return;
-    const spanMin = (this.capacity * this.secondsPerSample) / 60;
+    // capacity samples span capacity - 1 intervals (xLayout), so the left
+    // edge is that old; counting capacity intervals drifted the ticks by up
+    // to a whole sample, which is 10s on the PVE chart.
+    const spanMin = ((this.capacity - 1) * this.secondsPerSample) / 60;
     const step = spanMin <= 5 ? 1 : spanMin <= 15 ? 2 : 5;
     const marks = [];
     for (let t = 0; t <= spanMin + 0.001; t += step) marks.push(t);
@@ -577,9 +608,14 @@ export class Spark {
       .join("  ");
     this.tip.textContent = samplesAgo ? `${parts}  ·  ${samplesAgo} samples ago` : parts;
     this.tip.style.opacity = "";
-    // Pinned to the sample, not the cursor, so it points at what it reads.
+    // Pinned to the sample, not the cursor, so it points at what it reads,
+    // but kept inside the chart: centred on the newest GPU sample it ran off
+    // the window and left the page scrolling sideways.
     const offset = rect.left - this.el.getBoundingClientRect().left;
-    this.tip.style.left = `${(offset + (x0 + index * step) * scale).toFixed(1)}px`;
+    const half = this.tip.offsetWidth / 2;
+    const centre = offset + (x0 + index * step) * scale;
+    const room = this.el.clientWidth || rect.width;
+    this.tip.style.left = `${Math.min(Math.max(centre, half), room - half).toFixed(1)}px`;
   }
 }
 
