@@ -1,5 +1,6 @@
 """TrueNAS over JSON-RPC 2.0 on a WebSocket (not REST — see connect())."""
 
+import asyncio
 import json
 import time
 
@@ -48,9 +49,14 @@ class TrueNasSource:
     async def connect(self, session):
         # A reconnect must re-read the pools, not reuse a stale list.
         self._pool_countdown = 0
-        self.ws = await session.ws_connect(self.config.truenas_ws_url,
-                                           ssl=False, max_msg_size=0,
-                                           heartbeat=30)
+        # Bounded like every other call (spec §7). ws_connect has no timeout
+        # of its own for the upgrade request, so the session default applied
+        # (30s to connect, 300s in all), and a NAS that was down read
+        # "waiting" for a minute.
+        self.ws = await asyncio.wait_for(
+            session.ws_connect(self.config.truenas_ws_url, ssl=False,
+                               max_msg_size=0, heartbeat=30),
+            TRUENAS_TIMEOUT.total)
         self.counter = 0
         try:
             await self._handshake()
