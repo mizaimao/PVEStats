@@ -7,10 +7,11 @@ response wins.
 
 Read-only. GET requests only, no writes to any homelab disk.
 
-    python3 probe.py              # every source
-    python3 probe.py pve truenas  # named sources only
+    tools/uv run probe.py              # every source
+    tools/uv run probe.py pve truenas  # named sources only
 
-Stdlib only, deliberately: this needs to run before the venv exists.
+PVE and the agent use only the standard library; TrueNAS needs aiohttp, so
+run it through tools/uv like everything else here.
 """
 
 import json
@@ -248,8 +249,14 @@ async def _truenas_rpc(host, key, out):
                                     [targets, {"start": now - 10, "end": now}])
                 out["netdata_sample"] = sample
                 series = sample.get("result") or []
-                print(f"  reporting.netdata_get_data: ok "
-                      f"({len(series)}/{len(targets)} series)")
+                # A method error must not read as "0 series", the silent
+                # symptom of wrong identifiers described above.
+                if sample.get("error"):
+                    print(f"  reporting.netdata_get_data: FAILED — "
+                          f"{str(sample['error'])[:120]}")
+                else:
+                    print(f"  reporting.netdata_get_data: ok "
+                          f"({len(series)}/{len(targets)} series)")
                 for entry in series:
                     print(f"      {entry.get('name')}/{str(entry.get('identifier'))[:12]} "
                           f"legend={entry.get('legend')} "
@@ -276,7 +283,7 @@ def probe_truenas(env):
         import aiohttp  # noqa: F401
     except ImportError:
         print("  skipped: this source needs aiohttp — run it as "
-              ".venv/bin/python probe.py truenas")
+              "tools/uv run probe.py truenas")
         return
 
     import asyncio

@@ -172,6 +172,15 @@ Base: `https://<truenas-host>/api/v2.0`
 Auth: `Authorization: Bearer <api-key>` (generated in the TrueNAS UI, not the
 shell).
 
+*Update 2026-10-21:* as built, TrueNAS is read over JSON-RPC 2.0 on a
+WebSocket, `wss://<truenas-host>/api/current`, logging in with
+`auth.login_with_api_key` and a read-only (READONLY_ADMIN) key. REST is not
+used: TrueNAS never applied roles to it, so it answers 403 to that same
+read-only key, and REST is removed in TrueNAS 26. A `curl` check against
+`/api/v2.0` therefore fails with the key the dashboard uses; test with
+`tools/uv run probe.py truenas` instead. The same applies to the §2 diagram's
+"truenas :443 (REST API)".
+
 **Why this source exists at all:** the NAS's network interfaces are PCIe
 passthrough. The hypervisor has no counters for a passed-through device, so
 `netin`/`netout` from the PVE API are meaningless for this guest. The numbers

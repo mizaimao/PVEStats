@@ -24,8 +24,9 @@ the PVE token and TrueNAS API key.
 
 Python and every package come from `tools/uv`, which keeps uv, the Python it
 manages and its cache in `.tools/` (git-ignored). Nothing depends on pyenv,
-Homebrew or the system Python; `uv.lock` pins every package by hash, and
-`.python-version` picks 3.13.
+Homebrew or the system Python. `uv.lock` pins every installed package by
+hash; one of them, proxy-tools, ships only as source and is built on first
+install with a pinned setuptools. `.python-version` picks 3.13.
 
     tools/uv sync             # fetches uv, Python and packages on first run
     cp .env.example .env      # then fill it in
@@ -55,13 +56,12 @@ way and run `uv sync`.
 **Windows.** `uv run app.py`. WebView2 ships with Windows 11 and current
 Windows 10; otherwise install the Evergreen runtime from Microsoft.
 
-**Linux.** Needs the WebKitGTK bindings, which no package index supplies:
-
-    sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1   # Debian/Ubuntu
-    sudo dnf install python3-gobject webkit2gtk4.1                    # Fedora
-
-They belong to the system Python, which a uv-managed one cannot see. Build
-the venv from the system Python with `--system-site-packages` instead.
+**Linux.** Untested with the uv setup. The window needs the WebKitGTK
+bindings, which no package index supplies and which belong to the system
+Python, where a uv-managed Python cannot see them; and `uv sync` here replaces
+any venv not built from a uv-managed Python. So on Linux serve to a browser
+with `run.py` (below), or build a venv by hand from the system Python with
+`--system-site-packages` and install the dependencies into it yourself.
 
 To serve to an ordinary browser instead of a window:
 
@@ -72,7 +72,8 @@ To serve to an ordinary browser instead of a window:
 Parsing is written against real captured responses, not against field names in
 the spec. Where they disagree, the live response wins.
 
-    python3 probe.py              # every source
-    python3 probe.py pve          # one source
+    tools/uv run probe.py         # every source
+    tools/uv run probe.py pve     # one source
 
-Needs no venv — stdlib only.
+PVE and the agent need only the standard library; TrueNAS needs aiohttp,
+which the uv environment has.
