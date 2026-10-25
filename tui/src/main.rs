@@ -38,6 +38,7 @@ Reads .env and config.yaml from the PVEStats folder.
   --snapshot WxH      print one frame as text instead of running, then exit
   --after SECONDS     how long to collect before the snapshot (default 12)
   --focus             start on the GPU card alone
+  --still             do not step the screen around against burn-in
 
 keys: f  GPU card alone / everything     up, down, j, k  scroll a narrow column
       q  quit";
@@ -49,10 +50,11 @@ struct Args {
     snapshot: Option<(u16, u16)>,
     after: f64,
     focus: bool,
+    still: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false };
+    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, still: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or(format!("{arg} needs a value"));
@@ -76,6 +78,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--after" => args.after = value()?.parse().map_err(|_| "bad --after")?,
             "--focus" => args.focus = true,
+            "--still" => args.still = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 exit(0);
@@ -114,6 +117,8 @@ fn main() {
     let look = Look::new(&config.theme, colors, args.console.unwrap_or(on_console));
     let mut screen = Screen::new();
     screen.focus = args.focus;
+    // A snapshot is for checking a layout, which a step would shift.
+    screen.orbit = !args.still && args.snapshot.is_none();
 
     if let Some((w, h)) = args.snapshot {
         thread::sleep(Duration::from_secs_f64(args.after.max(0.0)));

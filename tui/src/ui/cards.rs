@@ -114,12 +114,16 @@ fn disk_line(look: &Look, guest: Option<&Guest>) -> Part {
         // A card PVE has not reported yet: no data, not no agent.
         None => fmt::DASH.to_string(),
         Some(Guest { filesystem: None, .. }) => "no guest agent".to_string(),
-        Some(Guest { filesystem: Some(fs), .. }) => format!(
-            "{} · {} / {} GiB",
-            fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)),
-            fmt::gib(fs.used),
-            fmt::gib(Some(fs.total)),
-        ),
+        Some(Guest { filesystem: Some(fs), .. }) => {
+            let pct = fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0));
+            // TiB past one, so ml60's 3.4 TiB does not read "1616.7 / 3479.3".
+            if fs.total >= TIB {
+                let tib = |v: f64| format!("{:.1}", v / TIB);
+                format!("{pct} · {} / {} TiB", fs.used.map_or(fmt::DASH.into(), tib), tib(fs.total))
+            } else {
+                format!("{pct} · {} / {} GiB", fmt::gib(fs.used), fmt::gib(Some(fs.total)))
+            }
+        }
     };
     Part::Text(chip(look, "disk", text))
 }
@@ -160,6 +164,7 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
                 seconds_per_sample: pve.interval,
                 caption: format!("Host CPU {}", fmt::pct(node.cpu_pct)),
                 min_rows: 4,
+                max_rows: 7,
                 weight: 1,
             }),
         ],
@@ -206,7 +211,7 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         .unwrap_or_else(|| fmt::DASH.into());
 
     let headline = Part::Row(vec![
-        (big_width(look, 3, "%"), Part::Big(big, "%".into(), bold(p.s1))),
+        (big_width(look, 3, "%"), Part::Big(big, "%".into(), 3, bold(p.s1))),
         (
             0,
             Part::Stack(vec![
@@ -235,7 +240,8 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         axis: axis_pct,
         seconds_per_sample: agent.interval,
         caption: String::new(),
-        min_rows: 6,
+        min_rows: 5,
+        max_rows: 10,
         weight: 3,
     });
 
@@ -274,7 +280,7 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         ),
         // ml60's storage is passed through, so the hypervisor never sees its
         // disk traffic: the panel would only ever read zero.
-        Part::Flow(30, vec![io_line(look, guest, false), disk_line(look, guest)]),
+        Part::Flow(24, vec![io_line(look, guest, false), disk_line(look, guest)]),
     ]);
     if !pve.ok {
         pve_parts = Part::Dim(Box::new(pve_parts));
@@ -461,7 +467,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 Span::styled("● ", style(if pool.healthy { p.good } else { p.critical })),
                 Span::styled(pool.status.clone().unwrap_or_else(|| "?".into()), style(p.ink2)),
             ]);
-            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 10, color), Line::styled(figure, style(p.ink))]
+            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 8, color), Line::styled(figure, style(p.ink))]
         })
         .collect();
 
@@ -492,9 +498,9 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 caption: None,
                 cols: vec![
                     Col { title: "Pool", width: 0, right: false },
-                    Col { title: "Status", width: 10, right: false },
-                    Col { title: "Capacity", width: 10, right: false },
-                    Col { title: "Used", width: 16, right: true },
+                    Col { title: "Status", width: 8, right: false },
+                    Col { title: "Capacity", width: 8, right: false },
+                    Col { title: "Used", width: 15, right: true },
                 ],
                 rows: pool_rows,
                 empty: "no pools yet",
@@ -505,14 +511,18 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
 
 // --------------------------------------------------------------- guests
 
-/// One small card per guest. Compact drops to two lines inside the border
-/// when the screen cannot fit the full five.
+/// One small card per guest. Compact drops to two or three lines inside the
+/// border, for a narrow card or a screen that cannot fit the full five.
 pub fn basic(look: &Look, slot: &Slot, status: &Status, compact: bool) -> Card {
     let g = slot.guest;
     let cpu = g.and_then(|g| g.cpu_pct);
     let address = g.and_then(|g| g.addresses.first().cloned());
     let body = if compact {
         let used = g.and_then(|g| ratio(g.mem, g.maxmem));
+        let (muted, ink) = (style(look.p.muted), style(look.p.ink));
+        let disk = g
+            .and_then(|g| g.filesystem.as_ref())
+            .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
         vec![
             Part::Flow(
                 16,
@@ -521,20 +531,18 @@ pub fn basic(look: &Look, slot: &Slot, status: &Status, compact: bool) -> Card {
                     meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4),
                 ],
             ),
-            Part::Text(Line::from(vec![
-                Span::styled("up ", style(look.p.muted)),
-                Span::styled(fmt::uptime(g.and_then(|g| g.uptime)), style(look.p.ink)),
-                Span::styled("  disk ", style(look.p.muted)),
-                Span::styled(
-                    g.and_then(|g| g.filesystem.as_ref())
-                        .map_or("–".into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0))),
-                    style(look.p.ink),
-                ),
-                Span::styled("  net ↓", style(look.p.muted)),
-                Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), style(look.p.ink)),
-                Span::styled(" ↑", style(look.p.muted)),
-                Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), style(look.p.ink)),
-            ])),
+            // Most telling first; what does not fit the line is left off.
+            Part::OneLine(vec![
+                Line::from(vec![
+                    Span::styled("↓", muted),
+                    Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), ink),
+                    Span::styled(" ↑", muted),
+                    Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), ink),
+                ]),
+                chip(look, "disk", disk),
+                chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime))),
+                Line::styled(address.clone().unwrap_or_default(), style(look.p.ink2)),
+            ]),
         ]
     } else {
         // Two bars rather than arcs: aligned baselines make the grid
@@ -549,10 +557,7 @@ pub fn basic(look: &Look, slot: &Slot, status: &Status, compact: bool) -> Card {
     };
     Card {
         title: slot.name.clone(),
-        right: match (compact, address) {
-            (true, Some(a)) => format!("{} · {a}", slot.vmid),
-            _ => slot.vmid.to_string(),
-        },
+        right: slot.vmid.to_string(),
         stale: !status.ok,
         error: status.error.clone(),
         body,

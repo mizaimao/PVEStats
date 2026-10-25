@@ -76,12 +76,15 @@ pub enum Part {
     Chart(Chart),
     /// A label, a short graph and the latest value, btop's per-core style.
     Spark(Spark),
-    /// A value in digits five rows tall, then its unit in plain text.
-    Big(String, String, Style),
+    /// A value in digits five rows tall, flush right in room for this many
+    /// digits so the unit after it holds still, then the unit in plain text.
+    Big(String, String, usize, Style),
     /// A muted label over its value.
     Tile(String, Line<'static>),
     /// Short lines set side by side, wrapped onto as many rows as needed.
     Chips(Vec<Line<'static>>),
+    /// The same on one row, keeping only those that fit it.
+    OneLine(Vec<Line<'static>>),
     Table(Table),
     /// Children side by side: (fixed width or 0 for a share of the rest).
     Row(Vec<(u16, Part)>),
@@ -99,7 +102,7 @@ impl Part {
     /// Rows needed at this width, before any share of spare rows.
     pub fn height(&self, width: u16) -> u16 {
         match self {
-            Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
+            Part::Gap | Part::Text(_) | Part::Meter(_) | Part::OneLine(_) => 1,
             Part::Chart(c) => c.min_rows,
             Part::Spark(s) => s.rows,
             Part::Big(..) => 5,
@@ -116,6 +119,18 @@ impl Part {
             },
             Part::Stack(children) => children.iter().map(|p| p.height(width)).sum(),
             Part::Dim(inner) => inner.height(width),
+        }
+    }
+
+    /// Rows a part can put to use beyond its height: a chart, up to its
+    /// tallest.
+    pub fn room(&self) -> u16 {
+        match self {
+            Part::Chart(c) => c.max_rows.saturating_sub(c.min_rows),
+            Part::Row(children) => children.iter().map(|(_, p)| p.room()).max().unwrap_or(0),
+            Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::room).sum(),
+            Part::Dim(inner) => inner.room(),
+            _ => 0,
         }
     }
 
@@ -143,10 +158,15 @@ impl Part {
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
             Part::Spark(s) => s.render(pen, area),
-            Part::Big(value, unit, style) => big(pen, area, value, unit, *style),
+            Part::Big(value, unit, slots, style) => big(pen, area, value, unit, *slots, *style),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
                 pen.line(area, area.x, area.y + 1, value);
+            }
+            Part::OneLine(chips) => {
+                if let Some(line) = chip_lines(chips, area.width).into_iter().next() {
+                    pen.line(area, area.x, area.y, &line);
+                }
             }
             Part::Chips(chips) => {
                 for (i, line) in chip_lines(chips, area.width).iter().enumerate() {
@@ -225,10 +245,10 @@ pub fn share(heights: &[u16], flexes: &[u16], total: u16) -> Vec<u16> {
     out
 }
 
-/// Rows for each part. Charts take two thirds of any spare rows and the
-/// gaps below the first chart the other third, so a chart does not crowd
-/// what follows it. With no gap below a chart it takes all of them; with no
-/// chart, the gaps do.
+/// Rows for each part. Charts take two thirds of any spare rows, up to
+/// their tallest, and the gaps below the first chart the rest, so a chart
+/// does not crowd what follows it. With no gap below a chart it takes all it
+/// can; with no chart, the gaps take them.
 fn layout_rows(parts: &[Part], width: u16, total: u16) -> Vec<u16> {
     let heights: Vec<u16> = parts.iter().map(|p| p.height(width)).collect();
     let flexes: Vec<u16> = parts.iter().map(Part::flex).collect();
@@ -245,7 +265,8 @@ fn layout_rows(parts: &[Part], width: u16, total: u16) -> Vec<u16> {
         (None, _) => 0,
         (Some(_), true) => spare,
         (Some(_), false) => (spare * 2).div_ceil(3),
-    };
+    }
+    .min(parts.iter().map(Part::room).sum());
     let mut out = share(&heights, &flexes, need + to_charts);
     spread(&mut out, &gaps, spare - to_charts);
     out
@@ -357,8 +378,7 @@ impl Trace {
 /// The first trace is drawn as a filled area, any others as lines over it.
 pub struct Chart {
     pub traces: Vec<Trace>,
-    /// Samples across the full width: the ring buffer's length, so the
-    /// x-axis holds still while history fills.
+    /// The ring buffer's length: the most samples the chart can show.
     pub capacity: usize,
     /// A fixed top (100 for percentages), or None to scale to the data.
     pub top: Option<f64>,
@@ -367,7 +387,10 @@ pub struct Chart {
     pub axis: fn(f64) -> String,
     pub seconds_per_sample: f64,
     pub caption: String,
+    /// Rows, counting the time row under the plot: the fewest it needs and
+    /// the most it takes from spare ones.
     pub min_rows: u16,
+    pub max_rows: u16,
     pub weight: u16,
 }
 
@@ -415,7 +438,9 @@ impl Chart {
 
         // Bottom row: the span on the left, the legend, "now" on the right.
         let y = area.bottom() - 1;
-        let span = span(self.capacity as f64 * self.seconds_per_sample);
+        let across = plot_area.width as usize * if pen.look.console_glyphs { 1 } else { 2 };
+        let shown = (across / dots_per_sample(self.capacity, across)).min(self.capacity);
+        let span = span(shown as f64 * self.seconds_per_sample);
         let now_x = area.right().saturating_sub(3);
         let left = Rect { width: now_x.saturating_sub(area.x + 1), ..area };
         let x = pen.text(left, plot_area.x, y, &span, muted);
@@ -504,7 +529,7 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     };
     if let Some(first) = traces.first() {
         for sub in 0..across {
-            let Some(v) = column_value(&first.data, capacity, sub, across) else { continue };
+            let Some(v) = sample_at(&first.data, capacity, sub, across) else { continue };
             let mut height = (v / top * levels as f64).round() as usize;
             // Any reading above zero shows, however small.
             if v > 0.0 {
@@ -517,7 +542,7 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     }
     for trace in traces.iter().skip(1) {
         for sub in 0..across {
-            let Some(v) = column_value(&trace.data, capacity, sub, across) else { continue };
+            let Some(v) = sample_at(&trace.data, capacity, sub, across) else { continue };
             let level = ((v / top * levels as f64).floor() as usize).min(levels - 1);
             set(&mut dots, sub, level);
             line[(level / 4) * w + sub / 2] = Some(trace.series);
@@ -543,7 +568,7 @@ fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top:
     let rows = area.height;
     for c in 0..area.width {
         let x = area.x + c;
-        let column = |t: &Trace| column_value(&t.data, capacity, c as usize, area.width as usize);
+        let column = |t: &Trace| sample_at(&t.data, capacity, c as usize, area.width as usize);
         let mut filled = 0.0;
         if let Some(first) = traces.first() {
             if let Some(v) = column(first) {
@@ -563,16 +588,24 @@ fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top:
     }
 }
 
-/// The highest sample under column `c` of `width`, with the newest sample
-/// at the right edge and `capacity` samples across.
-fn column_value(data: &[Option<f64>], capacity: usize, c: usize, width: usize) -> Option<f64> {
-    let (capacity, width) = (capacity.max(1), width.max(1));
-    let lo = c * capacity / width;
-    let hi = ((c + 1) * capacity / width).max(lo + 1);
-    let offset = capacity.saturating_sub(data.len());
-    (lo..hi)
-        .filter_map(|slot| slot.checked_sub(offset).and_then(|i| data.get(i)).copied().flatten())
-        .fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |a| a.max(v))))
+/// Columns each sample takes: as many as fit the whole buffer across the
+/// width, and at least one.
+fn dots_per_sample(capacity: usize, width: usize) -> usize {
+    (width / capacity.max(1)).max(1)
+}
+
+/// The sample drawn at column `c` of `width`, the newest at the right edge.
+/// Each sample takes the same whole number of columns, so every new one
+/// moves the graph by exactly that much. Fitting a long buffer into fewer
+/// columns put two samples in some and one in others, so a column changed
+/// only every other tick; now a buffer longer than the width shows its
+/// newest part.
+fn sample_at(data: &[Option<f64>], capacity: usize, c: usize, width: usize) -> Option<f64> {
+    let back = (width.max(1) - 1 - c.min(width.max(1) - 1)) / dots_per_sample(capacity, width);
+    if back >= capacity {
+        return None;
+    }
+    data.len().checked_sub(back + 1).and_then(|i| data[i])
 }
 
 fn area_column(pen: &mut Pen, plot: Rect, x: u16, height: f64, color: Color) {
@@ -659,8 +692,9 @@ pub fn big_width(look: &Look, digits: usize, unit: &str) -> u16 {
     digits as u16 * glyph_width(look) + unit.chars().count() as u16
 }
 
-fn big(pen: &mut Pen, area: Rect, value: &str, unit: &str, style: Style) {
-    let mut x = area.x;
+fn big(pen: &mut Pen, area: Rect, value: &str, unit: &str, slots: usize, style: Style) {
+    let empty = slots.saturating_sub(value.chars().count()) as u16;
+    let mut x = area.x + empty * glyph_width(pen.look);
     for ch in value.chars() {
         let font = if pen.look.console_glyphs { &BLOCKS } else { &STROKES };
         if let Some((_, rows)) = font.iter().find(|(c, _)| *c == ch) {
@@ -765,9 +799,13 @@ impl Card {
         self.body.iter().map(Part::flex).sum()
     }
 
-    /// Whether spare rows can open up space between its sections.
-    pub fn has_gaps(&self) -> bool {
-        self.body.iter().any(|p| matches!(p, Part::Gap))
+    /// Rows beyond its height the card can put to use, or None for any
+    /// number: one with gaps to open up below its chart, or with gaps and no
+    /// chart, takes whatever it is given.
+    pub fn max_extra(&self) -> Option<u16> {
+        let first = self.body.iter().position(|p| p.flex() > 0);
+        let gaps = self.body.iter().skip(first.map_or(0, |f| f + 1)).any(|p| matches!(p, Part::Gap));
+        (!gaps).then(|| self.body.iter().map(Part::room).sum())
     }
 
     pub fn render(&self, pen: &mut Pen, area: Rect) {
@@ -777,7 +815,7 @@ impl Card {
         }
         let p = pen.look.p;
         pen.fill_bg(area, p.surface);
-        let border = Style::default().fg(if self.stale { p.muted } else { p.grid });
+        let border = Style::default().fg(if self.stale { p.muted } else { p.border });
         let title_style = Style::default()
             .fg(if self.stale { p.muted } else { p.ink })
             .add_modifier(Modifier::BOLD);
@@ -810,12 +848,17 @@ mod tests {
     #[test]
     fn columns_hold_the_newest_sample_right() {
         let data = vec![Some(1.0), Some(2.0), Some(3.0)];
-        // Four slots, three samples: the first slot is empty.
-        assert_eq!(column_value(&data, 4, 0, 4), None);
-        assert_eq!(column_value(&data, 4, 3, 4), Some(3.0));
-        // Two columns over four slots take the higher of each pair.
-        assert_eq!(column_value(&data, 4, 0, 2), Some(1.0));
-        assert_eq!(column_value(&data, 4, 1, 2), Some(3.0));
+        // Four columns, three samples: the first column is empty.
+        assert_eq!(sample_at(&data, 4, 0, 4), None);
+        assert_eq!(sample_at(&data, 4, 3, 4), Some(3.0));
+        // A buffer of 2 over 8 columns: each sample four columns wide.
+        assert_eq!(sample_at(&data[1..], 2, 7, 8), Some(3.0));
+        assert_eq!(sample_at(&data[1..], 2, 4, 8), Some(3.0));
+        assert_eq!(sample_at(&data[1..], 2, 3, 8), Some(2.0));
+        // A buffer longer than the width shows its newest part, one column
+        // per sample, so each new sample moves the graph by one.
+        assert_eq!(sample_at(&data, 3, 0, 2), Some(2.0));
+        assert_eq!(sample_at(&data, 3, 1, 2), Some(3.0));
     }
 
     #[test]
@@ -836,11 +879,15 @@ mod tests {
             seconds_per_sample: 1.0,
             caption: String::new(),
             min_rows: 4,
+            max_rows: 9,
             weight: 1,
         });
         let parts = vec![Part::Gap, chart, Part::Gap, Part::Text(Line::raw("x"))];
-        // Ten spare rows: seven to the chart, three to the gap below it.
-        assert_eq!(layout_rows(&parts, 40, 17), vec![1, 11, 4, 1]);
+        // Six spare rows: four to the chart, two to the gap below it.
+        assert_eq!(layout_rows(&parts, 40, 13), vec![1, 8, 3, 1]);
+        // Ten: seven would pass the chart's tallest, so it stops at five more
+        // and the gap takes the rest.
+        assert_eq!(layout_rows(&parts, 40, 17), vec![1, 9, 6, 1]);
     }
 
     #[test]

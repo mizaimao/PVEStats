@@ -26,6 +26,8 @@ pub struct Palette {
     pub ink2: Color,
     pub muted: Color,
     pub grid: Color,
+    /// Card borders: between grid and muted, so cards stand apart.
+    pub border: Color,
     pub s1: Color,
     pub s2: Color,
     /// Background for a line drawn over series 1's filled area.
@@ -116,6 +118,7 @@ fn palette(theme: &str, colors: Colors) -> Palette {
             ink2: Color::Gray,
             muted: Color::DarkGray,
             grid: Color::DarkGray,
+            border: Color::DarkGray,
             s1: Color::LightBlue,
             s2: Color::Yellow,
             s1_under: Color::Blue,
@@ -136,6 +139,7 @@ fn palette(theme: &str, colors: Colors) -> Palette {
         ink2: c(tokens[3]),
         muted: c(tokens[4]),
         grid: c(tokens[5]),
+        border: c(mix(tokens[5], tokens[4], 0.45)),
         s1: c(tokens[6]),
         s2: c(tokens[7]),
         s1_under: c(tokens[6]),
