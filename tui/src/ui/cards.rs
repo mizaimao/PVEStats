@@ -139,7 +139,7 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
     }
     info.push(format!("up {}", fmt::uptime(node.uptime)));
     info.push(format!("guests {} / {}", node.guests_running, node.guests_total));
-    let load = node.loadavg.iter().map(|v| format!("{v:.2}")).collect::<Vec<_>>().join(" / ");
+    let load = node.loadavg.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>().join(" / ");
     Card {
         title: format!("Proxmox host · {}", node.name),
         right: version,
@@ -154,7 +154,6 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
                     meter(look, "Mem", ratio(node.mem, node.maxmem), mem_text(node.mem, node.maxmem), 0),
                 ],
             ),
-            Part::Text(chip(look, "Load", if load.is_empty() { fmt::DASH.into() } else { load })),
             Part::Chart(Chart {
                 traces: vec![Trace::from(pve.series("node.cpu"), 0, "")],
                 capacity: pve.capacity(),
@@ -162,7 +161,8 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
                 floor: 0.0,
                 axis: axis_pct,
                 seconds_per_sample: pve.interval,
-                caption: format!("Host CPU {}", fmt::pct(node.cpu_pct)),
+                // The load rides on the caption: a line of its own cost the guests a row.
+                caption: format!("Host CPU {} · load {}", fmt::pct(node.cpu_pct), if load.is_empty() { fmt::DASH.into() } else { load }),
                 min_rows: 3,
                 max_rows: 4,
                 weight: 1,
@@ -511,56 +511,129 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
 
 // --------------------------------------------------------------- guests
 
-/// One small card per guest. Compact drops to two or three lines inside the
-/// border, for a narrow card or a screen that cannot fit the full five.
-pub fn basic(look: &Look, slot: &Slot, status: &Status, compact: bool) -> Card {
+/// How much a guest's card holds, from most to least.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Size {
+    /// Address and uptime, CPU, memory, traffic, disk: five lines.
+    Full,
+    /// CPU and memory, then a line of whatever fits: traffic, disk, uptime.
+    Compact,
+    /// CPU and memory only.
+    Tiny,
+}
+
+/// One small card per guest, in one of three sizes.
+pub fn basic(look: &Look, slot: &Slot, status: &Status, size: Size) -> Card {
     let g = slot.guest;
     let cpu = g.and_then(|g| g.cpu_pct);
-    let address = g.and_then(|g| g.addresses.first().cloned());
-    let body = if compact {
-        let used = g.and_then(|g| ratio(g.mem, g.maxmem));
-        let (muted, ink) = (style(look.p.muted), style(look.p.ink));
-        let disk = g
-            .and_then(|g| g.filesystem.as_ref())
-            .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
-        vec![
-            Part::Flow(
-                16,
-                vec![
-                    meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
-                    meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4),
-                ],
-            ),
-            // Most telling first; what does not fit the line is left off.
-            Part::OneLine(vec![
-                Line::from(vec![
-                    Span::styled("↓", muted),
-                    Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), ink),
-                    Span::styled(" ↑", muted),
-                    Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), ink),
-                ]),
-                chip(look, "disk", disk),
-                chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime))),
-                Line::styled(address.clone().unwrap_or_default(), style(look.p.ink2)),
-            ]),
-        ]
-    } else {
+    let used = g.and_then(|g| ratio(g.mem, g.maxmem));
+    let (muted, ink) = (style(look.p.muted), style(look.p.ink));
+    let bars = || {
+        Part::Flow(
+            16,
+            vec![
+                meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
+                meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4),
+            ],
+        )
+    };
+    let body = match size {
         // Two bars rather than arcs: aligned baselines make the grid
         // scannable, and the two metrics read the same way.
-        vec![
+        Size::Full => vec![
             guest_sub(look, g),
             meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
-            meter(look, "Mem", g.and_then(|g| ratio(g.mem, g.maxmem)), mem_text(g.and_then(|g| g.mem), g.and_then(|g| g.maxmem)), 0),
+            meter(look, "Mem", used, mem_text(g.and_then(|g| g.mem), g.and_then(|g| g.maxmem)), 0),
             io_line(look, g, true),
             disk_line(look, g),
-        ]
+        ],
+        Size::Compact => {
+            let disk = g
+                .and_then(|g| g.filesystem.as_ref())
+                .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
+            let address = g.and_then(|g| g.addresses.first().cloned()).unwrap_or_default();
+            vec![
+                bars(),
+                // Most telling first; what does not fit the line is left off.
+                Part::OneLine(vec![
+                    Line::from(vec![
+                        Span::styled("↓", muted),
+                        Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), ink),
+                        Span::styled(" ↑", muted),
+                        Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), ink),
+                    ]),
+                    chip(look, "disk", disk),
+                    chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime))),
+                    Line::styled(address, style(look.p.ink2)),
+                ]),
+            ]
+        }
+        Size::Tiny => vec![bars()],
     };
     Card {
         title: slot.name.clone(),
-        right: slot.vmid.to_string(),
+        // A tiny card has no room for both name and vmid on its border.
+        right: if size == Size::Tiny { String::new() } else { slot.vmid.to_string() },
         stale: !status.ok,
         error: status.error.clone(),
         body,
+    }
+}
+
+/// Every guest on one line each, for when not even tiny cards fit.
+pub fn guest_list(look: &Look, slots: &[&Slot], status: &Status) -> Card {
+    let p = look.p;
+    let gauge = |r: Option<f64>| {
+        let mut line = bar(look, r, 6, p.s1);
+        line.spans.push(Span::styled(format!(" {:>4}", fmt::pct(r.map(|r| r * 100.0))), style(p.ink)));
+        line
+    };
+    let rows = slots
+        .iter()
+        .map(|s| {
+            let g = s.guest;
+            vec![
+                Line::styled(s.name.clone(), style(p.ink)),
+                gauge(g.and_then(|g| g.cpu_pct).map(|v| v / 100.0)),
+                gauge(g.and_then(|g| ratio(g.mem, g.maxmem))),
+                Line::from(vec![
+                    Span::styled("↓", style(p.muted)),
+                    Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), style(p.ink)),
+                    Span::styled(" ↑", style(p.muted)),
+                    Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), style(p.ink)),
+                ]),
+            ]
+        })
+        .collect();
+    Card {
+        title: "Guests".into(),
+        right: slots.len().to_string(),
+        stale: !status.ok,
+        error: status.error.clone(),
+        body: vec![Part::Table(Table {
+            caption: None,
+            cols: vec![
+                Col { title: "Guest", width: 0, right: false },
+                Col { title: "CPU", width: 11, right: false },
+                Col { title: "Mem", width: 11, right: false },
+                Col { title: "MiB/s", width: 9, right: false },
+            ],
+            rows,
+            empty: "no other guests running",
+        })],
+    }
+}
+
+// --------------------------------------------------------------- weather
+
+/// Holds the right-hand column for a forecast that is not built yet.
+pub fn weather_placeholder(look: &Look) -> Card {
+    Card {
+        title: "Weather".into(),
+        right: String::new(),
+        stale: false,
+        error: None,
+        body: vec![Part::Text(Line::styled("Kept free for a forecast.", style(look.p.muted)))],
     }
 }
 

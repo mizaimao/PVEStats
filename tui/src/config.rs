@@ -37,6 +37,9 @@ pub struct Config {
     /// Seconds between themes in a tour of all of them, for picking one;
     /// 0 keeps to `theme`. config.yaml, `tui: theme_tour`.
     pub tour: f64,
+    /// Minutes past midnight between which the display is switched off,
+    /// against burn-in: config.yaml, `tui: screen_off: "03:00-05:00"`.
+    pub screen_off: Option<(u32, u32)>,
 }
 
 impl Config {
@@ -91,6 +94,11 @@ impl Config {
             hosts: hosts(&raw),
             theme,
             window,
+            screen_off: raw
+                .get("tui")
+                .and_then(|t| t.get("screen_off"))
+                .and_then(|v| v.as_str())
+                .and_then(hours),
             tour: raw
                 .get("tui")
                 .and_then(|t| t.get("theme_tour"))
@@ -187,6 +195,17 @@ fn read_env(path: &Path) -> HashMap<String, String> {
 /// The repo root: where config.yaml and .env live. `--root` wins; then
 /// PVESTATS_ROOT; then the nearest folder above the binary that holds a
 /// config.yaml (the binary sits in tui/target/release); then the current one.
+/// "03:00-05:00" as minutes past midnight, start and end.
+fn hours(text: &str) -> Option<(u32, u32)> {
+    let minutes = |t: &str| {
+        let (h, m) = t.trim().split_once(':')?;
+        let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+        (h < 24 && m < 60).then_some(h * 60 + m)
+    };
+    let (from, to) = text.split_once('-')?;
+    Some((minutes(from)?, minutes(to)?)).filter(|(a, b)| a != b)
+}
+
 pub fn find_root(flag: Option<PathBuf>) -> PathBuf {
     if let Some(root) = flag.or_else(|| std::env::var_os("PVESTATS_ROOT").map(PathBuf::from)) {
         return root;
@@ -238,5 +257,13 @@ mod tests {
         assert_eq!(hosts[&100].nic_labels["ens18"], "virtual (E610)");
         let empty: Yaml = serde_yaml::from_str("hosts:\n").unwrap();
         assert!(super::hosts(&empty).is_empty());
+    }
+
+    #[test]
+    fn hour_windows() {
+        assert_eq!(hours("03:00-05:00"), Some((180, 300)));
+        assert_eq!(hours("23:30 - 01:00"), Some((1410, 60)));
+        assert_eq!(hours("3-5"), None);
+        assert_eq!(hours("03:00-03:00"), None);
     }
 }
