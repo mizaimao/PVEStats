@@ -29,3 +29,8 @@ ui.json
 
 # PNGs from tools/render_icon.py
 icons/
+
+# The terminal dashboard's build output and its cargo cache
+tui/target/
+tui/.cargo-home/
+tui/bin/

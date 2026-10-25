@@ -82,3 +82,9 @@ the spec. Where they disagree, the live response wins.
 
 PVE and the agent need only the standard library; TrueNAS needs aiohttp,
 which the uv environment has.
+
+## In a terminal
+
+`tui/` is the same dashboard as a terminal program in Rust, for an always-on
+screen such as a spare machine's text console. It reads the same `.env` and
+`config.yaml`. See [tui/README.md](tui/README.md).

@@ -1,0 +1,25 @@
+# The PVEStats dashboard on the first text console, in place of its login
+# prompt. Install steps are in tui/README.md.
+
+[Unit]
+Description=PVEStats dashboard on tty1
+Wants=network-online.target
+After=network-online.target systemd-user-sessions.service getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=frank
+ExecStartPre=+/usr/bin/dmesg --console-level emerg
+ExecStart=/home/frank/Projects/PVEStats/tui/bin/pvestats-tui
+Environment=TERM=linux
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
