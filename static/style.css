@@ -507,7 +507,14 @@ body {
 .src.is-stale .dot { background: var(--warning); }
 .src.is-down  .dot { background: var(--critical); }
 .src.is-waiting .dot { background: var(--baseline); }
-.src .age { color: var(--baseline); }
+/* Room for two digits and the unit, in digits of one width, so the strip
+   holds still as a countdown goes from 10s to 9s. */
+.src .age {
+  color: var(--baseline);
+  min-width: 3ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---------- cards ---------- */
 
