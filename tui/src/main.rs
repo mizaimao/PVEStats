@@ -180,8 +180,10 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
 
 fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io::Result<()> {
     let mut terminal = ratatui::init();
+    let mut power = Power { window: config.screen_off, off: None };
     let mut touring = Touring::new(config.tour);
     let result = (|| loop {
+        power.tick();
         let look = touring.look(base, screen);
         terminal.draw(|frame| {
             let area = frame.area();
@@ -238,5 +240,44 @@ impl Touring {
             self.current = Some((index, base.retheme(names[index])));
         }
         self.current.as_ref().map_or(base, |(_, look)| look)
+    }
+}
+
+/// Switches the display off for a daily window (`tui: screen_off` in
+/// config.yaml), against burn-in, through wlr-randr. Only inside a Wayland
+/// session such as the kiosk: anywhere else there is no display of its own
+/// to switch. Each change is applied once, and the first tick applies the
+/// state the clock calls for, so a restart inside the window still ends it.
+struct Power {
+    window: Option<(u32, u32)>,
+    off: Option<bool>,
+}
+
+impl Power {
+    fn tick(&mut self) {
+        let Some((from, to)) = self.window else { return };
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        let (h, m) = ui::local_hm();
+        let now = h * 60 + m;
+        let off = if from < to { now >= from && now < to } else { now >= from || now < to };
+        if self.off != Some(off) {
+            self.off = Some(off);
+            thread::spawn(move || switch_outputs(!off));
+        }
+    }
+}
+
+/// Every output wlr-randr lists, on or off. A missing wlr-randr leaves the
+/// display as it is.
+fn switch_outputs(on: bool) {
+    let Ok(list) = std::process::Command::new("wlr-randr").output() else { return };
+    let text = String::from_utf8_lossy(&list.stdout);
+    let outputs = text.lines().filter(|l| !l.starts_with(char::is_whitespace)).filter_map(|l| l.split_whitespace().next());
+    for output in outputs {
+        let _ = std::process::Command::new("wlr-randr")
+            .args(["--output", output, if on { "--on" } else { "--off" }])
+            .status();
     }
 }

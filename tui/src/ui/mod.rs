@@ -1,6 +1,7 @@
-//! The screen: a header of source dots, then the cards, laid out for the
-//! width there is. Three columns on a full 1920x1080 console (240 columns),
-//! two in a wide split, one (scrolled) in a narrow one.
+//! The screen: the cards, laid out for the width there is. Three columns on
+//! a full-screen terminal (150 columns or more), two in a wide split, one
+//! (scrolled) in a narrow one. The source dots are a small panel of their
+//! own at the top of the first column, so the others start at the top row.
 
 pub mod cards;
 pub mod draw;
@@ -16,15 +17,15 @@ use ratatui::text::{Line, Span};
 use crate::config::{Config, View};
 use crate::sources::{lock, Shared};
 use crate::state::{clock, Status};
-use cards::Slot;
-use draw::{share, Card, Pen};
+use cards::{Size, Slot};
+use draw::{share, Card, Part, Pen};
 use theme::Look;
 
 /// Widths at which the layout gains a column.
 const THREE_COLUMNS: u16 = 150;
 const TWO_COLUMNS: u16 = 96;
-/// Narrowest guest card; the grid fits as many across as allow this.
-const GUEST_WIDTH: u16 = 38;
+/// Most guest cards side by side.
+const GUESTS_ACROSS: u16 = 3;
 
 /// How long the standby screen waits for every source before showing the
 /// dashboard anyway, with the failures said on it.
@@ -66,7 +67,7 @@ impl Screen {
         let (sp, sa, sn) = (pve.status(), agent.status(), nas.status());
         let mut pen = Pen { buf, look };
         pen.fill_bg(area, look.p.plane);
-        let area = if self.orbit && area.width > 1 && area.height > 1 {
+        let body = if self.orbit && area.width > 1 && area.height > 1 {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs());
@@ -75,14 +76,9 @@ impl Screen {
         } else {
             area
         };
-        if area.height < 3 {
+        if body.height < 3 {
             return;
         }
-        let names: Vec<&str> = theme::names().collect();
-        let touring = self.tour.as_ref().map(|t| format!("theme {} · ", names[t.index % names.len()]));
-        let sources = [("pve", &sp), ("agent", &sa), ("truenas", &sn)];
-        header(&mut pen, Rect { height: 1, ..area }, &sources, touring.as_deref().unwrap_or(""));
-        let body = Rect { y: area.y + 1, height: area.height - 1, ..area };
 
         // Standby: held until there is something worth drawing. The first
         // PVE poll can be a full 10s away, so without it every start would
@@ -126,6 +122,9 @@ impl Screen {
             }
         }
 
+        let names: Vec<&str> = theme::names().collect();
+        let theme_now = self.tour.as_ref().map(|t| names[t.index % names.len()]);
+        let status = status_card(look, &[("pve", &sp), ("agent", &sa), ("truenas", &sn)], theme_now);
         let host_card = match pve.data.as_ref() {
             Some(d) => cards::host(look, &d.node, &pve, &sp),
             None => cards::pve_note(look, &sp),
@@ -134,8 +133,8 @@ impl Screen {
         let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &sp)).collect();
         let nas_cards: Vec<Card> =
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
-        let guests: Vec<&Slot> = of(View::Basic).collect();
-        let grid = Grid { slots: &guests, status: &sp, look, across: None };
+        let basic: Vec<&Slot> = of(View::Basic).collect();
+        let guests = Guests { slots: &basic, status: &sp, look };
         let tour = self.tour.as_ref().map(|t| cards::tour(look, &names, t.index % names.len(), t.next_in));
 
         if self.focus && !gpu_cards.is_empty() {
@@ -144,37 +143,40 @@ impl Screen {
         }
         let w = body.width;
         if w >= THREE_COLUMNS {
-            // The GPU card in the middle, host and NAS on its left, guests
-            // on its right.
+            // Status, host, NAS and the guests on the left, the GPU in the
+            // middle, and the right kept for a forecast.
             let left = (w - 2) / 3;
             let mid = (w - left - 2) / 2;
             let right = w - left - mid - 2;
-            let mut left_cards = vec![host_card];
+            let mut left_cards = vec![status, host_card];
             left_cards.extend(nas_cards);
-            column(&mut pen, Rect { width: left, ..body }, &left_cards, None, None);
+            column(&mut pen, Rect { width: left, ..body }, &left_cards, Some(&guests), None);
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None, None);
-            // Two guests a row, compact, to leave room below them.
-            let pairs = Grid { across: Some(2), ..grid };
-            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &[], Some(&pairs), tour.as_ref());
+            let mut right_cards = vec![cards::weather_placeholder(look)];
+            right_cards.extend(tour);
+            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, None, None);
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
-            let mut left_cards = vec![host_card];
+            let mut left_cards = vec![status, host_card];
             left_cards.extend(gpu_cards);
             column(&mut pen, Rect { width: left, ..body }, &left_cards, None, None);
-            column(&mut pen, Rect { x: body.x + left + 1, width: w - left - 1, ..body }, &nas_cards, Some(&grid), tour.as_ref());
+            let right = Rect { x: body.x + left + 1, width: w - left - 1, ..body };
+            column(&mut pen, right, &nas_cards, Some(&guests), tour.as_ref());
         } else {
-            let mut all = gpu_cards;
+            let mut all = vec![status];
+            all.extend(gpu_cards);
             all.push(host_card);
             all.extend(nas_cards);
-            self.scrolled(&mut pen, body, &all, &grid);
+            self.scrolled(&mut pen, body, &all, &guests);
         }
     }
 
     /// One column that may be taller than the screen: drawn whole off
     /// screen, then the rows from `scroll` down copied in.
-    fn scrolled(&mut self, pen: &mut Pen, area: Rect, cards: &[Card], grid: &Grid) {
+    fn scrolled(&mut self, pen: &mut Pen, area: Rect, cards: &[Card], guests: &Guests) {
         let w = area.width;
-        let mut height: u16 = cards.iter().map(|c| c.height(w)).sum::<u16>() + grid.height(w, false);
+        let dividers = cards.len() as u16;
+        let mut height: u16 = cards.iter().map(|c| c.height(w)).sum::<u16>() + dividers + guests.natural(w);
         // Charts get a readable size even when that means scrolling.
         height += cards.iter().map(|c| c.flex() * 4).sum::<u16>();
         let height = height.max(area.height);
@@ -183,7 +185,7 @@ impl Screen {
         let mut off = Buffer::empty(full);
         let mut off_pen = Pen { buf: &mut off, look: pen.look };
         off_pen.fill_bg(full, pen.look.p.plane);
-        column(&mut off_pen, full, cards, Some(grid), None);
+        column(&mut off_pen, full, cards, Some(guests), None);
         for row in 0..area.height {
             for x in area.left()..area.right() {
                 if let (Some(src), Some(dst)) = (off.cell((x, row + self.scroll)), pen.buf.cell_mut((x, area.y + row))) {
@@ -194,68 +196,78 @@ impl Screen {
     }
 }
 
-struct Grid<'a> {
+/// The guests other than the GPU and NAS ones, laid out to fill the area
+/// they are given: the fullest cards that fit them all, in as few columns
+/// as will do, down to a list of one line each; short even of that, as
+/// many lines as fit.
+struct Guests<'a> {
     slots: &'a [&'a Slot<'a>],
     status: &'a Status,
     look: &'a Look,
-    /// Cards across, or None for as many as fit at full size.
-    across: Option<u16>,
 }
 
-impl Grid<'_> {
-    fn columns(&self, width: u16) -> u16 {
-        let fit = self.across.unwrap_or((width + 1) / (GUEST_WIDTH + 1));
-        fit.clamp(1, self.slots.len().max(1) as u16)
+enum Plan {
+    Cards { size: Size, cols: u16, card_w: u16, card_h: u16 },
+    List,
+}
+
+impl Guests<'_> {
+    fn plan(&self, width: u16, height: u16) -> Plan {
+        let n = self.slots.len();
+        for (size, narrowest) in [(Size::Full, 38), (Size::Compact, 26), (Size::Tiny, 18)] {
+            let most = ((width + 1) / (narrowest + 1)).clamp(1, GUESTS_ACROSS).min(n.max(1) as u16);
+            for cols in 1..=most {
+                let card_w = (width + 1) / cols - 1;
+                if card_w < narrowest {
+                    continue;
+                }
+                let card_h = self
+                    .slots
+                    .iter()
+                    .map(|s| cards::basic(self.look, s, self.status, size).height(card_w))
+                    .max()
+                    .unwrap_or(0);
+                if n.div_ceil(cols as usize) as u16 * card_h <= height {
+                    return Plan::Cards { size, cols, card_w, card_h };
+                }
+            }
+        }
+        Plan::List
     }
 
-    fn card_width(&self, width: u16) -> u16 {
-        let cols = self.columns(width);
-        (width + 1) / cols - 1
-    }
-
-    /// A card too narrow for the full five lines is always compact.
-    fn compact(&self, width: u16, short: bool) -> bool {
-        short || self.card_width(width) < GUEST_WIDTH
-    }
-
-    fn height(&self, width: u16, short: bool) -> u16 {
+    /// Rows it takes with no limit on them: full cards.
+    fn natural(&self, width: u16) -> u16 {
         if self.slots.is_empty() {
             return 0;
         }
-        let rows = self.slots.len().div_ceil(self.columns(width) as usize) as u16;
-        rows * self.card_height(width, short)
+        match self.plan(width, u16::MAX) {
+            Plan::Cards { cols, card_h, .. } => self.slots.len().div_ceil(cols as usize) as u16 * card_h,
+            Plan::List => self.slots.len() as u16 + 3,
+        }
     }
 
-    fn card_height(&self, width: u16, short: bool) -> u16 {
-        let compact = self.compact(width, short);
-        self.slots
-            .iter()
-            .map(|s| cards::basic(self.look, s, self.status, compact).height(self.card_width(width)))
-            .max()
-            .unwrap_or(0)
-    }
-
-    fn render(&self, pen: &mut Pen, area: Rect, short: bool) {
-        if self.slots.is_empty() || area.height == 0 {
+    fn render(&self, pen: &mut Pen, area: Rect) {
+        if self.slots.is_empty() || area.height < 3 {
             return;
         }
-        let compact = self.compact(area.width, short);
-        let cols = self.columns(area.width) as usize;
-        let card_w = self.card_width(area.width);
-        let card_h = self.card_height(area.width, short).max(1);
-        let fit = (area.height / card_h) as usize * cols;
-        // Short of room, the last place says how many did not fit.
-        let shown = if self.slots.len() > fit { fit.saturating_sub(1) } else { self.slots.len() };
-        for (i, slot) in self.slots.iter().take(shown).enumerate() {
-            let (row, col) = ((i / cols) as u16, (i % cols) as u16);
-            let rect = Rect { x: area.x + col * (card_w + 1), y: area.y + row * card_h, width: card_w, height: card_h };
-            cards::basic(pen.look, slot, self.status, compact).render(pen, rect);
-        }
-        if shown < self.slots.len() && fit > 0 {
-            let (row, col) = ((shown / cols) as u16, (shown % cols) as u16);
-            let text = format!("+{} more guests", self.slots.len() - shown);
-            let style = Style::default().fg(pen.look.p.muted);
-            pen.text(area, area.x + col * (card_w + 1) + 2, area.y + row * card_h + card_h / 2, &text, style);
+        match self.plan(area.width, area.height) {
+            Plan::Cards { size, cols, card_w, card_h } => {
+                for (i, slot) in self.slots.iter().enumerate() {
+                    let (row, col) = (i as u16 / cols, i as u16 % cols);
+                    let rect = Rect { x: area.x + col * (card_w + 1), y: area.y + row * card_h, width: card_w, height: card_h };
+                    cards::basic(pen.look, slot, self.status, size).render(pen, rect);
+                }
+            }
+            Plan::List => {
+                // Border and header take three rows; the rest hold guests.
+                let fit = (area.height - 3) as usize;
+                let shown = &self.slots[..self.slots.len().min(fit)];
+                let mut card = cards::guest_list(pen.look, shown, self.status);
+                if shown.len() < self.slots.len() {
+                    card.right = format!("{} of {}", shown.len(), self.slots.len());
+                }
+                card.render(pen, Rect { height: (shown.len() as u16 + 3).min(area.height), ..area });
+            }
         }
     }
 }
@@ -281,59 +293,55 @@ fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
 }
 
 /// Cards stacked top to bottom with a blank row between each, then the
-/// guest grid, then `tail` in whatever rows are left. Spare rows go to the
-/// cards; short of rows, guests go compact, then some are left out.
-fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>, tail: Option<&Card>) {
+/// guests in the rows left, then `tail` under them if it fits.
+fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>, tail: Option<&Card>) {
     let w = area.width;
-    let dividers = (cards.len() + usize::from(grid.is_some())).saturating_sub(1) as u16;
-    let fixed: u16 = cards.iter().map(|c| c.height(w)).sum::<u16>() + dividers;
-    let (short, grid_h) = match grid {
-        None => (false, 0),
-        Some(g) => {
-            let full = g.height(w, false);
-            let small = g.height(w, true);
-            if fixed + full <= area.height {
-                (false, full)
-            } else if fixed + small <= area.height {
-                (true, small)
-            } else {
-                (true, area.height.saturating_sub(fixed))
-            }
-        }
-    };
+    let dividers = cards.len().saturating_sub(1) as u16;
+    let rows = card_rows(cards, w, area.height.saturating_sub(dividers));
     let mut y = area.y;
-    for (card, h) in cards.iter().zip(card_rows(cards, w, area.height.saturating_sub(grid_h + dividers))) {
+    for (card, h) in cards.iter().zip(rows) {
         card.render(pen, Rect { y, height: h, ..area });
         y += h + 1;
     }
-    if let Some(g) = grid {
-        let y = if cards.is_empty() { area.y } else { y };
-        g.render(pen, Rect { y, height: area.bottom().saturating_sub(y), ..area }, short);
-        let below = y + grid_h + 1;
-        if let Some(card) = tail.filter(|_| area.bottom() >= below + 3) {
-            card.render(pen, Rect { y: below, height: area.bottom() - below, ..area });
+    let Some(g) = guests else { return };
+    let top = if cards.is_empty() { area.y } else { y };
+    let room = Rect { y: top, height: area.bottom().saturating_sub(top), ..area };
+    g.render(pen, room);
+    if let Some(card) = tail {
+        let below = top + g.natural(w).min(room.height) + 1;
+        if area.bottom() >= below + card.height(w) {
+            card.render(pen, Rect { y: below, height: card.height(w), ..area });
         }
     }
 }
 
-fn header(pen: &mut Pen, area: Rect, sources: &[(&str, &Status)], note: &str) {
-    let p = pen.look.p;
-    let mut spans = vec![Span::styled(" PVEStats", Style::default().fg(p.ink).add_modifier(Modifier::BOLD))];
-    for (name, status) in sources {
-        let (color, age) = source_state(pen.look, status);
-        spans.push(Span::raw("   "));
+/// The dashboard's name and its sources, each a dot and an age, as a small
+/// panel. During a theme tour its corner names the theme.
+fn status_card(look: &Look, sources: &[(&str, &Status)], theme_now: Option<&str>) -> Card {
+    let p = look.p;
+    let mut spans = Vec::new();
+    for (i, (name, status)) in sources.iter().enumerate() {
+        let (color, age) = source_state(look, status);
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
         spans.push(Span::styled("● ", Style::default().fg(color)));
         spans.push(Span::styled(format!("{name} "), Style::default().fg(p.ink2)));
         spans.push(Span::styled(age, Style::default().fg(p.muted)));
     }
-    pen.line(area, area.x, area.y, &Line::from(spans));
-    let right = format!("{note}f focus · q quit   {} ", local_time());
-    let x = area.right().saturating_sub(right.chars().count() as u16);
-    pen.text(area, x, area.y, &right, Style::default().fg(p.muted));
+    let clock = local_time();
+    Card {
+        title: "PVEStats".into(),
+        right: theme_now.map_or(clock.clone(), |t| format!("theme {t} · {clock}")),
+        stale: false,
+        error: None,
+        body: vec![Part::Text(Line::from(spans))],
+    }
 }
 
 /// Dot colour, and the age beside it. A healthy source counts down to its
-/// next poll; a failing one says how long ago it last answered.
+/// next poll; a failing one says how long ago it last answered. The number
+/// keeps two columns, so "9s" and "10s" sit in the same place.
 fn source_state(look: &Look, s: &Status) -> (ratatui::style::Color, String) {
     let p = look.p;
     let color = if !s.ok {
@@ -345,8 +353,8 @@ fn source_state(look: &Look, s: &Status) -> (ratatui::style::Color, String) {
     };
     let age = match s.age {
         None => "never".to_string(),
-        Some(age) if s.ok && !s.stale => format!("{}s", (s.interval - age).ceil().max(0.0)),
-        Some(age) => format!("{}s ago", age.round()),
+        Some(age) if s.ok && !s.stale => format!("{:>2}s", (s.interval - age).ceil().max(0.0)),
+        Some(age) => format!("{:>2}s ago", age.round()),
     };
     (color, age)
 }
@@ -379,12 +387,18 @@ fn standby(pen: &mut Pen, area: Rect, sources: &[(&str, &Status)]) {
     }
 }
 
-fn local_time() -> String {
+/// Local hour and minute.
+pub fn local_hm() -> (u32, u32) {
     // SAFETY: time and localtime_r only write the values they are given.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe {
         let now = libc::time(std::ptr::null_mut());
         libc::localtime_r(&now, &mut tm);
     }
-    format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
+    (tm.tm_hour as u32, tm.tm_min as u32)
+}
+
+fn local_time() -> String {
+    let (h, m) = local_hm();
+    format!("{h:02}:{m:02}")
 }

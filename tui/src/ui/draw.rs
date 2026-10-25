@@ -822,8 +822,11 @@ impl Card {
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(border)
-            .title(Line::styled(format!(" {} ", self.title), title_style))
-            .title_top(Line::styled(format!(" {} ", self.right), Style::default().fg(p.muted)).right_aligned());
+            .title(Line::styled(format!(" {} ", self.title), title_style));
+        if !self.right.is_empty() {
+            let right = Line::styled(format!(" {} ", self.right), Style::default().fg(p.muted));
+            block = block.title_top(right.right_aligned());
+        }
         if self.stale {
             let (text, color) = match &self.error {
                 Some(e) => (e.clone(), p.critical),

@@ -13,14 +13,19 @@ CPU, and sends about 1.5 KB/s to the terminal.
 
 The layout follows the terminal's width:
 
-- 150 columns or more: host and NAS | GPU | guests.
-- 96 to 149: host and GPU | NAS and guests. Guests go compact when the rows
-  run short.
+- 150 columns or more: status, host, NAS and guests | GPU | a column kept
+  free for a weather forecast.
+- 96 to 149: status, host and GPU | NAS and guests.
 - Under 96: one column, GPU first, scrolled with the arrow keys or j/k.
 
-Charts take two thirds of the rows a card has to spare, and the space
-between the sections below them the rest. Keys: `f` shows the GPU card
-alone and back, `q` quits.
+The source dots and the clock are a small panel at the top of the first
+column, so the other columns start at the top row. Guests fill the rows
+left under the other cards: the fullest cards that fit them all (full,
+compact, then tiny, up to three across), else one line each.
+
+Charts grow into spare rows up to a set height; a card without a chart
+keeps to its own height. Keys: `f` shows the GPU card alone and back, `q`
+quits.
 
 In a terminal that can (anything but the Linux text console) it draws
 graphs in braille dots shaded from foot to top, meters as rows of small
@@ -33,7 +38,9 @@ override.
 
 A `name` in config.yaml titles a card in place of the VM's name in Proxmox.
 `tui: theme_tour: <seconds>` in config.yaml tours all twelve themes, naming
-each on screen, for picking one. `--orbit` steps the screen one cell around a
+each on screen, for picking one. `tui: screen_off: "03:00-05:00"` switches the
+display off for those hours every day, through `wlr-randr`, when it runs in
+the kiosk (any Wayland session). `--orbit` steps the screen one cell around a
 small square every four minutes, against burn-in; it is off by default.
 
 ## Build
