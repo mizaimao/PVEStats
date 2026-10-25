@@ -563,3 +563,32 @@ pub fn basic(look: &Look, slot: &Slot, status: &Status, compact: bool) -> Card {
         body,
     }
 }
+
+// ----------------------------------------------------------- theme tour
+
+/// While touring the themes: the one on now, among all of them, so the one
+/// liked best can be named.
+pub fn tour(look: &Look, names: &[&str], index: usize, next_in: u64) -> Card {
+    let p = look.p;
+    let mut body = vec![
+        Part::Text(Line::styled(names[index].to_string(), bold(p.s1))),
+        Part::Text(Line::styled(format!("next in {next_in}s"), style(p.muted))),
+        // A blank line that stays one line: a gap would take the spare rows
+        // and push the list to the bottom.
+        Part::Text(Line::raw("")),
+    ];
+    for (i, name) in names.iter().enumerate() {
+        body.push(Part::Text(if i == index {
+            Line::from(vec![Span::styled("▶ ", style(p.s1)), Span::styled(name.to_string(), bold(p.ink))])
+        } else {
+            Line::styled(format!("  {name}"), style(p.muted))
+        }));
+    }
+    Card {
+        title: "Theme tour".into(),
+        right: format!("{} / {}", index + 1, names.len()),
+        stale: false,
+        error: None,
+        body,
+    }
+}

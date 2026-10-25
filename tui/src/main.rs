@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::process::exit;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -24,7 +24,7 @@ use ratatui::Terminal;
 use config::Config;
 use sources::{agent::Agent, lock, pve::Pve, run_poller, truenas::TrueNas, Shared};
 use ui::theme::{Colors, Look};
-use ui::Screen;
+use ui::{Screen, Tour};
 
 const USAGE: &str = "\
 usage: pvestats-tui [options]
@@ -123,6 +123,8 @@ fn main() {
     if let Some((w, h)) = args.snapshot {
         thread::sleep(Duration::from_secs_f64(args.after.max(0.0)));
         let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("a test backend never fails");
+        let mut touring = Touring::new(config.tour);
+        let look = touring.look(&look, &mut screen);
         let drawn = terminal.draw(|frame| {
             let area = frame.area();
             screen.draw(frame.buffer_mut(), area, &shared, &config, &look);
@@ -176,9 +178,11 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
     }
 }
 
-fn run(screen: &mut Screen, shared: &Shared, config: &Config, look: &Look) -> io::Result<()> {
+fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io::Result<()> {
     let mut terminal = ratatui::init();
+    let mut touring = Touring::new(config.tour);
     let result = (|| loop {
+        let look = touring.look(base, screen);
         terminal.draw(|frame| {
             let area = frame.area();
             screen.draw(frame.buffer_mut(), area, shared, config, look);
@@ -206,4 +210,33 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, look: &Look) -> io
     })();
     ratatui::restore();
     result
+}
+
+/// While `tui: theme_tour` is set in config.yaml, every theme in turn, so
+/// the one liked best can be picked off the screen itself.
+struct Touring {
+    every: f64,
+    started: Instant,
+    current: Option<(usize, Look)>,
+}
+
+impl Touring {
+    fn new(every: f64) -> Self {
+        Touring { every, started: Instant::now(), current: None }
+    }
+
+    /// The look to draw with now, and the tour's place on the screen.
+    fn look<'a>(&'a mut self, base: &'a Look, screen: &mut Screen) -> &'a Look {
+        if self.every <= 0.0 {
+            return base;
+        }
+        let names: Vec<&str> = ui::theme::names().collect();
+        let elapsed = self.started.elapsed().as_secs_f64();
+        let index = (elapsed / self.every) as usize % names.len();
+        screen.tour = Some(Tour { index, next_in: (self.every - elapsed % self.every).ceil() as u64 });
+        if self.current.as_ref().map(|(i, _)| *i) != Some(index) {
+            self.current = Some((index, base.retheme(names[index])));
+        }
+        self.current.as_ref().map_or(base, |(_, look)| look)
+    }
 }

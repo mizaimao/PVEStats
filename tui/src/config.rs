@@ -34,6 +34,9 @@ pub struct Config {
     pub theme: String,
     /// Seconds of history kept per source, and so the span of every chart.
     pub window: f64,
+    /// Seconds between themes in a tour of all of them, for picking one;
+    /// 0 keeps to `theme`. config.yaml, `tui: theme_tour`.
+    pub tour: f64,
 }
 
 impl Config {
@@ -88,6 +91,12 @@ impl Config {
             hosts: hosts(&raw),
             theme,
             window,
+            tour: raw
+                .get("tui")
+                .and_then(|t| t.get("theme_tour"))
+                .and_then(|v| v.as_f64())
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(0.0),
         })
     }
 

@@ -35,3 +35,10 @@ hosts:
     # hardware backs a virtual NIC.
     nic_labels:
       ens18: virtual (E610)
+
+# The terminal dashboard (tui/) only.
+tui:
+  # Seconds between themes in a tour of all twelve, each named on screen, for
+  # picking one to set as `ui: theme` above. Remove the line, or set 0, to
+  # keep to that theme.
+  theme_tour: 5
