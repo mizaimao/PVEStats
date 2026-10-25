@@ -124,9 +124,13 @@ fn main() {
         });
         drawn.expect("a test backend never fails");
         let buffer = terminal.backend().buffer();
+        let mut out = io::stdout().lock();
         for y in 0..h {
             let line: String = (0..w).map(|x| buffer[(x, y)].symbol()).collect();
-            println!("{}", line.trim_end());
+            // A reader that stops early (`| head`) is not an error.
+            if writeln!(out, "{}", line.trim_end()).is_err() {
+                break;
+            }
         }
         return;
     }
