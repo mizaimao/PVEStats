@@ -32,6 +32,9 @@ and turns off console blanking. `--console`, `--unicode` and `--colors`
 override.
 
 A `name` in config.yaml titles a card in place of the VM's name in Proxmox.
+`tui: theme_tour: <seconds>` in config.yaml tours all twelve themes, naming
+each on screen, for picking one. `--orbit` steps the screen one cell around a
+small square every four minutes, against burn-in; it is off by default.
 
 ## Build
 

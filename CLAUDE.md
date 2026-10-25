@@ -15,6 +15,7 @@ Frank's rules for this project are in his knowledgebase
 
 - Always commit. Commit each change once it is done and tested, without
   asking first (Frank, 2026-10-14).
+- Push to origin after each commit, without asking (Frank, 2026-10-25).
 
 ## Terminal dashboard (tui/)
 

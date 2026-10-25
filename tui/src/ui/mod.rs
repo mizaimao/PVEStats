@@ -56,7 +56,7 @@ pub struct Screen {
 
 impl Screen {
     pub fn new() -> Self {
-        Screen { focus: false, scroll: 0, orbit: true, tour: None, started: clock(), standby_done: false }
+        Screen { focus: false, scroll: 0, orbit: false, tour: None, started: clock(), standby_done: false }
     }
 
     pub fn draw(&mut self, buf: &mut Buffer, area: Rect, shared: &Shared, config: &Config, look: &Look) {
@@ -260,10 +260,9 @@ impl Grid<'_> {
     }
 }
 
-/// Rows for each card in a column. Cards with charts get two thirds of the
-/// spare rows, as far as their charts can grow, and cards without charts the
-/// rest, to space out their sections; failing those, the charted cards that
-/// can space out theirs take it.
+/// Rows for each card in a column. Spare rows go only to cards with charts,
+/// as far as each can use them; cards without keep to their own height, so
+/// what is left stays free at the foot of the column.
 fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
     let heights: Vec<u16> = cards.iter().map(|c| c.height(width)).collect();
     let flexes: Vec<u16> = cards.iter().map(Card::flex).collect();
@@ -271,24 +270,13 @@ fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
     if need >= total {
         return share(&heights, &flexes, total);
     }
-    let mut out = heights.clone();
-    let mut spare = total - need;
-    let open: Vec<usize> = (0..cards.len()).filter(|&i| flexes[i] == 0 && cards[i].max_extra().is_none()).collect();
-    let charted: Vec<usize> = (0..cards.len()).filter(|&i| flexes[i] > 0).collect();
-    let for_charts = if open.is_empty() { spare } else { (spare * 2).div_ceil(3) };
-    let weight = charted.iter().map(|&i| flexes[i]).sum::<u16>().max(1);
-    for &i in &charted {
-        let cap = cards[i].max_extra().unwrap_or(u16::MAX);
-        let give = (for_charts * flexes[i] / weight).min(cap).min(spare);
-        out[i] += give;
-        spare -= give;
+    let mut out = heights;
+    let spare = total - need;
+    let weight = flexes.iter().sum::<u16>().max(1);
+    for (i, card) in cards.iter().enumerate() {
+        let cap = card.max_extra().unwrap_or(u16::MAX);
+        out[i] += (spare * flexes[i] / weight).min(cap);
     }
-    let takers = if open.is_empty() {
-        charted.into_iter().filter(|&i| cards[i].max_extra().is_none()).collect()
-    } else {
-        open
-    };
-    draw::spread(&mut out, &takers, spare);
     out
 }
 
