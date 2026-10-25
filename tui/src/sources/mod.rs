@@ -1,0 +1,210 @@
+//! One independent poller per data source, each on its own thread and
+//! interval. A source that fails sets its own error; the rest of the screen
+//! keeps working (spec §2). Every outbound call has a timeout (spec §7).
+//!
+//! Field handling follows the app's collector (pvestats/sources), which was
+//! written against captured responses.
+
+pub mod agent;
+pub mod pve;
+pub mod truenas;
+
+use std::collections::BTreeMap;
+use std::sync::{Mutex, MutexGuard};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crate::state::Source;
+
+/// Intervals are properties of the sources, not preferences. PVE's 10s is
+/// pvestatd's own recompute cycle (§3.1); the agent's NVML reads take
+/// microseconds, so 1s is genuinely real time.
+pub const PVE_INTERVAL: f64 = 10.0;
+pub const AGENT_INTERVAL: f64 = 1.0;
+pub const TRUENAS_INTERVAL: f64 = 5.0;
+
+pub const PVE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const AGENT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const TRUENAS_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub struct Shared {
+    pub pve: Mutex<Source<PveData>>,
+    pub agent: Mutex<Source<AgentData>>,
+    pub nas: Mutex<Source<NasData>>,
+}
+
+impl Shared {
+    pub fn new(window: f64) -> Self {
+        Shared {
+            pve: Mutex::new(Source::new(PVE_INTERVAL, window)),
+            agent: Mutex::new(Source::new(AGENT_INTERVAL, window)),
+            nas: Mutex::new(Source::new(TRUENAS_INTERVAL, window)),
+        }
+    }
+}
+
+/// A poisoned lock still holds good data: a panic in one poll must not take
+/// the screen down with it.
+pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Call `poll` forever on a fixed interval, absorbing every failure.
+pub fn run_poller<T>(
+    source: &Mutex<Source<T>>,
+    interval: f64,
+    mut poll: impl FnMut() -> Result<(), String>,
+) -> ! {
+    loop {
+        let started = Instant::now();
+        // Before new samples land, account for any that were missed: a stall
+        // should read as a gap, not as compressed time.
+        lock(source).note_poll();
+        if let Err(error) = poll() {
+            lock(source).fail(error);
+        }
+        // One slot per series per poll, so a failed poll is drawn as a gap.
+        lock(source).end_poll();
+        // Drift-free: subtract however long the poll actually took.
+        let spent = started.elapsed().as_secs_f64();
+        thread::sleep(Duration::from_secs_f64((interval - spent).max(0.0)));
+    }
+}
+
+// ---------------------------------------------------------------- PVE data
+
+#[derive(Clone, Debug, Default)]
+pub struct PveData {
+    pub node: Node,
+    pub guests: BTreeMap<u64, Guest>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Node {
+    pub name: String,
+    pub cpu_pct: Option<f64>,
+    pub mem: Option<f64>,
+    pub maxmem: Option<f64>,
+    pub loadavg: Vec<f64>,
+    pub uptime: Option<f64>,
+    pub pveversion: Option<String>,
+    pub cores: Option<u64>,
+    pub cpus: Option<u64>,
+    pub guests_running: usize,
+    pub guests_total: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct Fs {
+    pub used: Option<f64>,
+    pub total: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Guest {
+    pub name: Option<String>,
+    pub uptime: Option<f64>,
+    pub cpu_pct: Option<f64>,
+    pub mem: Option<f64>,
+    pub maxmem: Option<f64>,
+    pub addresses: Vec<String>,
+    /// None when the guest agent gave no usage.
+    pub filesystem: Option<Fs>,
+    /// Whether the host can actually see this guest's disk traffic.
+    pub disk_io_visible: bool,
+    /// Cumulative counters as bytes/sec; None until the second snapshot.
+    pub net_in_bps: Option<f64>,
+    pub net_out_bps: Option<f64>,
+    pub disk_read_bps: Option<f64>,
+    pub disk_write_bps: Option<f64>,
+}
+
+// -------------------------------------------------------------- agent data
+
+#[derive(Clone, Debug, Default)]
+pub struct AgentData {
+    /// None while NVML is failing on ml60; the models still come through.
+    pub gpu: Option<Gpu>,
+    pub models: Vec<Model>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Gpu {
+    pub util: Option<f64>,
+    pub vram_used: Option<f64>,
+    pub vram_total: Option<f64>,
+    pub temp: Option<f64>,
+    pub power: Option<f64>,
+    pub power_limit: Option<f64>,
+    pub clock_sm: Option<f64>,
+    pub fan: Option<f64>,
+    pub pcie: Pcie,
+    pub procs: Vec<Proc>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Pcie {
+    pub gen: Option<u64>,
+    pub width: Option<u64>,
+    pub max_gen: Option<u64>,
+    pub tx_kbps: Option<f64>,
+    pub rx_kbps: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Proc {
+    pub pid: Option<u64>,
+    pub name: String,
+    pub vram: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Model {
+    pub name: String,
+    pub size_vram: Option<f64>,
+    /// Where it runs, as `ollama ps` says it: "100% GPU", "36%/64% CPU/GPU".
+    pub processor: Option<String>,
+    pub offloaded: bool,
+    /// Seconds until Ollama unloads it, measured when it was polled.
+    pub unload_in: Option<i64>,
+}
+
+// ------------------------------------------------------------ TrueNAS data
+
+#[derive(Clone, Debug, Default)]
+pub struct NasData {
+    /// In the order netdata lists them.
+    pub interfaces: Vec<(String, Nic)>,
+    /// By device name, so sdb..sdf read in the order they are labelled.
+    pub disks: Vec<(String, Disk)>,
+    pub pools: Vec<Pool>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Nic {
+    pub rx_bps: f64,
+    pub tx_bps: f64,
+    /// "virtual", "physical" or "unknown"; None before discovery saw it.
+    pub role: Option<String>,
+    pub media: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Disk {
+    pub read_bps: f64,
+    pub write_bps: f64,
+    pub size: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Pool {
+    pub name: String,
+    pub status: Option<String>,
+    pub healthy: bool,
+    pub size: Option<f64>,
+    pub allocated: Option<f64>,
+    /// From the root dataset: what the pool holds and can hold. None when
+    /// TrueNAS did not say, and the card falls back to raw zpool figures.
+    pub used_bytes: Option<f64>,
+    pub usable: Option<f64>,
+}
