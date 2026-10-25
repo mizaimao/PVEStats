@@ -74,8 +74,10 @@ pub enum Part {
     Text(Line<'static>),
     Meter(Meter),
     Chart(Chart),
-    /// Block digits, five rows tall.
-    Big(String, Style),
+    /// A label, a short graph and the latest value, btop's per-core style.
+    Spark(Spark),
+    /// A value in digits five rows tall, then its unit in plain text.
+    Big(String, String, Style),
     /// A muted label over its value.
     Tile(String, Line<'static>),
     /// Short lines set side by side, wrapped onto as many rows as needed.
@@ -99,6 +101,7 @@ impl Part {
         match self {
             Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
             Part::Chart(c) => c.min_rows,
+            Part::Spark(s) => s.rows,
             Part::Big(..) => 5,
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
@@ -139,7 +142,8 @@ impl Part {
             }
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
-            Part::Big(text, style) => big(pen, area, text, *style),
+            Part::Spark(s) => s.render(pen, area),
+            Part::Big(value, unit, style) => big(pen, area, value, unit, *style),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
                 pen.line(area, area.x, area.y + 1, value);
@@ -221,11 +225,43 @@ pub fn share(heights: &[u16], flexes: &[u16], total: u16) -> Vec<u16> {
     out
 }
 
-fn stack(pen: &mut Pen, area: Rect, parts: &[Part]) {
-    let heights: Vec<u16> = parts.iter().map(|p| p.height(area.width)).collect();
+/// Rows for each part. Charts take two thirds of any spare rows and the
+/// gaps below the first chart the other third, so a chart does not crowd
+/// what follows it. With no gap below a chart it takes all of them; with no
+/// chart, the gaps do.
+fn layout_rows(parts: &[Part], width: u16, total: u16) -> Vec<u16> {
+    let heights: Vec<u16> = parts.iter().map(|p| p.height(width)).collect();
     let flexes: Vec<u16> = parts.iter().map(Part::flex).collect();
+    let need: u16 = heights.iter().sum();
+    if need >= total {
+        return share(&heights, &flexes, total);
+    }
+    let spare = total - need;
+    let first = flexes.iter().position(|f| *f > 0);
+    let gaps: Vec<usize> = (first.map_or(0, |f| f + 1)..parts.len())
+        .filter(|&i| matches!(parts[i], Part::Gap))
+        .collect();
+    let to_charts = match (first, gaps.is_empty()) {
+        (None, _) => 0,
+        (Some(_), true) => spare,
+        (Some(_), false) => (spare * 2).div_ceil(3),
+    };
+    let mut out = share(&heights, &flexes, need + to_charts);
+    spread(&mut out, &gaps, spare - to_charts);
+    out
+}
+
+/// Adds `rows` to the entries at `at`, as evenly as they divide.
+pub fn spread(heights: &mut [u16], at: &[usize], rows: u16) {
+    let n = at.len() as u16;
+    for (k, &i) in at.iter().enumerate() {
+        heights[i] += rows / n + u16::from((k as u16) < rows % n);
+    }
+}
+
+fn stack(pen: &mut Pen, area: Rect, parts: &[Part]) {
     let mut y = area.y;
-    for (part, h) in parts.iter().zip(share(&heights, &flexes, area.height)) {
+    for (part, h) in parts.iter().zip(layout_rows(parts, area.width, area.height)) {
         part.render(pen, Rect { y, height: h, ..area });
         y += h;
     }
@@ -282,42 +318,39 @@ impl Meter {
     }
 }
 
-/// A horizontal bar as a line of `width` cells.
+/// A horizontal bar as a line of `width` cells: a row of small squares,
+/// btop style, lit up to the ratio. Full blocks on a shaded track on the
+/// console, whose font has no small square worth the name.
 pub fn bar(look: &Look, ratio: Option<f64>, width: u16, color: Color) -> Line<'static> {
-    let cells = ratio.unwrap_or(0.0).clamp(0.0, 1.0) * width as f64;
-    let full = cells.floor() as u16;
-    let mut spans = vec![Span::styled("█".repeat(full as usize), Style::default().fg(color))];
-    let mut drawn = full;
-    let partial = look.widening();
-    if full < width && !partial.is_empty() {
-        let step = ((cells - full as f64) * (partial.len() + 1) as f64).floor() as usize;
-        if step > 0 {
-            spans.push(Span::styled(partial[step - 1], Style::default().fg(color)));
-            drawn += 1;
-        }
-    }
-    spans.push(Span::styled(
-        "░".repeat(width.saturating_sub(drawn) as usize),
-        Style::default().fg(look.p.grid),
-    ));
-    Line::from(spans)
+    let lit = (ratio.unwrap_or(0.0).clamp(0.0, 1.0) * width as f64).round() as usize;
+    let rest = (width as usize).saturating_sub(lit);
+    let (on, off) = if look.console_glyphs { ("█", "░") } else { ("■", "■") };
+    Line::from(vec![
+        Span::styled(on.repeat(lit), Style::default().fg(color)),
+        Span::styled(off.repeat(rest), Style::default().fg(look.p.grid)),
+    ])
 }
 
 // ----------------------------------------------------------------- charts
 
 pub struct Trace {
     pub data: Vec<Option<f64>>,
-    pub color: Color,
+    /// Series 1 (0) or 2 (1), for its colour.
+    pub series: usize,
     pub label: String,
 }
 
 impl Trace {
-    pub fn from(series: Option<&Series>, color: Color, label: &str) -> Trace {
+    pub fn from(data: Option<&Series>, series: usize, label: &str) -> Trace {
         Trace {
-            data: series.map(|s| s.iter().copied().collect()).unwrap_or_default(),
-            color,
+            data: data.map(|s| s.iter().copied().collect()).unwrap_or_default(),
+            series,
             label: label.to_string(),
         }
+    }
+
+    fn peak(&self) -> f64 {
+        self.data.iter().flatten().fold(0.0f64, |a, &b| a.max(b))
     }
 }
 
@@ -342,18 +375,10 @@ impl Chart {
     fn render(&self, pen: &mut Pen, area: Rect) {
         let p = pen.look.p;
         let rows = area.height.saturating_sub(1);
-        let capacity = self.capacity.max(1);
-        let (top, label_w) = {
-            let observed = self
-                .traces
-                .iter()
-                .flat_map(|t| t.data.iter().flatten())
-                .fold(0.0f64, |a, &b| a.max(b));
-            let top = self.top.unwrap_or_else(|| nice(observed.max(self.floor)));
-            let w = (self.axis)(top).chars().count().max((self.axis)(0.0).chars().count()) as u16;
-            (top, w)
-        };
-        let plot = Rect {
+        let peak = self.traces.iter().map(Trace::peak).fold(0.0, f64::max);
+        let top = self.top.unwrap_or_else(|| nice(peak.max(self.floor)));
+        let label_w = (self.axis)(top).chars().count().max((self.axis)(0.0).chars().count()) as u16;
+        let plot_area = Rect {
             x: area.x + label_w + 1,
             y: area.y,
             width: area.width.saturating_sub(label_w + 1),
@@ -362,69 +387,47 @@ impl Chart {
         let muted = Style::default().fg(p.muted);
         let grid = Style::default().fg(p.grid);
 
-        if rows > 0 {
-            // Axis: labels at the top and bottom, and on the row holding the
-            // halfway mark when the chart is tall enough to spare one.
-            let mid = (rows >= 6).then(|| rows - 1 - rows / 2);
-            for r in 0..rows {
-                let y = area.y + r;
-                let label = if r == 0 {
-                    Some((self.axis)(top))
-                } else if r == rows - 1 {
-                    Some((self.axis)(0.0))
-                } else if Some(r) == mid {
-                    Some((self.axis)(top / 2.0))
-                } else {
-                    None
-                };
-                let tick = if label.is_some() { "┤" } else { "│" };
-                if let Some(label) = label {
-                    pen.text(area, area.x, y, &crate::format::right(&label, label_w as usize), muted);
-                    if r != 0 && r != rows - 1 {
-                        for x in plot.left()..plot.right() {
-                            pen.cell(area, x, y, "·", grid);
-                        }
+        // Axis: labels at the top and bottom, and on the row holding the
+        // halfway mark when the chart is tall enough to spare one.
+        let mid = (rows >= 6).then(|| rows - 1 - rows / 2);
+        for r in 0..rows {
+            let y = area.y + r;
+            let label = if r == 0 {
+                Some((self.axis)(top))
+            } else if r == rows - 1 {
+                Some((self.axis)(0.0))
+            } else if Some(r) == mid {
+                Some((self.axis)(top / 2.0))
+            } else {
+                None
+            };
+            if let Some(label) = &label {
+                pen.text(area, area.x, y, &crate::format::right(label, label_w as usize), muted);
+                if r != 0 && r != rows - 1 {
+                    for x in plot_area.left()..plot_area.right() {
+                        pen.cell(area, x, y, "·", grid);
                     }
-                }
-                pen.cell(area, area.x + label_w, y, tick, grid);
-            }
-
-            for c in 0..plot.width {
-                let x = plot.x + c;
-                let column = |t: &Trace| column_value(&t.data, capacity, c, plot.width);
-                let mut filled = 0.0;
-                if let Some(first) = self.traces.first() {
-                    if let Some(v) = column(first) {
-                        filled = v / top * rows as f64;
-                        area_column(pen, plot, x, filled, first.color);
-                    }
-                }
-                for trace in self.traces.iter().skip(1) {
-                    let Some(v) = column(trace) else { continue };
-                    let level = ((v / top * rows as f64).floor() as u16).min(rows - 1);
-                    let y = plot.bottom() - 1 - level;
-                    let mut style = Style::default().fg(trace.color);
-                    if (level as f64) < filled.floor() {
-                        style = style.bg(p.s1_under);
-                    }
-                    pen.cell(plot, x, y, "─", style);
                 }
             }
+            pen.cell(area, area.x + label_w, y, if label.is_some() { "┤" } else { "│" }, grid);
         }
+        plot(pen, plot_area, &self.traces, self.capacity, top);
 
         // Bottom row: the span on the left, the legend, "now" on the right.
         let y = area.bottom() - 1;
         let span = span(self.capacity as f64 * self.seconds_per_sample);
         let now_x = area.right().saturating_sub(3);
         let left = Rect { width: now_x.saturating_sub(area.x + 1), ..area };
-        let x = pen.text(left, plot.x, y, &span, muted);
+        let x = pen.text(left, plot_area.x, y, &span, muted);
         let mut legend = vec![Span::raw("  "), Span::styled(self.caption.clone(), Style::default().fg(p.ink2))];
+        let area_swatch = if pen.look.console_glyphs { "█" } else { "⣿" };
         for (i, trace) in self.traces.iter().enumerate() {
             if trace.label.is_empty() {
                 continue;
             }
             legend.push(Span::raw("  "));
-            legend.push(Span::styled(if i == 0 { "█" } else { "─" }, Style::default().fg(trace.color)));
+            let swatch = if i == 0 { area_swatch } else { "─" };
+            legend.push(Span::styled(swatch, Style::default().fg(pen.look.flat(trace.series))));
             legend.push(Span::styled(format!(" {}", trace.label), muted));
         }
         pen.line(left, x, y, &Line::from(legend));
@@ -432,10 +435,138 @@ impl Chart {
     }
 }
 
+/// btop's per-core row: a label, a short graph of the recent past scaled to
+/// its own peak, and the latest value. With two rows or more, the peak is
+/// printed under the value, so the graph's height can be read.
+pub struct Spark {
+    pub label: Line<'static>,
+    pub label_w: u16,
+    pub trace: Trace,
+    pub capacity: usize,
+    pub floor: f64,
+    pub value: String,
+    /// Formats the peak for the second row.
+    pub peak: fn(f64) -> String,
+    pub value_w: u16,
+    pub rows: u16,
+}
+
+impl Spark {
+    fn render(&self, pen: &mut Pen, area: Rect) {
+        let p = pen.look.p;
+        pen.line(area, area.x, area.y, &self.label);
+        let value_x = area.right().saturating_sub(self.value_w);
+        let value = crate::format::right(&self.value, self.value_w as usize);
+        pen.text(area, value_x, area.y, &value, Style::default().fg(p.ink).add_modifier(Modifier::BOLD));
+        let peak = self.trace.peak();
+        if area.height > 1 {
+            let text = format!("peak {}", (self.peak)(peak));
+            let text = crate::format::right(&text, self.value_w as usize);
+            pen.text(area, value_x, area.y + 1, &text, Style::default().fg(p.muted));
+        }
+        let graph = Rect {
+            x: area.x + self.label_w,
+            width: area.width.saturating_sub(self.label_w + self.value_w + 1),
+            ..area
+        };
+        plot(pen, graph, std::slice::from_ref(&self.trace), self.capacity, nice(peak.max(self.floor)));
+    }
+}
+
+/// Draws traces into `area`: the first as a filled area, the rest as lines
+/// over it. Braille dots, two samples across and four levels up per cell,
+/// shaded from the foot up; on the console, whole cells and shades.
+fn plot(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64) {
+    let area = area.intersection(pen.buf.area);
+    if area.width == 0 || area.height == 0 || top <= 0.0 {
+        return;
+    }
+    if pen.look.console_glyphs {
+        plot_cells(pen, area, traces, capacity, top);
+    } else {
+        plot_braille(pen, area, traces, capacity, top);
+    }
+}
+
+/// Braille dot bits, by side of the cell and by level from its foot.
+const DOTS: [[u8; 4]; 2] = [[0x40, 0x04, 0x02, 0x01], [0x80, 0x20, 0x10, 0x08]];
+
+fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64) {
+    let look = pen.look;
+    let (w, rows) = (area.width as usize, area.height as usize);
+    let (across, levels) = (w * 2, rows * 4);
+    // Per cell, counted from the bottom row: its dots, and the line series
+    // passing through it, if any.
+    let mut dots = vec![0u8; w * rows];
+    let mut line = vec![None; w * rows];
+    let set = |dots: &mut [u8], sub: usize, level: usize| {
+        dots[(level / 4) * w + sub / 2] |= DOTS[sub % 2][level % 4];
+    };
+    if let Some(first) = traces.first() {
+        for sub in 0..across {
+            let Some(v) = column_value(&first.data, capacity, sub, across) else { continue };
+            let mut height = (v / top * levels as f64).round() as usize;
+            // Any reading above zero shows, however small.
+            if v > 0.0 {
+                height = height.max(1);
+            }
+            for level in 0..height.min(levels) {
+                set(&mut dots, sub, level);
+            }
+        }
+    }
+    for trace in traces.iter().skip(1) {
+        for sub in 0..across {
+            let Some(v) = column_value(&trace.data, capacity, sub, across) else { continue };
+            let level = ((v / top * levels as f64).floor() as usize).min(levels - 1);
+            set(&mut dots, sub, level);
+            line[(level / 4) * w + sub / 2] = Some(trace.series);
+        }
+    }
+    let series = traces.first().map_or(0, |t| t.series);
+    for row in 0..rows {
+        let shade = look.ramp(series, row as f64 / (rows - 1).max(1) as f64);
+        for x in 0..w {
+            let bits = dots[row * w + x];
+            if bits == 0 {
+                continue;
+            }
+            let color = line[row * w + x].map_or(shade, |s| look.flat(s));
+            let symbol = char::from_u32(0x2800 + bits as u32).unwrap_or(' ').to_string();
+            pen.cell(area, area.x + x as u16, area.bottom() - 1 - row as u16, &symbol, Style::default().fg(color));
+        }
+    }
+}
+
+fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64) {
+    let look = pen.look;
+    let rows = area.height;
+    for c in 0..area.width {
+        let x = area.x + c;
+        let column = |t: &Trace| column_value(&t.data, capacity, c as usize, area.width as usize);
+        let mut filled = 0.0;
+        if let Some(first) = traces.first() {
+            if let Some(v) = column(first) {
+                filled = v / top * rows as f64;
+                area_column(pen, area, x, filled, look.flat(first.series));
+            }
+        }
+        for trace in traces.iter().skip(1) {
+            let Some(v) = column(trace) else { continue };
+            let level = ((v / top * rows as f64).floor() as u16).min(rows - 1);
+            let mut style = Style::default().fg(look.flat(trace.series));
+            if (level as f64) < filled.floor() {
+                style = style.bg(look.p.s1_under);
+            }
+            pen.cell(area, x, area.bottom() - 1 - level, "─", style);
+        }
+    }
+}
+
 /// The highest sample under column `c` of `width`, with the newest sample
 /// at the right edge and `capacity` samples across.
-fn column_value(data: &[Option<f64>], capacity: usize, c: u16, width: u16) -> Option<f64> {
-    let (c, width) = (c as usize, width.max(1) as usize);
+fn column_value(data: &[Option<f64>], capacity: usize, c: usize, width: usize) -> Option<f64> {
+    let (capacity, width) = (capacity.max(1), width.max(1));
     let lo = c * capacity / width;
     let hi = ((c + 1) * capacity / width).max(lo + 1);
     let offset = capacity.saturating_sub(data.len());
@@ -445,20 +576,19 @@ fn column_value(data: &[Option<f64>], capacity: usize, c: u16, width: u16) -> Op
 }
 
 fn area_column(pen: &mut Pen, plot: Rect, x: u16, height: f64, color: Color) {
+    const SHADES: [&str; 2] = ["░", "▒"];
     let style = Style::default().fg(color);
-    let rows = plot.height as f64;
-    let height = height.clamp(0.0, rows);
+    let height = height.clamp(0.0, plot.height as f64);
     let full = height.floor() as u16;
     for r in 0..full {
         pen.cell(plot, x, plot.bottom() - 1 - r, "█", style);
     }
     if full < plot.height {
-        let rising = pen.look.rising();
-        let step = ((height - full as f64) * (rising.len() + 1) as f64).floor() as usize;
+        let step = ((height - full as f64) * (SHADES.len() + 1) as f64).floor() as usize;
         // Any reading above zero shows, however small.
         let step = if step == 0 && full == 0 && height > 0.0 { 1 } else { step };
         if step > 0 {
-            pen.cell(plot, x, plot.bottom() - 1 - full, rising[step - 1], style);
+            pen.cell(plot, x, plot.bottom() - 1 - full, SHADES[step - 1], style);
         }
     }
 }
@@ -485,7 +615,24 @@ fn span(seconds: f64) -> String {
 
 // ------------------------------------------------------------ big digits
 
-const BIG: [(char, [&str; 5]); 12] = [
+/// Heavy box-drawing strokes, four columns by five rows.
+const STROKES: [(char, [&str; 5]); 11] = [
+    ('0', ["┏━━┓", "┃  ┃", "┃  ┃", "┃  ┃", "┗━━┛"]),
+    ('1', ["╺━┓ ", "  ┃ ", "  ┃ ", "  ┃ ", "╺━┻╸"]),
+    ('2', ["╺━━┓", "   ┃", "┏━━┛", "┃   ", "┗━━╸"]),
+    ('3', ["╺━━┓", "   ┃", " ━━┫", "   ┃", "╺━━┛"]),
+    ('4', ["╻  ╻", "┃  ┃", "┗━━┫", "   ┃", "   ╹"]),
+    ('5', ["┏━━╸", "┃   ", "┗━━┓", "   ┃", "╺━━┛"]),
+    ('6', ["┏━━╸", "┃   ", "┣━━┓", "┃  ┃", "┗━━┛"]),
+    ('7', ["╺━━┓", "   ┃", "   ┃", "   ┃", "   ╹"]),
+    ('8', ["┏━━┓", "┃  ┃", "┣━━┫", "┃  ┃", "┗━━┛"]),
+    ('9', ["┏━━┓", "┃  ┃", "┗━━┫", "   ┃", "╺━━┛"]),
+    ('–', ["    ", "    ", "╺━━╸", "    ", "    "]),
+];
+
+/// Block pixels for the console, whose font has few of those strokes:
+/// three by five, each pixel two cells wide.
+const BLOCKS: [(char, [&str; 5]); 11] = [
     ('0', ["###", "# #", "# #", "# #", "###"]),
     ('1', [" # ", "## ", " # ", " # ", "###"]),
     ('2', ["###", "  #", "###", "#  ", "###"]),
@@ -496,25 +643,40 @@ const BIG: [(char, [&str; 5]); 12] = [
     ('7', ["###", "  #", "  #", "  #", "  #"]),
     ('8', ["###", "# #", "###", "# #", "###"]),
     ('9', ["###", "# #", "###", "  #", "###"]),
-    ('%', ["# #", "  #", " # ", "#  ", "# #"]),
     ('–', ["   ", "   ", "###", "   ", "   "]),
 ];
 
-pub fn big_width(text: &str) -> u16 {
-    (text.chars().count() as u16 * 7).saturating_sub(1)
+fn glyph_width(look: &Look) -> u16 {
+    if look.console_glyphs {
+        7
+    } else {
+        5
+    }
 }
 
-fn big(pen: &mut Pen, area: Rect, text: &str, style: Style) {
+/// Columns taken by `digits` big digits and a short unit after them.
+pub fn big_width(look: &Look, digits: usize, unit: &str) -> u16 {
+    digits as u16 * glyph_width(look) + unit.chars().count() as u16
+}
+
+fn big(pen: &mut Pen, area: Rect, value: &str, unit: &str, style: Style) {
     let mut x = area.x;
-    for ch in text.chars() {
-        if let Some((_, rows)) = BIG.iter().find(|(c, _)| *c == ch) {
+    for ch in value.chars() {
+        let font = if pen.look.console_glyphs { &BLOCKS } else { &STROKES };
+        if let Some((_, rows)) = font.iter().find(|(c, _)| *c == ch) {
             for (r, row) in rows.iter().enumerate() {
-                let cells: String = row.chars().map(|c| if c == '#' { "██" } else { "  " }).collect();
+                let cells: String = if pen.look.console_glyphs {
+                    row.chars().map(|c| if c == '#' { "██" } else { "  " }).collect()
+                } else {
+                    row.to_string()
+                };
                 pen.text(area, x, area.y + r as u16, &cells, style);
             }
         }
-        x += 7;
+        x += glyph_width(pen.look);
     }
+    // The unit sits small on the baseline.
+    pen.text(area, x, area.y + 4, unit, style);
 }
 
 // ----------------------------------------------------------------- tables
@@ -603,6 +765,11 @@ impl Card {
         self.body.iter().map(Part::flex).sum()
     }
 
+    /// Whether spare rows can open up space between its sections.
+    pub fn has_gaps(&self) -> bool {
+        self.body.iter().any(|p| matches!(p, Part::Gap))
+    }
+
     pub fn render(&self, pen: &mut Pen, area: Rect) {
         let area = area.intersection(pen.buf.area);
         if area.height < 2 || area.width < 4 {
@@ -656,6 +823,24 @@ mod tests {
         assert_eq!(share(&[1, 4, 2], &[0, 1, 0], 10), vec![1, 7, 2]);
         assert_eq!(share(&[1, 4, 2], &[0, 1, 1], 9), vec![1, 5, 3]);
         assert_eq!(share(&[3, 3, 3], &[0, 0, 0], 5), vec![3, 2, 0]);
+    }
+
+    #[test]
+    fn charts_leave_a_third_below() {
+        let chart = Part::Chart(Chart {
+            traces: Vec::new(),
+            capacity: 10,
+            top: Some(100.0),
+            floor: 0.0,
+            axis: |v| format!("{v}"),
+            seconds_per_sample: 1.0,
+            caption: String::new(),
+            min_rows: 4,
+            weight: 1,
+        });
+        let parts = vec![Part::Gap, chart, Part::Gap, Part::Text(Line::raw("x"))];
+        // Ten spare rows: seven to the chart, three to the gap below it.
+        assert_eq!(layout_rows(&parts, 40, 17), vec![1, 11, 4, 1]);
     }
 
     #[test]

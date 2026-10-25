@@ -21,8 +21,8 @@ use draw::{share, Card, Pen};
 use theme::Look;
 
 /// Widths at which the layout gains a column.
-const THREE_COLUMNS: u16 = 200;
-const TWO_COLUMNS: u16 = 110;
+const THREE_COLUMNS: u16 = 150;
+const TWO_COLUMNS: u16 = 96;
 /// Narrowest guest card; the grid fits as many across as allow this.
 const GUEST_WIDTH: u16 = 38;
 
@@ -76,10 +76,17 @@ impl Screen {
         // Guests in VMID order. Until PVE first answers there is no list of
         // running guests, but the GPU and NAS cards get a placeholder; once
         // PVE has answered, a guest missing from it is not running.
+        // A name in config.yaml wins over the VM's name in Proxmox, which can
+        // be years out of date.
         let mut slots: BTreeMap<u64, Slot> = BTreeMap::new();
         if let Some(data) = pve.data.as_ref() {
             for (&vmid, guest) in &data.guests {
-                let name = guest.name.clone().unwrap_or_else(|| vmid.to_string());
+                let name = config
+                    .hosts
+                    .get(&vmid)
+                    .and_then(|h| h.name.clone())
+                    .or_else(|| guest.name.clone())
+                    .unwrap_or_else(|| vmid.to_string());
                 slots.insert(vmid, Slot { vmid, name, view: config.view_for(vmid), guest: Some(guest) });
             }
         }
@@ -109,15 +116,16 @@ impl Screen {
         }
         let w = body.width;
         if w >= THREE_COLUMNS {
-            // The GPU card in the middle. The guests share the host's
-            // column: there are few enough that a column of their own sat
-            // mostly empty.
+            // The GPU card in the middle, host and NAS on its left, guests
+            // on its right.
             let left = (w - 2) / 3;
             let mid = (w - left - 2) / 2;
             let right = w - left - mid - 2;
-            column(&mut pen, Rect { width: left, ..body }, &[host_card], Some(&grid));
+            let mut left_cards = vec![host_card];
+            left_cards.extend(nas_cards);
+            column(&mut pen, Rect { width: left, ..body }, &left_cards, None);
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None);
-            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &nas_cards, None);
+            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &[], Some(&grid));
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
             let mut left_cards = vec![host_card];
@@ -212,13 +220,29 @@ impl Grid<'_> {
     }
 }
 
+/// Rows for each card in a column. Cards with charts get two thirds of the
+/// spare rows and cards without the rest, to space out their sections;
+/// failing either kind, one kind gets them all.
+fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
+    let heights: Vec<u16> = cards.iter().map(|c| c.height(width)).collect();
+    let flexes: Vec<u16> = cards.iter().map(Card::flex).collect();
+    let need: u16 = heights.iter().sum();
+    let roomy: Vec<usize> = (0..cards.len()).filter(|&i| flexes[i] == 0 && cards[i].has_gaps()).collect();
+    if need >= total || roomy.is_empty() {
+        return share(&heights, &flexes, total);
+    }
+    let spare = total - need;
+    let to_charts = if flexes.iter().any(|f| *f > 0) { (spare * 2).div_ceil(3) } else { 0 };
+    let mut out = share(&heights, &flexes, need + to_charts);
+    draw::spread(&mut out, &roomy, spare - to_charts);
+    out
+}
+
 /// Cards stacked top to bottom, then the guest grid. Spare rows go to the
-/// cards' charts; short of rows, guests go compact, then some are left out.
+/// cards; short of rows, guests go compact, then some are left out.
 fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>) {
     let w = area.width;
-    let heights: Vec<u16> = cards.iter().map(|c| c.height(w)).collect();
-    let flexes: Vec<u16> = cards.iter().map(Card::flex).collect();
-    let fixed: u16 = heights.iter().sum();
+    let fixed: u16 = cards.iter().map(|c| c.height(w)).sum();
     let (compact, grid_h) = match grid {
         None => (false, 0),
         Some(g) => {
@@ -234,7 +258,7 @@ fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>) {
         }
     };
     let mut y = area.y;
-    for (card, h) in cards.iter().zip(share(&heights, &flexes, area.height - grid_h)) {
+    for (card, h) in cards.iter().zip(card_rows(cards, w, area.height.saturating_sub(grid_h))) {
         card.render(pen, Rect { y, height: h, ..area });
         y += h;
     }

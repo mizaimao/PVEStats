@@ -4,7 +4,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{bar, big_width, Card, Chart, Col, Meter, Part, Table, Trace};
+use super::draw::{bar, big_width, Card, Chart, Col, Meter, Part, Spark, Table, Trace};
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
@@ -81,10 +81,6 @@ fn axis_pct(v: f64) -> String {
     format!("{}", v.round() as i64)
 }
 
-fn axis_rate(v: f64) -> String {
-    format!("{:.1}", v / MIB)
-}
-
 fn guest_sub(look: &Look, guest: Option<&Guest>) -> Part {
     let Some(g) = guest else { return sub(look, vec![fmt::DASH.into()]) };
     sub(
@@ -131,7 +127,6 @@ fn disk_line(look: &Look, guest: Option<&Guest>) -> Part {
 // ------------------------------------------------------------ PVE host
 
 pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) -> Card {
-    let p = look.p;
     // Trim pve-manager's build hash: it is noise at a glance.
     let version = node.pveversion.as_deref().unwrap_or("").split('/').take(2).collect::<Vec<_>>().join(" ");
     let mut info = Vec::new();
@@ -157,7 +152,7 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
             ),
             Part::Text(chip(look, "Load", if load.is_empty() { fmt::DASH.into() } else { load })),
             Part::Chart(Chart {
-                traces: vec![Trace::from(pve.series("node.cpu"), p.s1, "")],
+                traces: vec![Trace::from(pve.series("node.cpu"), 0, "")],
                 capacity: pve.capacity(),
                 top: Some(100.0),
                 floor: 0.0,
@@ -197,7 +192,7 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
     let round = |v: Option<f64>, unit: &str| v.map_or(fmt::DASH.into(), |v| format!("{}{unit}", v.round() as i64));
 
     let util = get(|g| g.util);
-    let big = util.map_or(fmt::DASH.to_string(), |u| format!("{}%", u.round() as i64));
+    let big = util.map_or(fmt::DASH.to_string(), |u| format!("{}", u.round() as i64));
     // VRAM filling up is the failure that actually bites on this box: a model
     // that no longer fits gets evicted or spills to host memory.
     let vram_ratio = ratio(get(|g| g.vram_used), get(|g| g.vram_total));
@@ -211,7 +206,7 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         .unwrap_or_else(|| fmt::DASH.into());
 
     let headline = Part::Row(vec![
-        (big_width("100%"), Part::Big(big, bold(p.s1))),
+        (big_width(look, 3, "%"), Part::Big(big, "%".into(), bold(p.s1))),
         (
             0,
             Part::Stack(vec![
@@ -231,8 +226,8 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
     // Utilization and VRAM share a 0-100 scale, so one plot, nvtop style.
     let chart = Part::Chart(Chart {
         traces: vec![
-            Trace::from(agent.series("gpu.util"), p.s1, "GPU utilization"),
-            Trace::from(agent.series("gpu.vram_pct"), p.s2, "VRAM used"),
+            Trace::from(agent.series("gpu.util"), 0, "GPU utilization"),
+            Trace::from(agent.series("gpu.vram_pct"), 1, "VRAM used"),
         ],
         capacity: agent.capacity(),
         top: Some(100.0),
@@ -396,44 +391,41 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
     }
 
     // Interface throughput is read from inside TrueNAS, never from PVE's
-    // counters (spec §3.3). The role rides in the legend, so the two lines
-    // can be told apart without the table.
-    let traces = interfaces
-        .iter()
-        .take(2)
-        .zip([p.s1, p.s2])
-        .map(|((name, nic), color)| {
-            let label = host
-                .and_then(|h| h.nic_labels.get(name).cloned())
-                .or_else(|| nic.role.clone())
-                .unwrap_or_else(|| "?".into());
-            Trace::from(nas.series(&format!("if.{name}.rx")), color, &format!("{name} · {label}"))
-        })
-        .collect();
-    let chart = Part::Chart(Chart {
-        traces,
-        capacity: nas.capacity(),
-        top: None,
-        floor: 2.0 * MIB,
-        axis: axis_rate,
-        seconds_per_sample: nas.interval,
-        caption: "receive MiB/s".into(),
-        min_rows: 4,
-        weight: 2,
-    });
+    // counters (spec §3.3). Each interface gets btop's network rows: receive
+    // and send, each a short graph scaled to its own peak, with the speed
+    // now and the peak beside it.
+    let mut network = Vec::new();
+    for (i, (name, nic)) in interfaces.iter().enumerate() {
+        if i > 0 {
+            network.push(Part::Gap);
+        }
+        network.push(Part::Text(Line::from(vec![
+            Span::styled(name.clone(), bold(p.ink)),
+            Span::styled(" · ", style(p.muted)),
+            Span::styled(nic_role(name, nic, host), style(p.ink2)),
+        ])));
+        for (series, arrow, word, key, now) in [(0, "↓", "receive", "rx", nic.rx_bps), (1, "↑", "send", "tx", nic.tx_bps)] {
+            network.push(Part::Spark(Spark {
+                label: Line::from(vec![
+                    Span::styled(format!("{arrow} "), style(look.flat(series))),
+                    Span::styled(word, style(p.muted)),
+                ]),
+                label_w: 10,
+                trace: Trace::from(nas.series(&format!("if.{name}.{key}")), series, ""),
+                capacity: nas.capacity(),
+                floor: MIB,
+                value: fmt::rate_auto(now),
+                peak: fmt::rate_auto,
+                value_w: 15,
+                rows: 2,
+            }));
+        }
+    }
+    if network.is_empty() {
+        network.push(Part::Text(Line::styled("no interfaces yet", style(p.muted))));
+    }
 
     let rate = |v: f64| Line::styled(fmt::rate(Some(v)), style(p.ink));
-    let nic_rows = interfaces
-        .iter()
-        .map(|(name, nic)| {
-            vec![
-                Line::styled(name.clone(), style(p.ink)),
-                Line::styled(nic_role(name, nic, host), style(p.ink2)),
-                rate(nic.rx_bps),
-                rate(nic.tx_bps),
-            ]
-        })
-        .collect();
     let disk_rows = data
         .map_or(&[][..], |d| d.disks.as_slice())
         .iter()
@@ -469,7 +461,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 Span::styled("● ", style(if pool.healthy { p.good } else { p.critical })),
                 Span::styled(pool.status.clone().unwrap_or_else(|| "?".into()), style(p.ink2)),
             ]);
-            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 12, color), Line::styled(figure, style(p.ink))]
+            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 10, color), Line::styled(figure, style(p.ink))]
         })
         .collect();
 
@@ -482,19 +474,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             guest_sub(look, guest),
             usage,
             Part::Gap,
-            chart,
-            Part::Gap,
-            Part::Table(Table {
-                caption: None,
-                cols: vec![
-                    Col { title: "Interface", width: 10, right: false },
-                    Col { title: "Role", width: 0, right: false },
-                    Col { title: "RX MiB/s", width: 8, right: true },
-                    Col { title: "TX MiB/s", width: 8, right: true },
-                ],
-                rows: nic_rows,
-                empty: "no interfaces yet",
-            }),
+            Part::Stack(network),
             Part::Gap,
             Part::Table(Table {
                 caption: None,
@@ -513,8 +493,8 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 cols: vec![
                     Col { title: "Pool", width: 0, right: false },
                     Col { title: "Status", width: 10, right: false },
-                    Col { title: "Capacity", width: 12, right: false },
-                    Col { title: "Used", width: 18, right: true },
+                    Col { title: "Capacity", width: 10, right: false },
+                    Col { title: "Used", width: 16, right: true },
                 ],
                 rows: pool_rows,
                 empty: "no pools yet",

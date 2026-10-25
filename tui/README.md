@@ -13,19 +13,25 @@ CPU, and sends about 1.5 KB/s to the terminal.
 
 The layout follows the terminal's width:
 
-- 200 columns or more (a 1920x1080 Linux console is 240x67): host and
-  guests | GPU | NAS.
-- 110 to 199: host and GPU | NAS and guests. Guests go compact when the
-  rows run short.
-- Under 110: one column, GPU first, scrolled with the arrow keys or j/k.
+- 150 columns or more: host and NAS | GPU | guests.
+- 96 to 149: host and GPU | NAS and guests. Guests go compact when the rows
+  run short.
+- Under 96: one column, GPU first, scrolled with the arrow keys or j/k.
 
-Keys: `f` shows the GPU card alone and back, `q` quits.
+Charts take two thirds of the rows a card has to spare, and the space
+between the sections below them the rest. Keys: `f` shows the GPU card
+alone and back, `q` quits.
 
-On the Linux text console (`TERM=linux`) it draws only glyphs the console
-font has (full block, two shades, box drawing) in its 16 colours, and turns
-off console blanking. Elsewhere it uses finer blocks and the theme from
-`config.yaml` (or `ui.json`), in true colour when `COLORTERM` says so and
-256 colours otherwise. `--console`, `--unicode` and `--colors` override.
+In a terminal that can (anything but the Linux text console) it draws
+graphs in braille dots shaded from foot to top, meters as rows of small
+squares, and big digits in box-drawing strokes, btop style, in the theme
+from `config.yaml` (or `ui.json`): true colour when `COLORTERM` says so,
+256 colours otherwise. On the text console (`TERM=linux`) it keeps to the
+console font's glyphs (full block, two shades, box drawing) and 16 colours,
+and turns off console blanking. `--console`, `--unicode` and `--colors`
+override.
+
+A `name` in config.yaml titles a card in place of the VM's name in Proxmox.
 
 ## Build
 
@@ -44,25 +50,36 @@ It finds `.env` and `config.yaml` in the nearest folder above the binary
 that has a `config.yaml`, or in `--root DIR`. So a copy of the repo with the
 binary at `tui/bin/pvestats-tui` needs no options.
 
-### On a machine's first text console
+### Full screen on a machine's display
 
-`pvestats-tui.service` puts the dashboard on tty1 in place of its login
-prompt; the other consoles (Ctrl+Alt+F2 and on) still log in as usual.
-Quitting, or a crash, brings it back after two seconds. It runs as frank,
-and as root only lowers the kernel's console log level so that kernel
-messages stop printing over it (they still reach the journal).
+`pvestats-kiosk.service` puts the dashboard on tty1 in place of its login
+prompt, in foot (a terminal) run full screen by cage (a compositor that
+shows one program and nothing else). The other consoles (Ctrl+Alt+F2 and
+on) still log in as usual. Quitting, or a crash, brings it back after two
+seconds. It runs as frank. The font size, and so how much fits, is set in
+`foot.ini`; restart the service after changing it.
 
-    sudo cp ~/Projects/PVEStats/tui/pvestats-tui.service /etc/systemd/system/
+    sudo apt install --no-install-recommends cage foot
+    sudo cp ~/Projects/PVEStats/tui/pvestats-kiosk.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl disable --now getty@tty1.service
-    sudo systemctl enable --now pvestats-tui.service
+    sudo systemctl enable --now pvestats-kiosk.service
 
 To give tty1 its login prompt back:
 
-    sudo systemctl disable --now pvestats-tui.service
+    sudo systemctl disable --now pvestats-kiosk.service
     sudo systemctl enable --now getty@tty1.service
+
+### On the text console instead
+
+Without a graphics stack, `pvestats-tui.service` runs it straight on tty1's
+text console, coarser but with nothing to install. It also lowers the
+kernel's console log level, as root, so that kernel messages stop printing
+over it (they still reach the journal). Install it the same way, with
+`pvestats-tui.service` in place of `pvestats-kiosk.service` and no apt
+line. The two replace each other.
 
 ### Beside something else
 
-Under tmux, split the console and run it in one pane; it lays itself out
+Under tmux, split the terminal and run it in one pane; it lays itself out
 for the pane's width and follows resizes.
