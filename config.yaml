@@ -17,7 +17,9 @@ ui:
 
 # Card layout. `view` selects the panel set; VMIDs returned by PVE but absent
 # from this file default to `basic` (spec §4.5), so only the special cases are
-# listed here. VMIDs confirmed against captures/pve.json.
+# listed here. VMIDs confirmed against captures/pve.json. `name` titles the
+# card in the terminal dashboard (tui/) in place of the VM's name in Proxmox;
+# the app still shows the Proxmox name.
 #
 # Addresses are not set here. The agent's URL (ML60_AGENT_URL) and the NAS
 # host (TRUENAS_HOST) live in .env beside the credentials that go with them.
@@ -27,7 +29,7 @@ hosts:
     view: gpu
 
   - vmid: 100
-    name: FreeNAS
+    name: TrueNAS
     view: nas
     # Override the auto-derived interface label. Detection reads the Proxmox
     # virtio MAC prefix and the reported media subtype, which cannot know what

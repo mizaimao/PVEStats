@@ -37,32 +37,54 @@ pub struct Palette {
 
 pub struct Look {
     pub p: Palette,
-    /// Only glyphs the console font has.
+    /// Only glyphs the console font has: charts in whole cells and shades.
+    /// Otherwise charts are drawn in braille dots, btop style.
     pub console_glyphs: bool,
+    colors: Colors,
+    /// The theme's tokens, for shading; None on the console.
+    tokens: Option<[u32; 11]>,
 }
 
 impl Look {
     pub fn new(theme: &str, colors: Colors, console_glyphs: bool) -> Look {
-        Look { p: palette(theme, colors), console_glyphs }
+        let tokens = (colors != Colors::Console).then(|| theme_tokens(theme));
+        Look { p: palette(theme, colors), console_glyphs, colors, tokens }
     }
 
-    /// Partial cells for a bar growing upwards, smallest first.
-    pub fn rising(&self) -> &'static [&'static str] {
-        if self.console_glyphs {
-            &["░", "▒"]
+    /// Series 1 (0) or 2 (1).
+    pub fn flat(&self, series: usize) -> Color {
+        if series == 0 {
+            self.p.s1
         } else {
-            &["▁", "▂", "▃", "▄", "▅", "▆", "▇"]
+            self.p.s2
         }
     }
 
-    /// Partial cells for a bar growing rightwards, smallest first.
-    pub fn widening(&self) -> &'static [&'static str] {
-        if self.console_glyphs {
-            &[]
-        } else {
-            &["▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+    /// A series shaded from dark at the foot of a chart (t = 0) to light at
+    /// its top (t = 1), as btop shades its graphs. Flat on the console.
+    pub fn ramp(&self, series: usize, t: f64) -> Color {
+        let Some(tokens) = self.tokens else { return self.flat(series) };
+        let base = tokens[6 + series.min(1)];
+        let dark = mix(base, tokens[0], 0.45);
+        let light = mix(base, tokens[2], 0.3);
+        self.paint(mix(dark, light, t.clamp(0.0, 1.0)))
+    }
+
+    fn paint(&self, rgb: u32) -> Color {
+        match self.colors {
+            Colors::Indexed => Color::Indexed(xterm256(rgb)),
+            _ => Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8),
         }
     }
+}
+
+/// `a` moved towards `b` by `t`, per channel.
+fn mix(a: u32, b: u32, t: f64) -> u32 {
+    let channel = |shift: u32| {
+        let (x, y) = (((a >> shift) & 255) as f64, ((b >> shift) & 255) as f64);
+        ((x + (y - x) * t).round() as u32) << shift
+    };
+    channel(16) | channel(8) | channel(0)
 }
 
 // plane, surface, ink, ink-2, ink-muted, grid, series-1, series-2, good,
@@ -102,12 +124,7 @@ fn palette(theme: &str, colors: Colors) -> Palette {
             critical: Color::LightRed,
         };
     }
-    // An unknown name falls back to ice, as the app does.
-    let tokens = THEMES
-        .iter()
-        .find(|(name, _)| *name == theme)
-        .unwrap_or(&THEMES[1])
-        .1;
+    let tokens = theme_tokens(theme);
     let c = |rgb: u32| match colors {
         Colors::Indexed => Color::Indexed(xterm256(rgb)),
         _ => Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8),
@@ -126,6 +143,11 @@ fn palette(theme: &str, colors: Colors) -> Palette {
         warning: c(tokens[9]),
         critical: c(tokens[10]),
     }
+}
+
+/// An unknown name falls back to ice, as the app does.
+fn theme_tokens(theme: &str) -> [u32; 11] {
+    THEMES.iter().find(|(name, _)| *name == theme).unwrap_or(&THEMES[1]).1
 }
 
 /// Nearest colour in the xterm 256 palette: the 6x6x6 cube or the grey ramp.

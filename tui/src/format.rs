@@ -16,6 +16,17 @@ pub fn rate(v: Option<f64>) -> String {
     v.map_or_else(|| DASH.into(), |v| format!("{:.1}", v / MIB))
 }
 
+/// Bytes per second in the unit that suits it, as btop prints rates.
+pub fn rate_auto(v: f64) -> String {
+    if v >= GIB {
+        format!("{:.1} GiB/s", v / GIB)
+    } else if v >= MIB {
+        format!("{:.1} MiB/s", v / MIB)
+    } else {
+        format!("{:.0} KiB/s", v / 1024.0)
+    }
+}
+
 /// A percentage with its sign, or a bare dash when missing.
 pub fn pct(v: Option<f64>) -> String {
     v.map_or_else(|| DASH.into(), |v| format!("{}%", v.round() as i64))
@@ -109,6 +120,8 @@ mod tests {
         assert_eq!(pct(Some(63.4)), "63%");
         assert_eq!(pct(None), "–");
         assert_eq!(rate(Some(1.5 * MIB)), "1.5");
+        assert_eq!(rate_auto(1.5 * MIB), "1.5 MiB/s");
+        assert_eq!(rate_auto(13_000.0), "13 KiB/s");
         assert_eq!(int(Some(2100.0)), "2,100");
         assert_eq!(int(Some(210.0)), "210");
     }
