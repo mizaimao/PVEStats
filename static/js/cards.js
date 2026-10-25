@@ -418,8 +418,8 @@ export function nasCard(guest) {
   shell.el.append(row);
 
   // Interface throughput is read from inside TrueNAS, never from PVE's
-  // counters (spec §3.3). Two series, so a legend is mandatory.
-  const ifSeries = [];
+  // counters (spec §3.3): receive and send for each interface, on one plot.
+  // Two series, so a legend is mandatory.
   const ifSpark = el("div");
   const ifTable = dataTable("Interfaces", [
     { label: "Interface" }, { label: "Role" },
@@ -434,7 +434,7 @@ export function nasCard(guest) {
   ]);
   shell.el.append(ifSpark, ifTable.el, disks.el, pools.el);
 
-  let spark = null;
+  const sparks = new Map();     // interface name -> Spark
   // Kept across ticks, so each capacity bar keeps its state: recreated every
   // second, a bar restarted its shimmer and never saw a band change, so the
   // threshold flare could not fire.
@@ -455,24 +455,26 @@ export function nasCard(guest) {
       const nas = g.nas;
       if (nas) {
         const names = Object.keys(nas.interfaces || {});
-        // Build the throughput sparkline once the interface names are known.
-        if (!spark && names.length) {
-          const colours = ["var(--series-1)", "var(--series-2)"];
-          names.slice(0, 2).forEach((name, i) => ifSeries.push({
-            key: `if.${name}.rx`, color: colours[i],
-            // Role travels in the legend, so the two lines are identifiable
-            // without cross-referencing the table.
-            label: `${name} · ${(nas.interfaces[name] || {}).label
-                || (nas.interfaces[name] || {}).role || "?"}`,
-          }));
-          spark = new Spark(ifSeries, {
+        // One plot per interface, built when the interface first appears.
+        // The role rides in its caption, so it reads without the table.
+        for (const name of names) {
+          if (sparks.has(name)) continue;
+          const nic = nas.interfaces[name] || {};
+          const series = [
+            { key: `if.${name}.rx`, color: "var(--series-1)", label: "Receive" },
+            { key: `if.${name}.tx`, color: "var(--series-2)", label: "Send" },
+          ];
+          const spark = new Spark(series, {
             format: fmt.rate, unit: " MiB/s", height: 96, axis: true,
             xTicks: true, secondsPerSample: 5, minScale: 2 * MiB,
-            caption: "Receive throughput",
+            caption: `${name} · ${nic.label || nic.role || "?"}`,
           });
-          ifSpark.append(spark.el, legend(ifSeries));
+          sparks.set(name, spark);
+          ifSpark.append(spark.el, legend(series));
         }
-        if (spark) spark.update(history.truenas, g.nas_status && g.nas_status.capacity);
+        for (const spark of sparks.values()) {
+          spark.update(history.truenas, g.nas_status && g.nas_status.capacity);
+        }
 
         ifTable.set(names.map(n => {
           const nic = nas.interfaces[n];

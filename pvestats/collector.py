@@ -99,6 +99,10 @@ class Collector:
             else:
                 # A copy: the entry belongs to the PVE source's last result.
                 guest = dict(guest)
+                # A name in config.yaml wins over the VM's name in Proxmox,
+                # which can be years out of date (vmid 100 is still FreeNAS).
+                if host.get("name"):
+                    guest["name"] = host["name"]
             guests[vmid] = guest
             # The status always travels, even with no data yet — otherwise the
             # card has no way to say *why* it is empty, and a dead source looks
