@@ -53,6 +53,11 @@ impl Look {
         Look { p: palette(theme, colors), console_glyphs, colors, tokens }
     }
 
+    /// The same look in another theme.
+    pub fn retheme(&self, theme: &str) -> Look {
+        Look::new(theme, self.colors, self.console_glyphs)
+    }
+
     /// Series 1 (0) or 2 (1).
     pub fn flat(&self, series: usize) -> Color {
         if series == 0 {
@@ -147,6 +152,11 @@ fn palette(theme: &str, colors: Colors) -> Palette {
         warning: c(tokens[9]),
         critical: c(tokens[10]),
     }
+}
+
+/// Every theme, in the app's order.
+pub fn names() -> impl Iterator<Item = &'static str> {
+    THEMES.iter().map(|(name, _)| *name)
 }
 
 /// An unknown name falls back to ice, as the app does.

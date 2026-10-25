@@ -36,6 +36,11 @@ const STANDBY_GIVE_UP: f64 = 25.0;
 const ORBIT_STEP: u64 = 240;
 const ORBIT: [(u16, u16); 4] = [(0, 0), (1, 0), (1, 1), (0, 1)];
 
+pub struct Tour {
+    pub index: usize,
+    pub next_in: u64,
+}
+
 pub struct Screen {
     /// Only the GPU card, which is what this dashboard exists for.
     pub focus: bool,
@@ -43,13 +48,15 @@ pub struct Screen {
     pub scroll: u16,
     /// Step the screen around against burn-in.
     pub orbit: bool,
+    /// The theme tour, while one is on: which theme, and seconds to the next.
+    pub tour: Option<Tour>,
     started: f64,
     standby_done: bool,
 }
 
 impl Screen {
     pub fn new() -> Self {
-        Screen { focus: false, scroll: 0, orbit: true, started: clock(), standby_done: false }
+        Screen { focus: false, scroll: 0, orbit: true, tour: None, started: clock(), standby_done: false }
     }
 
     pub fn draw(&mut self, buf: &mut Buffer, area: Rect, shared: &Shared, config: &Config, look: &Look) {
@@ -71,7 +78,10 @@ impl Screen {
         if area.height < 3 {
             return;
         }
-        header(&mut pen, Rect { height: 1, ..area }, &[("pve", &sp), ("agent", &sa), ("truenas", &sn)]);
+        let names: Vec<&str> = theme::names().collect();
+        let touring = self.tour.as_ref().map(|t| format!("theme {} · ", names[t.index % names.len()]));
+        let sources = [("pve", &sp), ("agent", &sa), ("truenas", &sn)];
+        header(&mut pen, Rect { height: 1, ..area }, &sources, touring.as_deref().unwrap_or(""));
         let body = Rect { y: area.y + 1, height: area.height - 1, ..area };
 
         // Standby: held until there is something worth drawing. The first
@@ -126,9 +136,10 @@ impl Screen {
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
         let guests: Vec<&Slot> = of(View::Basic).collect();
         let grid = Grid { slots: &guests, status: &sp, look, across: None };
+        let tour = self.tour.as_ref().map(|t| cards::tour(look, &names, t.index % names.len(), t.next_in));
 
         if self.focus && !gpu_cards.is_empty() {
-            column(&mut pen, body, &gpu_cards, None);
+            column(&mut pen, body, &gpu_cards, None, None);
             return;
         }
         let w = body.width;
@@ -140,17 +151,17 @@ impl Screen {
             let right = w - left - mid - 2;
             let mut left_cards = vec![host_card];
             left_cards.extend(nas_cards);
-            column(&mut pen, Rect { width: left, ..body }, &left_cards, None);
-            column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None);
+            column(&mut pen, Rect { width: left, ..body }, &left_cards, None, None);
+            column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None, None);
             // Two guests a row, compact, to leave room below them.
             let pairs = Grid { across: Some(2), ..grid };
-            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &[], Some(&pairs));
+            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &[], Some(&pairs), tour.as_ref());
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
             let mut left_cards = vec![host_card];
             left_cards.extend(gpu_cards);
-            column(&mut pen, Rect { width: left, ..body }, &left_cards, None);
-            column(&mut pen, Rect { x: body.x + left + 1, width: w - left - 1, ..body }, &nas_cards, Some(&grid));
+            column(&mut pen, Rect { width: left, ..body }, &left_cards, None, None);
+            column(&mut pen, Rect { x: body.x + left + 1, width: w - left - 1, ..body }, &nas_cards, Some(&grid), tour.as_ref());
         } else {
             let mut all = gpu_cards;
             all.push(host_card);
@@ -172,7 +183,7 @@ impl Screen {
         let mut off = Buffer::empty(full);
         let mut off_pen = Pen { buf: &mut off, look: pen.look };
         off_pen.fill_bg(full, pen.look.p.plane);
-        column(&mut off_pen, full, cards, Some(grid));
+        column(&mut off_pen, full, cards, Some(grid), None);
         for row in 0..area.height {
             for x in area.left()..area.right() {
                 if let (Some(src), Some(dst)) = (off.cell((x, row + self.scroll)), pen.buf.cell_mut((x, area.y + row))) {
@@ -282,9 +293,9 @@ fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
 }
 
 /// Cards stacked top to bottom with a blank row between each, then the
-/// guest grid. Spare rows go to the cards; short of rows, guests go
-/// compact, then some are left out.
-fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>) {
+/// guest grid, then `tail` in whatever rows are left. Spare rows go to the
+/// cards; short of rows, guests go compact, then some are left out.
+fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>, tail: Option<&Card>) {
     let w = area.width;
     let dividers = (cards.len() + usize::from(grid.is_some())).saturating_sub(1) as u16;
     let fixed: u16 = cards.iter().map(|c| c.height(w)).sum::<u16>() + dividers;
@@ -310,10 +321,14 @@ fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>) {
     if let Some(g) = grid {
         let y = if cards.is_empty() { area.y } else { y };
         g.render(pen, Rect { y, height: area.bottom().saturating_sub(y), ..area }, short);
+        let below = y + grid_h + 1;
+        if let Some(card) = tail.filter(|_| area.bottom() >= below + 3) {
+            card.render(pen, Rect { y: below, height: area.bottom() - below, ..area });
+        }
     }
 }
 
-fn header(pen: &mut Pen, area: Rect, sources: &[(&str, &Status)]) {
+fn header(pen: &mut Pen, area: Rect, sources: &[(&str, &Status)], note: &str) {
     let p = pen.look.p;
     let mut spans = vec![Span::styled(" PVEStats", Style::default().fg(p.ink).add_modifier(Modifier::BOLD))];
     for (name, status) in sources {
@@ -324,7 +339,7 @@ fn header(pen: &mut Pen, area: Rect, sources: &[(&str, &Status)]) {
         spans.push(Span::styled(age, Style::default().fg(p.muted)));
     }
     pen.line(area, area.x, area.y, &Line::from(spans));
-    let right = format!("f focus · q quit   {} ", local_time());
+    let right = format!("{note}f focus · q quit   {} ", local_time());
     let x = area.right().saturating_sub(right.chars().count() as u16);
     pen.text(area, x, area.y, &right, Style::default().fg(p.muted));
 }
