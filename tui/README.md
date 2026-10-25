@@ -44,6 +44,14 @@ On dev.lan, with cargo's cache inside the folder:
 `--snapshot 240x67 --after 12` collects for 12 seconds, prints one frame as
 text and exits, for checking a layout without a screen.
 
+## Deploy
+
+`tui/deploy` tests and builds on a build machine, copies the repo to the
+machine that shows the dashboard and restarts it there; `tui/deploy --check`
+tests the logins. The two machines are set in `tui/deploy.conf` (git-ignored;
+start from `deploy.conf.example`). The script's header says what it does,
+step by step.
+
 ## Run
 
 It finds `.env` and `config.yaml` in the nearest folder above the binary

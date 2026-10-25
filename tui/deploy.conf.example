@@ -1,0 +1,14 @@
+# Copy to tui/deploy.conf (git-ignored) and fill in. Read by tui/deploy.
+
+# Where the binary is built: a Linux machine with cargo, of the same
+# architecture as the screen machine. ssh must log in without a password.
+BUILD_HOST=build.example
+BUILD_DIR='~/Projects/PVEStats'
+BUILD_SSH_OPTS=''
+
+# Where the dashboard is shown, by its systemd service (tui/README.md).
+SCREEN_HOST=screen.example
+SCREEN_DIR='~/Projects/PVEStats'
+# Extra ssh options, e.g. '-o HostKeyAlias=<address>' when the host key is
+# known under the machine's address rather than its name.
+SCREEN_SSH_OPTS=''

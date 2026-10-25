@@ -34,3 +34,4 @@ icons/
 tui/target/
 tui/.cargo-home/
 tui/bin/
+tui/deploy.conf
