@@ -30,18 +30,26 @@ const GUEST_WIDTH: u16 = 38;
 /// dashboard anyway, with the failures said on it.
 const STANDBY_GIVE_UP: f64 = 25.0;
 
+/// Against burn-in: the whole screen steps one cell around a small square,
+/// one step every this many seconds, so no edge sits on the same pixels for
+/// long. It keeps one column and one row free to move into.
+const ORBIT_STEP: u64 = 240;
+const ORBIT: [(u16, u16); 4] = [(0, 0), (1, 0), (1, 1), (0, 1)];
+
 pub struct Screen {
     /// Only the GPU card, which is what this dashboard exists for.
     pub focus: bool,
     /// First row shown when a single column is taller than the screen.
     pub scroll: u16,
+    /// Step the screen around against burn-in.
+    pub orbit: bool,
     started: f64,
     standby_done: bool,
 }
 
 impl Screen {
     pub fn new() -> Self {
-        Screen { focus: false, scroll: 0, started: clock(), standby_done: false }
+        Screen { focus: false, scroll: 0, orbit: true, started: clock(), standby_done: false }
     }
 
     pub fn draw(&mut self, buf: &mut Buffer, area: Rect, shared: &Shared, config: &Config, look: &Look) {
@@ -51,6 +59,15 @@ impl Screen {
         let (sp, sa, sn) = (pve.status(), agent.status(), nas.status());
         let mut pen = Pen { buf, look };
         pen.fill_bg(area, look.p.plane);
+        let area = if self.orbit && area.width > 1 && area.height > 1 {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let (dx, dy) = ORBIT[(now / ORBIT_STEP % ORBIT.len() as u64) as usize];
+            Rect { x: area.x + dx, y: area.y + dy, width: area.width - 1, height: area.height - 1 }
+        } else {
+            area
+        };
         if area.height < 3 {
             return;
         }
@@ -108,7 +125,7 @@ impl Screen {
         let nas_cards: Vec<Card> =
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
         let guests: Vec<&Slot> = of(View::Basic).collect();
-        let grid = Grid { slots: &guests, status: &sp, look };
+        let grid = Grid { slots: &guests, status: &sp, look, across: None };
 
         if self.focus && !gpu_cards.is_empty() {
             column(&mut pen, body, &gpu_cards, None);
@@ -125,7 +142,9 @@ impl Screen {
             left_cards.extend(nas_cards);
             column(&mut pen, Rect { width: left, ..body }, &left_cards, None);
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None);
-            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &[], Some(&grid));
+            // Two guests a row, compact, to leave room below them.
+            let pairs = Grid { across: Some(2), ..grid };
+            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &[], Some(&pairs));
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
             let mut left_cards = vec![host_card];
@@ -168,11 +187,14 @@ struct Grid<'a> {
     slots: &'a [&'a Slot<'a>],
     status: &'a Status,
     look: &'a Look,
+    /// Cards across, or None for as many as fit at full size.
+    across: Option<u16>,
 }
 
 impl Grid<'_> {
     fn columns(&self, width: u16) -> u16 {
-        ((width + 1) / (GUEST_WIDTH + 1)).clamp(1, self.slots.len().max(1) as u16)
+        let fit = self.across.unwrap_or((width + 1) / (GUEST_WIDTH + 1));
+        fit.clamp(1, self.slots.len().max(1) as u16)
     }
 
     fn card_width(&self, width: u16) -> u16 {
@@ -180,15 +202,21 @@ impl Grid<'_> {
         (width + 1) / cols - 1
     }
 
-    fn height(&self, width: u16, compact: bool) -> u16 {
+    /// A card too narrow for the full five lines is always compact.
+    fn compact(&self, width: u16, short: bool) -> bool {
+        short || self.card_width(width) < GUEST_WIDTH
+    }
+
+    fn height(&self, width: u16, short: bool) -> u16 {
         if self.slots.is_empty() {
             return 0;
         }
         let rows = self.slots.len().div_ceil(self.columns(width) as usize) as u16;
-        rows * self.card_height(width, compact)
+        rows * self.card_height(width, short)
     }
 
-    fn card_height(&self, width: u16, compact: bool) -> u16 {
+    fn card_height(&self, width: u16, short: bool) -> u16 {
+        let compact = self.compact(width, short);
         self.slots
             .iter()
             .map(|s| cards::basic(self.look, s, self.status, compact).height(self.card_width(width)))
@@ -196,13 +224,14 @@ impl Grid<'_> {
             .unwrap_or(0)
     }
 
-    fn render(&self, pen: &mut Pen, area: Rect, compact: bool) {
+    fn render(&self, pen: &mut Pen, area: Rect, short: bool) {
         if self.slots.is_empty() || area.height == 0 {
             return;
         }
+        let compact = self.compact(area.width, short);
         let cols = self.columns(area.width) as usize;
         let card_w = self.card_width(area.width);
-        let card_h = self.card_height(area.width, compact).max(1);
+        let card_h = self.card_height(area.width, short).max(1);
         let fit = (area.height / card_h) as usize * cols;
         // Short of room, the last place says how many did not fit.
         let shown = if self.slots.len() > fit { fit.saturating_sub(1) } else { self.slots.len() };
@@ -221,29 +250,45 @@ impl Grid<'_> {
 }
 
 /// Rows for each card in a column. Cards with charts get two thirds of the
-/// spare rows and cards without the rest, to space out their sections;
-/// failing either kind, one kind gets them all.
+/// spare rows, as far as their charts can grow, and cards without charts the
+/// rest, to space out their sections; failing those, the charted cards that
+/// can space out theirs take it.
 fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
     let heights: Vec<u16> = cards.iter().map(|c| c.height(width)).collect();
     let flexes: Vec<u16> = cards.iter().map(Card::flex).collect();
     let need: u16 = heights.iter().sum();
-    let roomy: Vec<usize> = (0..cards.len()).filter(|&i| flexes[i] == 0 && cards[i].has_gaps()).collect();
-    if need >= total || roomy.is_empty() {
+    if need >= total {
         return share(&heights, &flexes, total);
     }
-    let spare = total - need;
-    let to_charts = if flexes.iter().any(|f| *f > 0) { (spare * 2).div_ceil(3) } else { 0 };
-    let mut out = share(&heights, &flexes, need + to_charts);
-    draw::spread(&mut out, &roomy, spare - to_charts);
+    let mut out = heights.clone();
+    let mut spare = total - need;
+    let open: Vec<usize> = (0..cards.len()).filter(|&i| flexes[i] == 0 && cards[i].max_extra().is_none()).collect();
+    let charted: Vec<usize> = (0..cards.len()).filter(|&i| flexes[i] > 0).collect();
+    let for_charts = if open.is_empty() { spare } else { (spare * 2).div_ceil(3) };
+    let weight = charted.iter().map(|&i| flexes[i]).sum::<u16>().max(1);
+    for &i in &charted {
+        let cap = cards[i].max_extra().unwrap_or(u16::MAX);
+        let give = (for_charts * flexes[i] / weight).min(cap).min(spare);
+        out[i] += give;
+        spare -= give;
+    }
+    let takers = if open.is_empty() {
+        charted.into_iter().filter(|&i| cards[i].max_extra().is_none()).collect()
+    } else {
+        open
+    };
+    draw::spread(&mut out, &takers, spare);
     out
 }
 
-/// Cards stacked top to bottom, then the guest grid. Spare rows go to the
-/// cards; short of rows, guests go compact, then some are left out.
+/// Cards stacked top to bottom with a blank row between each, then the
+/// guest grid. Spare rows go to the cards; short of rows, guests go
+/// compact, then some are left out.
 fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>) {
     let w = area.width;
-    let fixed: u16 = cards.iter().map(|c| c.height(w)).sum();
-    let (compact, grid_h) = match grid {
+    let dividers = (cards.len() + usize::from(grid.is_some())).saturating_sub(1) as u16;
+    let fixed: u16 = cards.iter().map(|c| c.height(w)).sum::<u16>() + dividers;
+    let (short, grid_h) = match grid {
         None => (false, 0),
         Some(g) => {
             let full = g.height(w, false);
@@ -258,12 +303,13 @@ fn column(pen: &mut Pen, area: Rect, cards: &[Card], grid: Option<&Grid>) {
         }
     };
     let mut y = area.y;
-    for (card, h) in cards.iter().zip(card_rows(cards, w, area.height.saturating_sub(grid_h))) {
+    for (card, h) in cards.iter().zip(card_rows(cards, w, area.height.saturating_sub(grid_h + dividers))) {
         card.render(pen, Rect { y, height: h, ..area });
-        y += h;
+        y += h + 1;
     }
     if let Some(g) = grid {
-        g.render(pen, Rect { y, height: area.bottom().saturating_sub(y), ..area }, compact);
+        let y = if cards.is_empty() { area.y } else { y };
+        g.render(pen, Rect { y, height: area.bottom().saturating_sub(y), ..area }, short);
     }
 }
 
