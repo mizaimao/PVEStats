@@ -23,7 +23,7 @@
 //!     pvestats-router --listen 10.10.10.1:9837
 //!     pvestats-router --once      the JSON once, for trying it by hand
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::process::{exit, Child, Command, Stdio};
@@ -69,6 +69,9 @@ struct Layout {
     /// (a 10G port set as WAN carries the WAN as a VLAN): every download
     /// crosses it, so the dashboard leaves it out of the wired traffic.
     wan_port: Option<String>,
+    /// The LAN bridge (br0), whose neighbours and learned addresses give
+    /// the wired devices.
+    bridge: String,
     /// The wired LAN ports, in the order the router lists them.
     ports: Vec<String>,
     radios: Vec<Radio>,
@@ -84,6 +87,8 @@ struct Slow {
     /// counted; None until it first is. Each radio keeps its own, so one
     /// that will not answer does not hold back the others.
     devices: Vec<Option<(u32, Instant)>>,
+    /// Devices on the wired side; None until first counted.
+    wired: Option<u32>,
     /// Each wired port's link speed in Mbit/s, in `layout.ports` order.
     /// Read here, not per request: the kernel takes its network-wide lock
     /// to read it, and it changes only when a link renegotiates.
@@ -368,11 +373,12 @@ fn json(slow: &Slow) -> String {
         "{{\"model\":{},\"uptime\":{uptime:.2},\"cpu\":{{\"busy\":{busy},\"total\":{total}}},\
          \"mem\":{{\"total\":{mem_total},\"available\":{mem_available}}},\"temp\":{{\"cpu\":{temp}}},\
          \"wan\":{{\"up\":{},\"ip\":{},\"rx\":{wan_rx},\"tx\":{wan_tx}}},\
-         \"ports\":[{}],\"bands\":[{}],\"devices_age\":{age}}}\n",
+         \"ports\":[{}],\"wired_devices\":{},\"bands\":[{}],\"devices_age\":{age}}}\n",
         quote(&l.model),
         slow.wan_up,
         quote(&slow.wan_ip),
         ports.join(","),
+        slow.wired.map_or("null".to_string(), |n| n.to_string()),
         bands.join(","),
     )
 }
@@ -435,14 +441,81 @@ impl Runner {
         self.run("nvram", &["get", key]).map(|v| v.trim().to_string())
     }
 
-    /// Devices on one network: `wl` lists each as "assoclist <MAC>".
-    fn devices(&mut self, network: &str) -> Option<u32> {
-        self.run("wl", &["-i", network, "assoclist"]).map(|out| count_assoc(&out))
+    /// The devices on one network, by address: `wl` lists each as
+    /// "assoclist <MAC>".
+    fn devices(&mut self, network: &str) -> Option<Vec<String>> {
+        self.run("wl", &["-i", network, "assoclist"]).map(|out| assoc_macs(&out))
     }
 }
 
-fn count_assoc(out: &str) -> u32 {
-    out.lines().filter(|l| l.starts_with("assoclist")).count() as u32
+fn assoc_macs(out: &str) -> Vec<String> {
+    out.lines()
+        .filter_map(|l| l.strip_prefix("assoclist"))
+        .map(|m| m.trim().to_ascii_lowercase())
+        .filter(|m| !m.is_empty())
+        .collect()
+}
+
+/// Complete entries for `bridge` in /proc/net/arp, by address: the devices
+/// the router has heard from on its LAN lately.
+fn neighbours(arp: &str, bridge: &str) -> HashSet<String> {
+    arp.lines()
+        .skip(1)
+        .filter_map(|line| {
+            // IP address, HW type, Flags, HW address, Mask, Device
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let complete = f.get(2).and_then(|fl| u32::from_str_radix(fl.trim_start_matches("0x"), 16).ok()).is_some_and(|fl| fl & 0x2 != 0);
+            (f.len() >= 6 && f[5] == bridge && complete && f[3] != "00:00:00:00:00:00").then(|| f[3].to_ascii_lowercase())
+        })
+        .collect()
+}
+
+/// The addresses in a bridge's forwarding table (/sys/class/net/BR/brforward,
+/// 16-byte entries: address, port, is-local, ageing, high port byte), with
+/// the port each was learned on; the bridge's own addresses left out.
+fn fdb_entries(table: &[u8]) -> Vec<(String, u16)> {
+    table
+        .chunks_exact(16)
+        .filter(|e| e[7] == 0)
+        .map(|e| {
+            let mac = e[..6].iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":");
+            (mac, u16::from(e[6]) | u16::from(e[12]) << 8)
+        })
+        .collect()
+}
+
+/// Devices on the wired side: those the router has heard from on its LAN
+/// bridge (its neighbour table, and the addresses the bridge learned on
+/// wired ports) less those on Wi-Fi (in a radio's client list, or learned on
+/// a Wi-Fi port) and those beyond the port the internet comes in on. File
+/// reads only. None when the bridge cannot be read.
+fn wired_devices(bridge: &str, wan_port: Option<&str>, wireless: &HashSet<String>) -> Option<u32> {
+    let base = format!("/sys/class/net/{bridge}");
+    let ports: HashMap<u16, String> = std::fs::read_dir(format!("{base}/brif"))
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_string();
+            let number = read(&format!("{base}/brif/{name}/port_no"))?;
+            Some((u16::from_str_radix(number.trim().trim_start_matches("0x"), 16).ok()?, name))
+        })
+        .collect();
+    let table = std::fs::read(format!("{base}/brforward")).ok()?;
+    let mut wired = read("/proc/net/arp").map(|arp| neighbours(&arp, bridge)).unwrap_or_default();
+    let mut elsewhere: HashSet<String> = wireless.clone();
+    for (mac, port) in fdb_entries(&table) {
+        match ports.get(&port) {
+            Some(name) if name.starts_with("eth") && Some(name.as_str()) != wan_port => {
+                wired.insert(mac);
+            }
+            Some(_) => {
+                elsewhere.insert(mac);
+            }
+            None => {}
+        }
+    }
+    wired.retain(|m| !elsewhere.contains(m));
+    Some(wired.len() as u32)
 }
 
 /// A radio's name from nvram's band number: 2 is 2.4 GHz, 1 is 5 GHz, 4 is
@@ -478,7 +551,8 @@ fn layout(r: &mut Runner) -> Option<Layout> {
         radios.push(Radio { name, networks, on });
     }
     let wan_port = lower_port(&wan_if);
-    Some(Layout { model, wan_if, wan_port, ports, radios })
+    let bridge = Some(r.nvram("lan_ifname")?).filter(|b| !b.is_empty()).unwrap_or_else(|| "br0".into());
+    Some(Layout { model, wan_if, wan_port, bridge, ports, radios })
 }
 
 /// The device a VLAN interface rides on, from the kernel's own link in
@@ -526,12 +600,25 @@ fn refresh(r: &mut Runner, slow: &Mutex<Slow>, with_layout: bool) {
     let wan_ip = r.nvram("wan0_ipaddr");
     let speeds: Vec<u32> = current.ports.iter().map(|p| speed(p)).collect();
     // Each radio on its own: a radio that is off has no devices and is not
-    // asked; one whose `wl` fails keeps its last count.
+    // asked; one whose `wl` fails keeps its last count. A device is counted
+    // once per radio, however many of its networks list it.
+    let mut wireless: HashSet<String> = HashSet::new();
     let counts: Vec<Option<u32>> = current
         .radios
         .iter()
-        .map(|radio| if radio.on { radio.networks.iter().map(|n| r.devices(n)).sum() } else { Some(0) })
+        .map(|radio| {
+            if !radio.on {
+                return Some(0);
+            }
+            let mut macs = HashSet::new();
+            for network in &radio.networks {
+                macs.extend(r.devices(network)?);
+            }
+            wireless.extend(macs.iter().cloned());
+            Some(macs.len() as u32)
+        })
         .collect();
+    let wired = wired_devices(&current.bridge, current.wan_port.as_deref(), &wireless);
 
     let mut s = lock(slow);
     if let Some(layout) = layout {
@@ -549,6 +636,9 @@ fn refresh(r: &mut Runner, slow: &Mutex<Slow>, with_layout: bool) {
         }
     }
     s.speeds = speeds;
+    if wired.is_some() {
+        s.wired = wired;
+    }
     if let Some(up) = wan_up {
         s.wan_up = up;
     }
@@ -587,8 +677,32 @@ mod tests {
         let names: Vec<String> =
             [("1", "wl0"), ("4", "wl1"), ("4", "wl2"), ("2", "wl3")].iter().map(|(b, r)| band_name(b, &mut sixes, r)).collect();
         assert_eq!(names, ["5 GHz", "6 GHz-1", "6 GHz-2", "2.4 GHz"]);
-        assert_eq!(count_assoc("assoclist AA:BB:CC:DD:EE:01\nassoclist AA:BB:CC:DD:EE:02\n"), 2);
-        assert_eq!(count_assoc(""), 0);
+        assert_eq!(assoc_macs("assoclist AA:BB:CC:DD:EE:01\nassoclist AA:BB:CC:DD:EE:02\n"), ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"]);
+        assert!(assoc_macs("").is_empty());
+    }
+
+    #[test]
+    fn wired_devices_from_the_neighbour_and_bridge_tables() {
+        let arp = "IP address       HW type     Flags       HW address            Mask     Device\n\
+                   10.10.10.4       0x1         0x2         bc:24:11:00:00:04     *        br0\n\
+                   10.10.10.9       0x1         0x0         00:00:00:00:00:00     *        br0\n\
+                   10.10.10.50      0x1         0x2         AA:BB:CC:00:00:50     *        br0\n\
+                   192.168.8.1      0x1         0x2         11:22:33:44:55:66     *        vlan4094\n";
+        let seen = neighbours(arp, "br0");
+        assert_eq!(seen.len(), 2, "complete entries on the bridge only: {seen:?}");
+        assert!(seen.contains("aa:bb:cc:00:00:50"));
+        // One remote address on port 1, the bridge's own on port 2 (left out),
+        // one remote on port 0x105 (high byte 1).
+        let mut table = vec![0u8; 48];
+        table[..6].copy_from_slice(&[0xbc, 0x24, 0x11, 0, 0, 7]);
+        table[6] = 1;
+        table[16..22].copy_from_slice(&[0xcc, 0x28, 0xaa, 0xfb, 0x50, 0x20]);
+        table[22] = 2;
+        table[23] = 1;
+        table[32..38].copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+        table[38] = 5;
+        table[44] = 1;
+        assert_eq!(fdb_entries(&table), [("bc:24:11:00:00:07".to_string(), 1), ("01:02:03:04:05:06".to_string(), 0x105)]);
     }
 
     #[test]
@@ -661,18 +775,20 @@ mod tests {
                 model: "GT-BE98_PRO".into(),
                 wan_if: "lo".into(),
                 wan_port: Some("eth-none".into()),
+                bridge: "br0".into(),
                 ports: vec!["eth-none".into()],
                 radios: vec![Radio { name: "5 GHz".into(), networks: vec!["wl0".into(), "wl0.1".into()], on: true }],
             },
             wan_up: true,
             wan_ip: "192.0.2.1".into(),
             devices: vec![Some((3, Instant::now()))],
+            wired: Some(11),
             speeds: vec![10_000],
         };
         let text = json(&slow);
         assert!(text.starts_with("{\"model\":\"GT-BE98_PRO\","));
         assert!(text.contains("\"bands\":[{\"name\":\"5 GHz\",\"on\":true,\"devices\":3,"));
-        assert!(text.contains("\"ports\":[{\"name\":\"eth-none\",\"up\":false,\"mbps\":0,\"wan\":true,\"rx\":0,\"tx\":0}]"));
+        assert!(text.contains("\"ports\":[{\"name\":\"eth-none\",\"up\":false,\"mbps\":0,\"wan\":true,\"rx\":0,\"tx\":0}],\"wired_devices\":11,"));
         assert!(text.ends_with("\"devices_age\":0}\n"));
     }
 }

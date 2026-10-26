@@ -649,9 +649,12 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
     // download in and would count it again as wired traffic.
     let lan: Vec<_> = d.ports.iter().filter(|port| !port.wan).collect();
     let linked = lan.iter().filter(|port| port.up).count();
+    // Devices, as for the bands: every VM behind the PVE host's one port
+    // counts. The ports with a link ride beside the name.
+    let wired = d.wired_devices.map_or(fmt::DASH.to_string(), |n| n.to_string());
     let mut rows = vec![vec![
-        Line::styled("wired", style(p.ink)),
-        Line::styled(format!("{linked}/{} ports", lan.len()), style(p.ink2)),
+        Line::from(vec![Span::styled("wired", style(p.ink)), Span::styled(format!(" · {linked} ports"), style(p.muted))]),
+        Line::styled(wired, style(p.ink)),
         rate(total(lan.iter().map(|port| port.down_bps))),
         rate(total(lan.iter().map(|port| port.up_bps))),
     ]];
