@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# A screenshot of the dashboard kiosk's screen, as it is on the monitor,
+# pointer included, saved here as a PNG. Also says whether the kiosk has a
+# pointing device, which is when it would draw a pointer.
+#
+#   tui/screenshot [file.png]     default /tmp/pvestats-screen.png
+#
+# Builds tui/shot on the build machine (as tui/deploy does), runs it on the
+# screen machine inside the kiosk's Wayland session, and fetches the image.
+# Nothing is left behind on either machine but the build in BUILD_DIR.
+
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/machines.sh"
+out=${1:-/tmp/pvestats-screen.png}
+
+on_build "mkdir -p \"$B\""
+pack ./tui/shot | on_build "tar -xf - -C \"$B\""
+on_build "cd \"$B/tui/shot\" && export CARGO_HOME=\"\$PWD/../.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
+    && cargo build --release --quiet"
+on_build "cat \"$B/tui/shot/target/release/pvestats-shot\"" \
+    | on_screen "cat > /tmp/pvestats-shot && chmod 755 /tmp/pvestats-shot \
+        && WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/\$(id -u) /tmp/pvestats-shot /tmp/pvestats-screen.png; \
+        status=\$?; rm -f /tmp/pvestats-shot; exit \$status" >&2
+on_screen "cat /tmp/pvestats-screen.png && rm -f /tmp/pvestats-screen.png" > "$out"
+echo "saved $out"

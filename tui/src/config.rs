@@ -40,6 +40,9 @@ pub struct Config {
     /// Minutes past midnight between which the display is switched off,
     /// against burn-in: config.yaml, `tui: screen_off: "03:00-05:00"`.
     pub screen_off: Option<(u32, u32)>,
+    /// Made-up Ollama models and GPU processes on ml60's card, to see how
+    /// a busy GPU lays out: config.yaml, `tui: demo: true`, or --demo.
+    pub demo: bool,
 }
 
 impl Config {
@@ -94,6 +97,7 @@ impl Config {
             hosts: hosts(&raw),
             theme,
             window,
+            demo: raw.get("tui").and_then(|t| t.get("demo")).and_then(|v| v.as_bool()).unwrap_or(false),
             screen_off: raw
                 .get("tui")
                 .and_then(|t| t.get("screen_off"))

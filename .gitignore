@@ -35,3 +35,4 @@ tui/target/
 tui/.cargo-home/
 tui/bin/
 tui/deploy.conf
+tui/shot/target/

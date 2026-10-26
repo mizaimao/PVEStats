@@ -13,12 +13,14 @@ use crate::state::Source;
 pub struct Agent {
     url: String,
     http: ureq::Agent,
+    /// Made-up models and processes on each reading (`tui: demo`).
+    demo: bool,
 }
 
 impl Agent {
-    pub fn new(url: String) -> Self {
+    pub fn new(url: String, demo: bool) -> Self {
         // Caddy on ml60 serves the agent with a home-CA certificate.
-        Agent { url, http: net::http(net::home_ca_tls(), AGENT_TIMEOUT) }
+        Agent { url, http: net::http(net::home_ca_tls(), AGENT_TIMEOUT), demo }
     }
 
     pub fn poll(&mut self, source: &Mutex<Source<AgentData>>) -> Result<(), String> {
@@ -89,6 +91,10 @@ impl Agent {
                 .collect(),
         };
 
+        let (mut gpu, mut models) = (gpu, models);
+        if self.demo {
+            demo(&mut gpu, &mut models);
+        }
         let mut source = lock(source);
         source.push("gpu.util", gpu.util);
         source.push("gpu.vram_used", gpu.vram_used);
@@ -104,6 +110,31 @@ impl Agent {
         source.succeed(AgentData { gpu: Some(gpu), models });
         Ok(())
     }
+}
+
+/// Four made-up Ollama models (one spilled to the CPU, one in use, one kept
+/// for good) and seven python processes, with VRAM in use to match, in place
+/// of the real ones: to see how a busy ml60 lays out. The rest of the
+/// reading stays real.
+fn demo(gpu: &mut Gpu, models: &mut Vec<Model>) {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let model = |name: &str, gib: f64, processor: &str, offloaded: bool, unload_in: i64| Model {
+        name: name.into(),
+        size_vram: Some(gib * GIB),
+        processor: Some(processor.into()),
+        offloaded,
+        unload_in: Some(unload_in),
+    };
+    *models = vec![
+        model("qwen3:32b", 20.1, "100% GPU", false, 240),
+        model("llama3.3:70b-instruct-q4_K_M", 38.4, "22%/78% CPU/GPU", true, -90),
+        model("gemma3:27b", 17.2, "100% GPU", false, 1500),
+        model("nomic-embed-text:latest", 0.6, "100% GPU", false, 10_000_000_000),
+    ];
+    gpu.procs = (0..7)
+        .map(|i| Proc { pid: Some(41_200 + i * 37), name: "python3.13".into(), vram: Some((0.8 + i as f64 * 1.3) * GIB) })
+        .collect();
+    gpu.vram_used = Some(76.3 * GIB);
 }
 
 /// Where a loaded model actually lives, GPU versus system RAM: the

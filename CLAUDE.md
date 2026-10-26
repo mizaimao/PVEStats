@@ -31,3 +31,9 @@ Frank's rules for this project are in his knowledgebase
 - `tui/deploy --check` prints the machines and tests both ssh logins.
 - Installing the screen machine's service the first time needs sudo: hand
   Frank the commands in `tui/README.md`.
+- `tui/screenshot [file.png]` saves what the screen machine's monitor
+  shows, pointer included, and says whether the kiosk has a pointing
+  device. Check visual changes with it rather than asking Frank to look.
+- `tui: demo: true` in the screen machine's copy of config.yaml puts
+  made-up models and GPU processes on ml60's card; the next deploy, which
+  copies config.yaml over, takes it off again.

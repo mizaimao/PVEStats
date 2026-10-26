@@ -62,6 +62,12 @@ tests the logins. The two machines are set in `tui/deploy.conf` (git-ignored;
 start from `deploy.conf.example`). The script's header says what it does,
 step by step.
 
+`tui/screenshot [file.png]` saves what that machine's monitor shows, through
+the kiosk's Wayland session (`tui/shot`, built on the build machine).
+
+`--demo`, or `tui: demo: true` in config.yaml, puts four made-up Ollama models
+and seven GPU processes on ml60's card, to see how a busy GPU lays out.
+
 ## Run
 
 It finds `.env` and `config.yaml` in the nearest folder above the binary
