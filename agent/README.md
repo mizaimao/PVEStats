@@ -28,9 +28,9 @@ change) and these differences:
   "cache"}` in bytes from `/proc/meminfo` (null if unreadable), the way
   `free` counts it: used is total minus available, and cache is buffers,
   page cache and reclaimable slab. PVE counts a VM's disk cache as used,
-  so it showed ml60 at 95% while its programs used about 12%. The
-  terminal dashboard shows this figure; clients that don't know the field
-  ignore it.
+  so it showed ml60 at 95% while its programs used about 12%. Both
+  dashboards show this figure while it is fresh; clients that don't know
+  the field ignore it.
 
 - **The GPU is read by one thread**, about once a second and only while
   someone has asked in the last 15 s; requests are served its latest

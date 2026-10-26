@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 use super::{lock, AGENT_TIMEOUT};
 use crate::config::Config;
 use crate::net;
-use crate::state::Source;
+use crate::state::{clock, Source};
 
 pub struct Agent {
     config: Arc<Config>,
@@ -56,6 +56,10 @@ impl Agent {
         // Absent on an agent that predates the unload endpoint, which is
         // right: the page then shows no stop buttons.
         let can_unload = payload.get("can_unload").and_then(Value::as_bool).unwrap_or(false);
+        // ml60's own memory, with when it was read: the agent still sends it
+        // while NVML fails, so the collector judges its age, not the source's.
+        let ram = ram(payload.get("ram"));
+        let at = clock();
 
         let Some(gpu) = payload.get("gpu").and_then(Value::as_object) else {
             // NVML failed on ml60, but the agent still serves the models for
@@ -64,6 +68,8 @@ impl Agent {
             let mut s = lock(source);
             s.data.insert("models".into(), Value::Array(models));
             s.data.insert("can_unload".into(), json!(can_unload));
+            s.data.insert("ram".into(), ram);
+            s.data.insert("ram_at".into(), json!(at));
             let error = payload.get("error").and_then(Value::as_str).filter(|e| !e.is_empty());
             return Err(error.unwrap_or("agent reported no GPU").to_string());
         };
@@ -96,8 +102,23 @@ impl Agent {
         data.insert("procs".into(), Value::Array(procs));
         data.insert("models".into(), Value::Array(models));
         data.insert("can_unload".into(), json!(can_unload));
+        data.insert("ram".into(), ram);
+        data.insert("ram_at".into(), json!(at));
         s.succeed(data);
         Ok(())
+    }
+}
+
+/// ml60's memory as ml60 sees it, in bytes, or null from an agent that does
+/// not send it. PVE counts a VM's disk cache as used memory.
+fn ram(ram: Option<&Value>) -> Value {
+    let Some(ram) = ram.and_then(Value::as_object) else { return Value::Null };
+    let number = |k: &str| ram.get(k).filter(|v| v.is_number()).cloned();
+    match (number("total"), number("available")) {
+        (Some(total), Some(available)) if total.as_f64().is_some_and(|t| t > 0.0) => {
+            json!({"total": total, "available": available, "cache": number("cache").unwrap_or(json!(0))})
+        }
+        _ => Value::Null,
     }
 }
 
@@ -202,5 +223,16 @@ mod tests {
         let t = unix_seconds("2026-10-25T14:03:12.5-07:00").unwrap();
         assert_eq!(t, unix_seconds("2026-10-25T21:03:12Z").unwrap() + 0.5);
         assert_eq!(unix_seconds("yesterday"), None);
+    }
+
+    #[test]
+    fn memory() {
+        let r = json!({"total": 64, "available": 56, "cache": 50});
+        assert_eq!(ram(Some(&r)), r);
+        assert_eq!(ram(Some(&json!({"total": 64, "available": 8})))["cache"], json!(0));
+        for bad in [json!(null), json!({"total": 64}), json!({"total": 0, "available": 0}), json!({"total": true, "available": 1})] {
+            assert_eq!(ram(Some(&bad)), Value::Null, "{bad}");
+        }
+        assert_eq!(ram(None), Value::Null);
     }
 }

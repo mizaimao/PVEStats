@@ -9,7 +9,7 @@ import asyncio
 import aiohttp
 
 from . import sources
-from .state import Source
+from .state import Source, clock
 
 
 class Collector:
@@ -110,7 +110,14 @@ class Collector:
             if host.get("view") == "gpu":
                 guest["gpu_status"] = agent.status()
                 if agent.data:
-                    guest["gpu"] = agent.data
+                    gpu = dict(agent.data)
+                    ram, ram_at = gpu.pop("ram", None), gpu.pop("ram_at", None)
+                    guest["gpu"] = gpu
+                    # ml60's memory from inside it, in place of PVE's (which
+                    # counts the disk cache as used) while under three polls
+                    # old; after that the card goes back to PVE's.
+                    if ram and ram_at is not None and clock() - ram_at <= sources.AGENT_INTERVAL * 3:
+                        guest["ram"] = ram
             elif host.get("view") == "nas":
                 guest["nas_status"] = nas.status()
                 if nas.data:
