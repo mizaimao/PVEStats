@@ -116,11 +116,11 @@
   </div>
 
   <div class="setting">
-    <label for="set-truenas">TrueNAS</label>
-    <span class="derived">5s</span>
+    <label for="set-truenas">TrueNAS agent</label>
+    <span class="derived">2s</span>
     <span class="applies ok">Would apply</span>
-    <p>Netdata keeps per-second samples, so a faster poll would return real
-      data. Each poll is a round trip over the WebSocket.</p>
+    <p>TrueNAS's own agent reads the kernel as it is asked, for 0.41 ms of
+      its CPU a poll, so this could be raised or lowered freely.</p>
   </div>
 
   <div class="setting">

@@ -4,9 +4,9 @@
 //! (spec §7).
 
 pub mod agent;
+pub mod nas_agent;
 pub mod pve;
 pub mod router;
-pub mod truenas;
 
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -18,12 +18,14 @@ use crate::state::Source;
 /// cycle (spec §3.1); the agent's 1 s is real time.
 pub const PVE_INTERVAL: f64 = 10.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
-pub const TRUENAS_INTERVAL: f64 = 5.0;
+/// TrueNAS's own agent reads the kernel as it is asked: 0.41 ms of its CPU
+/// a poll (nas/README.md).
+pub const NAS_AGENT_INTERVAL: f64 = 2.0;
 pub const ROUTER_INTERVAL: f64 = 1.0;
 
 pub const PVE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const AGENT_TIMEOUT: Duration = Duration::from_secs(2);
-pub const TRUENAS_TIMEOUT: Duration = Duration::from_secs(5);
+pub const NAS_AGENT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const ROUTER_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A poisoned lock still holds good data: a panic in one poll must not take

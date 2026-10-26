@@ -61,8 +61,9 @@ pub struct Config {
     pub pve_node: Option<String>,
     pve_token_id: String,
     pve_token_secret: String,
-    pub truenas_host: String,
-    pub truenas_api_key: String,
+    /// TrueNAS's own agent (nas/), plain HTTP on its LAN address: the
+    /// NAS card's only source.
+    pub nas_agent_url: String,
     pub agent_url: String,
     /// Optional: with none, the page has no router card at all.
     pub router_url: String,
@@ -140,8 +141,7 @@ impl Config {
             pve_node: Some(var("PVE_NODE")).filter(|n| !n.is_empty()),
             pve_token_id: var("PVE_TOKEN_ID"),
             pve_token_secret: var("PVE_TOKEN_SECRET"),
-            truenas_host: var("TRUENAS_HOST"),
-            truenas_api_key: var("TRUENAS_API_KEY"),
+            nas_agent_url: var("NAS_AGENT_URL"),
             agent_url: var("ML60_AGENT_URL"),
             router_url: var("ROUTER_AGENT_URL"),
             port,
@@ -209,8 +209,8 @@ impl Config {
         !self.pve_host.is_empty() && !self.pve_token_id.is_empty() && !self.pve_token_secret.is_empty()
     }
 
-    pub fn truenas_configured(&self) -> bool {
-        !self.truenas_host.is_empty() && !self.truenas_api_key.is_empty()
+    pub fn nas_agent_configured(&self) -> bool {
+        !self.nas_agent_url.is_empty()
     }
 
     pub fn agent_configured(&self) -> bool {

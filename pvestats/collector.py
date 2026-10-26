@@ -18,7 +18,8 @@ class Collector:
         self.sources = {
             "pve": Source("pve", sources.PVE_INTERVAL),
             "agent": Source("agent", sources.AGENT_INTERVAL),
-            "truenas": Source("truenas", sources.TRUENAS_INTERVAL),
+            # TrueNAS, from its own agent.
+            "truenas": Source("truenas", sources.NAS_AGENT_INTERVAL),
         }
         # Optional: only a configured router gets a source, a status dot and
         # a card.
@@ -26,7 +27,6 @@ class Collector:
             self.sources["router"] = Source("router", sources.ROUTER_INTERVAL)
         self.session = None
         self._tasks = []
-        self._truenas = None
 
     async def start(self):
         self.session = aiohttp.ClientSession()
@@ -46,10 +46,10 @@ class Collector:
         else:
             self.sources["agent"].fail("not configured — see .env")
 
-        if self.config.truenas_configured:
-            self._truenas = sources.TrueNasSource(self.config, self.sources["truenas"])
-            self._spawn(self.sources["truenas"], sources.TRUENAS_INTERVAL,
-                        lambda: self._truenas.poll(self.session))
+        if self.config.nas_agent_configured:
+            nas = sources.NasAgentSource(self.config, self.sources["truenas"])
+            self._spawn(self.sources["truenas"], sources.NAS_AGENT_INTERVAL,
+                        lambda: nas.poll(self.session))
         else:
             self.sources["truenas"].fail("not configured — see .env")
 
@@ -68,8 +68,6 @@ class Collector:
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        if self._truenas is not None:
-            await self._truenas.close()
         if self.session is not None:
             await self.session.close()
 

@@ -20,8 +20,8 @@ ui:
 # listed here. VMIDs confirmed against captures/pve.json. `name` titles the
 # card in place of the VM's name in Proxmox, in the app and in tui/.
 #
-# Addresses are not set here. The agent's URL (ML60_AGENT_URL) and the NAS
-# host (TRUENAS_HOST) live in .env beside the credentials that go with them.
+# Addresses are not set here. The agents' URLs (ML60_AGENT_URL,
+# NAS_AGENT_URL and the rest) live in .env with the credentials.
 hosts:
   - vmid: 222
     name: ml60
