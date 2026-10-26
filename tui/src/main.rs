@@ -22,7 +22,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers
 use ratatui::Terminal;
 
 use config::Config;
-use sources::{agent::Agent, lock, pve::Pve, run_poller, truenas::TrueNas, weather::Weather, Shared};
+use sources::{agent::Agent, lock, pve::Pve, router::Router, run_poller, truenas::TrueNas, weather::Weather, Shared};
 use ui::theme::{Colors, Look};
 use ui::{Screen, Tour};
 
@@ -175,6 +175,11 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
         thread::spawn(move || run_poller(&s.agent, sources::AGENT_INTERVAL, || agent.poll(&s.agent)));
     } else {
         lock(&shared.agent).fail(missing());
+    }
+    if config.router_shown() {
+        let url = Some(config.router_url.clone()).filter(|u| !u.is_empty());
+        let (mut router, s) = (Router::new(url), shared.clone());
+        thread::spawn(move || run_poller(&s.router, sources::ROUTER_INTERVAL, || router.poll(&s.router)));
     }
     if config.weather_configured() {
         let (mut weather, s) = (Weather::new(config.clone()), shared.clone());

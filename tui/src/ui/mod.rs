@@ -63,8 +63,9 @@ impl Screen {
         let pve = lock(&shared.pve);
         let agent = lock(&shared.agent);
         let nas = lock(&shared.nas);
+        let router = lock(&shared.router);
         let forecast = lock(&shared.weather);
-        let (sp, sa, sn) = (pve.status(), agent.status(), nas.status());
+        let (sp, sa, sn, sr) = (pve.status(), agent.status(), nas.status(), router.status());
         let mut pen = Pen { buf, look };
         pen.fill_bg(area, look.p.plane);
         let body = if self.orbit && area.width > 1 && area.height > 1 {
@@ -128,11 +129,17 @@ impl Screen {
             Some(d) => cards::host(look, &d.node, &pve, &sp),
             None => cards::pve_note(look, &sp),
         };
-        let top = with_status(look, &[("pve", &sp), ("agent", &sa), ("truenas", &sn)], theme_now, host_card);
+        let mut sources = vec![("pve", &sp), ("agent", &sa), ("truenas", &sn)];
+        if config.router_shown() {
+            sources.push(("router", &sr));
+        }
+        let top = with_status(look, &sources, theme_now, host_card);
         let of = |view: View| slots.values().filter(move |s| s.view == view);
         let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &pve, &sp)).collect();
-        let nas_cards: Vec<Card> =
+        // The router rides under the NAS in every layout.
+        let mut nas_cards: Vec<Card> =
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
+        nas_cards.extend(config.router_shown().then(|| cards::router(look, &router, &sr)));
         let basic: Vec<&Slot> = of(View::Basic).collect();
         let guests = Guests { slots: &basic, status: &sp, pve: &pve };
         let tour = self.tour.as_ref().map(|t| cards::tour(look, &names, t.index % names.len(), t.next_in));
@@ -143,9 +150,9 @@ impl Screen {
         }
         let w = body.width;
         if w >= THREE_COLUMNS {
-            // Status, host and NAS on the left, the GPU in the middle, the
-            // forecast and the guests on the right. The left keeps its cards
-            // to their smallest: the rows under them are being kept free.
+            // Status, host, NAS and router on the left, the GPU in the
+            // middle, the forecast and the guests on the right. The left
+            // keeps its cards to their smallest.
             let left = (w - 2) / 3;
             let mid = (w - left - 2) / 2;
             let right = w - left - mid - 2;

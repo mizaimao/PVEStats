@@ -27,6 +27,24 @@ pub fn rate_auto(v: f64) -> String {
     }
 }
 
+/// Bytes per second as internet speeds are quoted: in bits, in the unit
+/// that suits.
+pub fn bits_auto(v: f64) -> String {
+    let bits = v * 8.0;
+    if bits >= 1e9 {
+        format!("{:.2} Gbit/s", bits / 1e9)
+    } else if bits >= 1e6 {
+        format!("{:.1} Mbit/s", bits / 1e6)
+    } else {
+        format!("{:.0} kbit/s", bits / 1e3)
+    }
+}
+
+/// Bytes per second as Mbit/s, one decimal.
+pub fn mbit(v: Option<f64>) -> String {
+    v.map_or_else(|| DASH.into(), |v| format!("{:.1}", v * 8.0 / 1e6))
+}
+
 /// A percentage with its sign, or a bare dash when missing.
 pub fn pct(v: Option<f64>) -> String {
     v.map_or_else(|| DASH.into(), |v| format!("{}%", v.round() as i64))

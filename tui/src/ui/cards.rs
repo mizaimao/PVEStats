@@ -8,7 +8,7 @@ use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Spark, Table,
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
-use crate::sources::{AgentData, Guest, NasData, Nic, Node, PveData};
+use crate::sources::{AgentData, Guest, NasData, Nic, Node, PveData, RouterData};
 use crate::state::{Source, Status};
 
 /// One guest's place on screen. `guest` is None for the GPU and NAS cards
@@ -581,6 +581,101 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 empty: "no pools yet",
             }),
         ],
+    }
+}
+
+// ----------------------------------------------------------------- router
+
+/// The total of the rates that are known; None when none is.
+fn total(rates: impl Iterator<Item = Option<f64>>) -> Option<f64> {
+    rates.flatten().fold(None, |sum, v| Some(sum.unwrap_or(0.0) + v))
+}
+
+/// The router, from its own agent: the WAN's state and the router's own
+/// load, the internet link as btop's network graph, then the wired ports
+/// and each Wi-Fi band with their devices and traffic.
+pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card {
+    let p = look.p;
+    let Some(d) = router.data.as_ref() else {
+        return Card {
+            title: "Router".into(),
+            right: String::new(),
+            stale: !status.ok,
+            error: status.error.clone(),
+            body: vec![Part::Text(Line::styled("waiting for the router…", style(p.muted)))],
+        };
+    };
+    let wan = Line::from(vec![
+        Span::styled("WAN ", style(p.muted)),
+        Span::styled("● ", style(if d.wan_up { p.good } else { p.critical })),
+        Span::styled(if d.wan_up { "up" } else { "down" }, bold(p.ink)),
+        Span::styled(" · ", style(p.muted)),
+        Span::styled(if d.wan_ip.is_empty() { fmt::DASH.to_string() } else { d.wan_ip.clone() }, style(p.ink2)),
+    ]);
+    let mem = ratio(d.mem_used, d.mem_total).map(|r| r * 100.0);
+    let temp = d.temp.map_or(fmt::DASH.to_string(), |t| format!("{}°C", t.round() as i64));
+    let mut load = chip(look, "CPU", fmt::pct(d.cpu_pct));
+    load.spans.push(Span::raw("  "));
+    load.spans.extend(chip(look, "Mem", fmt::pct(mem)).spans);
+    load.spans.push(Span::raw("  "));
+    load.spans.push(Span::styled(temp, bold(p.ink)));
+
+    let label = |series: usize, arrow: &str, word: &'static str| {
+        Line::from(vec![Span::styled(format!("{arrow} "), style(look.flat(series))), Span::styled(word, style(p.muted))])
+    };
+    let speed = |v: Option<f64>| v.map_or(fmt::DASH.to_string(), fmt::bits_auto);
+    let internet = Part::Mirror(Mirror {
+        up: Trace::from(router.series("wan.down"), 0, ""),
+        down: Trace::from(router.series("wan.up"), 1, ""),
+        up_label: label(0, "↓", "download"),
+        down_label: label(1, "↑", "upload"),
+        up_value: speed(d.wan_down_bps),
+        down_value: speed(d.wan_up_bps),
+        label_w: 11,
+        value_w: 17,
+        capacity: router.capacity(),
+        // 1 Mbit/s, so an idle line stays flat.
+        floor: 125_000.0,
+        scale: None,
+        format: fmt::bits_auto,
+        rows: 4,
+    });
+
+    let rate = |v: Option<f64>| Line::styled(fmt::mbit(v), style(p.ink));
+    let linked = d.ports.iter().filter(|port| port.up).count();
+    let mut rows = vec![vec![
+        Line::styled("wired", style(p.ink)),
+        Line::styled(format!("{linked}/{} ports", d.ports.len()), style(p.ink2)),
+        rate(total(d.ports.iter().map(|port| port.down_bps))),
+        rate(total(d.ports.iter().map(|port| port.up_bps))),
+    ]];
+    rows.extend(d.bands.iter().map(|band| {
+        let devices = if !band.on { "off".to_string() } else { band.devices.map_or(fmt::DASH.to_string(), |n| n.to_string()) };
+        vec![
+            Line::styled(band.name.clone(), style(p.ink)),
+            Line::styled(devices, style(if band.on { p.ink } else { p.muted })),
+            rate(band.down_bps),
+            rate(band.up_bps),
+        ]
+    }));
+    let links = Part::Table(Table {
+        caption: None,
+        cols: vec![
+            Col { title: "Link", width: 0, right: false },
+            Col { title: "Devices", width: 9, right: true },
+            Col { title: "↓ Mbit/s", width: 9, right: true },
+            Col { title: "↑ Mbit/s", width: 9, right: true },
+        ],
+        rows,
+        empty: "no links",
+    });
+
+    Card {
+        title: "Router".into(),
+        right: format!("{} · up {}", d.model.replace('_', " "), fmt::uptime(d.uptime)),
+        stale: !status.ok,
+        error: status.error.clone(),
+        body: vec![Part::Spread(vec![wan, load]), internet, Part::Gap, links],
     }
 }
 

@@ -7,6 +7,7 @@
 
 pub mod agent;
 pub mod pve;
+pub mod router;
 pub mod truenas;
 pub mod weather;
 
@@ -23,18 +24,23 @@ use crate::state::Source;
 pub const PVE_INTERVAL: f64 = 10.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
 pub const TRUENAS_INTERVAL: f64 = 5.0;
+/// The router's agent answers from kernel counters for well under a
+/// millisecond of its CPU.
+pub const ROUTER_INTERVAL: f64 = 2.0;
 /// Open-Meteo refreshes its forecast hourly; every 15 minutes is plenty.
 pub const WEATHER_INTERVAL: f64 = 900.0;
 
 pub const PVE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const AGENT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const TRUENAS_TIMEOUT: Duration = Duration::from_secs(5);
+pub const ROUTER_TIMEOUT: Duration = Duration::from_secs(2);
 pub const WEATHER_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Shared {
     pub pve: Mutex<Source<PveData>>,
     pub agent: Mutex<Source<AgentData>>,
     pub nas: Mutex<Source<NasData>>,
+    pub router: Mutex<Source<RouterData>>,
     pub weather: Mutex<Source<WeatherData>>,
 }
 
@@ -46,6 +52,7 @@ impl Shared {
             pve: Mutex::new(Source::new(PVE_INTERVAL, window.max(600.0))),
             agent: Mutex::new(Source::new(AGENT_INTERVAL, window)),
             nas: Mutex::new(Source::new(TRUENAS_INTERVAL, window)),
+            router: Mutex::new(Source::new(ROUTER_INTERVAL, window)),
             weather: Mutex::new(Source::new(WEATHER_INTERVAL, window)),
         }
     }
@@ -214,6 +221,51 @@ pub struct Pool {
     /// TrueNAS did not say, and the card falls back to raw zpool figures.
     pub used_bytes: Option<f64>,
     pub usable: Option<f64>,
+}
+
+// ------------------------------------------------------------- router data
+
+#[derive(Clone, Debug, Default)]
+pub struct RouterData {
+    /// "GT-BE98_PRO", as the firmware names it.
+    pub model: String,
+    pub uptime: Option<f64>,
+    /// Over all cores, from the last two readings.
+    pub cpu_pct: Option<f64>,
+    pub mem_used: Option<f64>,
+    pub mem_total: Option<f64>,
+    /// The SoC's, °C.
+    pub temp: Option<f64>,
+    pub wan_up: bool,
+    pub wan_ip: String,
+    /// Bytes per second from the internet and to it; None until two
+    /// readings, or across a router reboot.
+    pub wan_down_bps: Option<f64>,
+    pub wan_up_bps: Option<f64>,
+    pub ports: Vec<Port>,
+    pub bands: Vec<Band>,
+}
+
+/// A wired LAN port.
+#[derive(Clone, Debug, Default)]
+pub struct Port {
+    pub up: bool,
+    /// Bytes per second to what is plugged in, and from it.
+    pub down_bps: Option<f64>,
+    pub up_bps: Option<f64>,
+}
+
+/// A Wi-Fi radio with the networks it carries.
+#[derive(Clone, Debug, Default)]
+pub struct Band {
+    /// "2.4 GHz", "5 GHz", "6 GHz-1".
+    pub name: String,
+    pub on: bool,
+    /// None until the agent has counted them.
+    pub devices: Option<u64>,
+    /// Bytes per second to its devices, and from them.
+    pub down_bps: Option<f64>,
+    pub up_bps: Option<f64>,
 }
 
 // ------------------------------------------------------------ weather data
