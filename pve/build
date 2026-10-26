@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Tests the Proxmox host agent and builds it on the build machine named in
+# tui/deploy.conf, then copies the program to pve/bin/pvestats-pve. Running
+# it on the Proxmox host is a separate step, only with Frank's go-ahead: see
+# pve/README.md.
+#
+# A plain glibc build: the build machine and Proxmox VE 9 are both Debian 13
+# (glibc 2.41); the last line says which glibc the program needs.
+set -euo pipefail
+. "$(dirname "$0")/../tui/machines.sh"
+
+echo "== test and build on $BUILD_HOST"
+on_build "mkdir -p \"$B\""
+pack ./pve | on_build "tar -xf - -C \"$B\""
+on_build "cd \"$B/pve/agent\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
+    && cargo test --release --quiet && cargo build --release --quiet"
+
+mkdir -p "$repo/pve/bin"
+on_build "cat \"$B/pve/agent/target/release/pvestats-pve\"" >"$repo/pve/bin/pvestats-pve.new"
+chmod 755 "$repo/pve/bin/pvestats-pve.new"
+mv "$repo/pve/bin/pvestats-pve.new" "$repo/pve/bin/pvestats-pve"
+echo "== built pve/bin/pvestats-pve ($(wc -c <"$repo/pve/bin/pvestats-pve" | tr -d ' ') bytes)"
+echo "== needs glibc $(on_build "objdump -T \"$B/pve/agent/target/release/pvestats-pve\" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1") or newer"
