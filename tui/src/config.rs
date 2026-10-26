@@ -45,9 +45,6 @@ pub struct Config {
     /// Seconds between themes in a tour of all of them, for picking one;
     /// 0 keeps to `theme`. config.yaml, `tui: theme_tour`.
     pub tour: f64,
-    /// The weather card's layout: "a", "b" or "c", or "tour" to show each in
-    /// turn. config.yaml, `tui: weather_layout`.
-    pub weather_layout: String,
     /// Minutes past midnight between which the display is switched off,
     /// against burn-in: config.yaml, `tui: screen_off: "03:00-05:00"`.
     pub screen_off: Option<(u32, u32)>,
@@ -118,12 +115,6 @@ impl Config {
                 .and_then(|t| t.get("screen_off"))
                 .and_then(|v| v.as_str())
                 .and_then(hours),
-            weather_layout: raw
-                .get("tui")
-                .and_then(|t| t.get("weather_layout"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("a")
-                .to_ascii_lowercase(),
             tour: raw
                 .get("tui")
                 .and_then(|t| t.get("theme_tour"))

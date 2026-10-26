@@ -80,10 +80,6 @@ pub enum Part {
     Mirror(Mirror),
     /// The coming hours, a column each: time, sky, temperature, rain chance.
     Hours(super::weather::HourStrip),
-    /// The coming hours a line each, as many as there are rows for.
-    HourList(super::weather::HourList),
-    /// The week as tiles side by side, each with its icon.
-    Week(super::weather::WeekTiles),
     /// A value in big digits.
     Big(Big),
     /// A muted label over its value.
@@ -122,8 +118,6 @@ impl Part {
             Part::Spark(s) => s.rows,
             Part::Mirror(m) => m.rows,
             Part::Hours(_) => 4,
-            Part::HourList(_) => super::weather::HourList::MIN_ROWS,
-            Part::Week(_) => super::weather::WeekTiles::ROWS,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
@@ -148,7 +142,6 @@ impl Part {
         match self {
             Part::Chart(c) => c.max_rows.saturating_sub(c.min_rows),
             Part::Mirror(m) => m.max_rows.saturating_sub(m.rows),
-            Part::HourList(_) => super::weather::HourList::MAX_ROWS - super::weather::HourList::MIN_ROWS,
             Part::Growing(t, least) => t.rows.len().saturating_sub(*least) as u16,
             Part::Row(children) => children.iter().map(|(_, p)| p.room()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::room).sum(),
@@ -157,13 +150,13 @@ impl Part {
         }
     }
 
-    /// Weight for a share of spare rows; only charts, the hour list and a
-    /// growing table grow.
+    /// Weight for a share of spare rows; only charts and a growing table
+    /// grow.
     pub fn flex(&self) -> u16 {
         match self {
             Part::Chart(c) => c.weight,
             Part::Mirror(m) => u16::from(m.max_rows > m.rows),
-            Part::HourList(_) | Part::Growing(..) => 1,
+            Part::Growing(..) => 1,
             Part::Row(children) => children.iter().map(|(_, p)| p.flex()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::flex).sum(),
             Part::Dim(inner) => inner.flex(),
@@ -186,8 +179,6 @@ impl Part {
             Part::Spark(s) => plot(pen, area, &s.traces, s.capacity, s.top, false, None),
             Part::Mirror(m) => m.render(pen, area),
             Part::Hours(h) => h.render(pen, area),
-            Part::HourList(l) => l.render(pen, area),
-            Part::Week(w) => w.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
