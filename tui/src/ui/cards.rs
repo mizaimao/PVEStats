@@ -63,8 +63,28 @@ fn meter(look: &Look, label: &str, ratio: Option<f64>, value: String, value_w: u
     })
 }
 
+/// A figure right-aligned in at least `width` columns, so one that gains a
+/// digit (9 W to 120 W) does not move what follows it on its line, or push
+/// it onto the next. Never cut.
+fn pad(text: String, width: usize) -> String {
+    format!("{text:>width$}")
+}
+
+/// A rate in MiB/s in `cols` columns: 4 hold up to 99.9 without moving, 5
+/// up to 999.9.
+fn fixed_rate(v: Option<f64>, cols: usize) -> String {
+    pad(fmt::rate(v), cols)
+}
+
+/// Inner width from which a guest card puts network and disk I/O on one
+/// line: "net ↓ 0.0 ↑ 0.0  io r 0.0 w 0.0 MiB/s", each rate in 4 columns.
+const WIDE: u16 = 37;
+
+/// "used / total GiB", the used figure as wide as the total, so the text,
+/// and a bar sized to it, keep their width as the used figure grows.
 fn mem_text(used: Option<f64>, total: Option<f64>) -> String {
-    format!("{} / {} GiB", fmt::gib(used), fmt::gib(total))
+    let total = fmt::gib(total);
+    format!("{} / {total} GiB", pad(fmt::gib(used), total.chars().count()))
 }
 
 /// Status colour for a ratio against a limit. Colour is never the only
@@ -93,17 +113,17 @@ fn guest_sub(look: &Look, guest: Option<&Guest>) -> Part {
 fn io_line(look: &Look, guest: Option<&Guest>, disk_io: bool) -> Part {
     let (muted, ink) = (style(look.p.muted), style(look.p.ink));
     let mut spans = vec![Span::styled("net ↓", muted)];
-    spans.push(Span::styled(fmt::rate(guest.and_then(|g| g.net_in_bps)), ink));
+    spans.push(Span::styled(fixed_rate(guest.and_then(|g| g.net_in_bps), 4), ink));
     spans.push(Span::styled(" ↑", muted));
-    spans.push(Span::styled(fmt::rate(guest.and_then(|g| g.net_out_bps)), ink));
+    spans.push(Span::styled(fixed_rate(guest.and_then(|g| g.net_out_bps), 4), ink));
     // Storage passed through to a guest bypasses the hypervisor, so its
     // counters sit near zero however busy the disk is: no figures at all
     // rather than ones that mean nothing.
     if disk_io && guest.is_some_and(|g| g.disk_io_visible) {
         spans.push(Span::styled("  io r", muted));
-        spans.push(Span::styled(fmt::rate(guest.and_then(|g| g.disk_read_bps)), ink));
+        spans.push(Span::styled(fixed_rate(guest.and_then(|g| g.disk_read_bps), 4), ink));
         spans.push(Span::styled(" w", muted));
-        spans.push(Span::styled(fmt::rate(guest.and_then(|g| g.disk_write_bps)), ink));
+        spans.push(Span::styled(fixed_rate(guest.and_then(|g| g.disk_write_bps), 4), ink));
     }
     spans.push(Span::styled(" MiB/s", muted));
     Part::Text(Line::from(spans))
@@ -115,6 +135,8 @@ fn disk_line(look: &Look, guest: Option<&Guest>) -> Part {
         None => fmt::DASH.to_string(),
         Some(Guest { filesystem: None, .. }) => "no guest agent".to_string(),
         Some(Guest { filesystem: Some(fs), .. }) => {
+            // Unpadded: nothing follows it on its line, and a narrow card has
+            // no column to spare.
             let pct = fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0));
             // TiB past one, so ml60's 3.4 TiB does not read "1616.7 / 3479.3".
             if fs.total >= TIB {
@@ -248,7 +270,8 @@ pub fn gpu(
     // that no longer fits gets evicted or spills to host memory.
     let vram_ratio = ratio(get(|g| g.vram_used), get(|g| g.vram_total));
     let vram = match gpu {
-        Some(g) => mem_text(g.vram_used, g.vram_total),
+        // Unpadded: alone in its tile, where an indent would only look odd.
+        Some(g) => format!("{} / {} GiB", fmt::gib(g.vram_used), fmt::gib(g.vram_total)),
         None => fmt::DASH.into(),
     };
     // One decimal: the link idles well under 1 MiB/s.
@@ -294,13 +317,13 @@ pub fn gpu(
 
     let power = match (get(|g| g.power), get(|g| g.power_limit)) {
         // Draw against the cap (spec §4.2), so throttling at the limit shows.
-        (Some(w), Some(cap)) => format!("{} / {} W", w.round() as i64, cap.round() as i64),
-        (w, _) => round(w, " W"),
+        (Some(w), Some(cap)) => format!("{:>3} / {} W", w.round() as i64, cap.round() as i64),
+        (w, _) => pad(round(w, " W"), 5),
     };
     // NVIDIA parks the link at Gen1 when idle and renegotiates under load,
     // so a low current generation is normal; the ceiling rides beside it.
     let link = gpu.and_then(|g| {
-        let mut text = format!("{}.0 x{}", g.pcie.gen?, g.pcie.width?);
+        let mut text = format!("{}.0 x{:<2}", g.pcie.gen?, g.pcie.width?);
         if let Some(max) = g.pcie.max_gen {
             text.push_str(&format!(" · max {max}.0"));
         }
@@ -314,13 +337,14 @@ pub fn gpu(
     let pve_ink = style(if pve.ok { p.ink } else { p.muted });
     let net = Line::from(vec![
         Span::styled("net ↓", style(p.muted)),
-        Span::styled(fmt::rate(guest.and_then(|g| g.net_in_bps)), pve_ink),
+        Span::styled(fixed_rate(guest.and_then(|g| g.net_in_bps), 5), pve_ink),
         Span::styled(" ↑", style(p.muted)),
-        Span::styled(fmt::rate(guest.and_then(|g| g.net_out_bps)), pve_ink),
+        Span::styled(fixed_rate(guest.and_then(|g| g.net_out_bps), 5), pve_ink),
     ]);
     let disk = guest
         .and_then(|g| g.filesystem.as_ref())
         .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
+    let disk = pad(disk, 4);
     // ml60's memory as ml60 sees it, where its agent says: PVE counts the
     // disk cache as used, and on ml60, with model files read into cache,
     // that read 95% while its programs used 12%. The agent still sends it
@@ -330,17 +354,19 @@ pub fn gpu(
         .and_then(|d| d.ram.as_ref())
         .filter(|r| r.total > 0.0 && clock() - r.at <= agent.interval * 3.0);
     // Network and disk ride beside the PCIe link, on the GPU's own lines.
+    // Each figure keeps the width of its largest likely value, so one that
+    // gains a digit moves nothing after it and never rewraps the chips.
     let mut chips = vec![
-        chip(look, "Temp", round(get(|g| g.temp), "°C")),
+        chip(look, "Temp", pad(round(get(|g| g.temp), "°C"), 4)),
         chip(look, "Power", power),
-        chip(look, "Fan", fmt::pct(get(|g| g.fan))),
-        chip(look, "SM clock", get(|g| g.clock_sm).map_or(fmt::DASH.into(), |c| format!("{} MHz", fmt::int(Some(c))))),
+        chip(look, "Fan", pad(fmt::pct(get(|g| g.fan)), 4)),
+        chip(look, "SM clock", get(|g| g.clock_sm).map_or(fmt::DASH.into(), |c| format!("{:>4} MHz", c.round() as i64))),
         chip(look, "PCIe", link.unwrap_or_else(|| fmt::DASH.into())),
         net,
         Line::from(vec![Span::styled("disk ", style(p.muted)), Span::styled(disk, pve_ink)]),
     ];
     if let Some(r) = ram {
-        chips.push(chip(look, "cache", format!("{} GiB", fmt::gib(Some(r.cache)))));
+        chips.push(chip(look, "cache", format!("{} GiB", pad(fmt::gib(Some(r.cache)), 4))));
     }
     let chips = Part::Chips(chips);
 
@@ -637,11 +663,13 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
     ]);
     let mem = ratio(d.mem_used, d.mem_total).map(|r| r * 100.0);
     let temp = d.temp.map_or(fmt::DASH.to_string(), |t| format!("{}°C", t.round() as i64));
-    let mut load = chip(look, "CPU", fmt::pct(d.cpu_pct));
+    // Right-aligned on its line, so each figure keeps its widest width:
+    // otherwise CPU going from 5% to 15% would move the whole group.
+    let mut load = chip(look, "CPU", pad(fmt::pct(d.cpu_pct), 4));
     load.spans.push(Span::raw("  "));
-    load.spans.extend(chip(look, "Mem", fmt::pct(mem)).spans);
+    load.spans.extend(chip(look, "Mem", pad(fmt::pct(mem), 4)).spans);
     load.spans.push(Span::raw("  "));
-    load.spans.push(Span::styled(temp, bold(p.ink)));
+    load.spans.push(Span::styled(pad(temp, 4), bold(p.ink)));
 
     // Words in their half's colour, not arrows: an arrow glyph is too small
     // to read across the room. The table's columns take the same colours.
@@ -734,9 +762,9 @@ pub fn guest(
     let (muted, ink) = (style(look.p.muted), style(look.p.ink));
     let cpu = g.and_then(|g| g.cpu_pct);
     let used = g.and_then(|g| ratio(g.mem, g.maxmem));
-    let wide = width.saturating_sub(4) >= 34;
+    let wide = width.saturating_sub(4) >= WIDE;
     let roomy = width.saturating_sub(4) >= 26;
-    let rate = |v: Option<f64>| Span::styled(fmt::rate(v), ink);
+    let rate = |v: Option<f64>| Span::styled(fixed_rate(v, 4), ink);
     let mut lines = vec![meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4)];
     if wide {
         lines.push(meter(look, "Mem", used, mem_text(g.and_then(|g| g.mem), g.and_then(|g| g.maxmem)), 0));
@@ -798,7 +826,7 @@ pub fn guest(
 
 /// Lines a guest card of this width has to show.
 pub fn guest_lines(width: u16, guest: Option<&Guest>) -> u16 {
-    if width.saturating_sub(4) >= 34 {
+    if width.saturating_sub(4) >= WIDE {
         5
     } else {
         5 + u16::from(guest.is_some_and(|g| !g.addresses.is_empty()))
@@ -823,9 +851,9 @@ pub fn guest_list(look: &Look, slots: &[&Slot], status: &Status) -> Card {
                 gauge(g.and_then(|g| ratio(g.mem, g.maxmem))),
                 Line::from(vec![
                     Span::styled("↓", style(p.muted)),
-                    Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), style(p.ink)),
+                    Span::styled(fixed_rate(g.and_then(|g| g.net_in_bps), 4), style(p.ink)),
                     Span::styled(" ↑", style(p.muted)),
-                    Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), style(p.ink)),
+                    Span::styled(fixed_rate(g.and_then(|g| g.net_out_bps), 4), style(p.ink)),
                 ]),
             ]
         })
@@ -841,7 +869,7 @@ pub fn guest_list(look: &Look, slots: &[&Slot], status: &Status) -> Card {
                 Col { title: "Guest", width: 0, right: false, tint: None },
                 Col { title: "CPU", width: 11, right: false, tint: None },
                 Col { title: "Mem", width: 11, right: false, tint: None },
-                Col { title: "MiB/s", width: 9, right: false, tint: None },
+                Col { title: "MiB/s", width: 11, right: false, tint: None },
             ],
             rows,
             empty: "no other guests running",

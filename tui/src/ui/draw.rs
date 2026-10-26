@@ -1041,11 +1041,14 @@ fn spread_row(pen: &mut Pen, area: Rect, items: &[Line<'static>]) {
     let used: u16 = widths.iter().sum();
     let gaps = items.len().saturating_sub(1) as u16;
     let room = area.width.saturating_sub(used);
+    // Two columns between items at least, unless that would push the last
+    // one past the edge: then what room there is, shared out.
+    let least = if room >= 2 * gaps { 2 } else { 0 };
     let mut x = area.x;
     for (i, (item, w)) in items.iter().zip(&widths).enumerate() {
         pen.line(area, x, area.y, item);
         let i = i as u16;
-        let gap = if gaps == 0 { 0 } else { (room / gaps + u16::from(i < room % gaps)).max(2) };
+        let gap = if gaps == 0 { 0 } else { (room / gaps + u16::from(i < room % gaps)).max(least) };
         x += w + gap;
     }
 }
