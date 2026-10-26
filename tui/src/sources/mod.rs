@@ -231,6 +231,8 @@ pub struct WeatherData {
     pub hours: Vec<Hour>,
     /// Today first.
     pub days: Vec<Day>,
+    /// In force now, worst first; none where the source has no alerts.
+    pub alerts: Vec<Alert>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -279,4 +281,16 @@ pub struct Day {
     /// Local, "2026-10-25T07:21".
     pub sunrise: String,
     pub sunset: String,
+}
+
+/// A weather alert in force for the place: an advisory, watch or warning.
+#[derive(Clone, Debug, Default)]
+pub struct Alert {
+    /// "Frost Advisory".
+    pub event: String,
+    /// "Extreme", "Severe", "Moderate", "Minor" or "Unknown".
+    pub severity: String,
+    pub headline: Option<String>,
+    /// Local, "2026-10-26T09:00", when it ends or, failing that, expires.
+    pub until: String,
 }

@@ -14,7 +14,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use super::agent::{days_from_civil, unix_seconds};
-use super::{lock, Day, Hour, Now, WeatherData, WEATHER_TIMEOUT};
+use super::{lock, Alert, Day, Hour, Now, WeatherData, WEATHER_TIMEOUT};
 use crate::config::Config;
 use crate::json::{int, list, num, text};
 use crate::net;
@@ -115,7 +115,7 @@ impl Weather {
         let started = Instant::now();
         let (lat, lon, name) = self.place(started)?;
         let imperial = self.config.weather_imperial;
-        let data = match self.provider(lat, lon, started)? {
+        let mut data = match self.provider(lat, lon, started)? {
             Provider::Nws { hourly, forecast, station } => {
                 let units = if imperial { "" } else { "?units=si" };
                 let (hourly, forecast, station) = (format!("{hourly}{units}"), format!("{forecast}{units}"), station.clone());
@@ -123,7 +123,11 @@ impl Weather {
                 let days = self.get(&forecast, started)?;
                 // A station that has gone quiet leaves now to the forecast.
                 let observed = station.and_then(|s| self.get(&format!("{NWS}/stations/{s}/observations/latest"), started).ok());
-                nws(&hours, &days, observed.as_ref(), name, imperial, (lat, lon))?
+                let mut data = nws(&hours, &days, observed.as_ref(), name, imperial, (lat, lon))?;
+                // Alerts are worth having but not worth failing the poll over.
+                let url = format!("{NWS}/alerts/active?point={lat:.4},{lon:.4}&status=actual");
+                data.alerts = self.get(&url, started).map(|a| alerts(&a)).unwrap_or_default();
+                data
             }
             Provider::OpenMeteo => {
                 let units = if imperial {
@@ -144,6 +148,16 @@ impl Weather {
                 open_meteo(&self.get(&url, started)?, name, imperial)?
             }
         };
+        // `tui: demo` shows what an alert looks like, when none is in force.
+        if self.config.demo && data.alerts.is_empty() {
+            let tomorrow = data.days.get(1).map_or(String::new(), |d| d.date.clone());
+            data.alerts.push(Alert {
+                event: "Frost Advisory".into(),
+                severity: "Moderate".into(),
+                headline: Some("Frost Advisory issued October 25 at 3:12PM EDT until October 26 at 9:00AM EDT by NWS Sterling VA".into()),
+                until: format!("{tomorrow}T09:00"),
+            });
+        }
         lock(source).succeed(data);
         Ok(())
     }
@@ -247,7 +261,34 @@ fn nws(hourly: &Value, forecast: &Value, observed: Option<&Value>, place: String
         now.feels = feels_like(now.temp, now.wind, now.humidity, imperial);
     }
 
-    Ok(WeatherData { place, imperial, source: "NWS", now, hours, days })
+    Ok(WeatherData { place, imperial, source: "NWS", now, hours, days, alerts: Vec::new() })
+}
+
+/// The alerts in force, from the NWS's active ones for the point: worst
+/// first, each event once however many times it was issued.
+fn alerts(body: &Value) -> Vec<Alert> {
+    let rank = |severity: &str| match severity {
+        "Extreme" => 0,
+        "Severe" => 1,
+        "Moderate" => 2,
+        "Minor" => 3,
+        _ => 4,
+    };
+    let mut found: Vec<Alert> = list(body, "features")
+        .iter()
+        .filter_map(|f| f.get("properties"))
+        .filter(|p| text(p, "status") == Some("Actual") && text(p, "messageType") != Some("Cancel"))
+        .map(|p| Alert {
+            event: text(p, "event").unwrap_or("Alert").to_string(),
+            severity: text(p, "severity").unwrap_or("Unknown").to_string(),
+            headline: text(p, "headline").map(str::to_string),
+            until: text(p, "ends").or_else(|| text(p, "expires")).and_then(|t| t.get(..16)).unwrap_or("").to_string(),
+        })
+        .collect();
+    found.sort_by_key(|a| rank(&a.severity));
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|a| seen.insert(a.event.clone()));
+    found
 }
 
 /// The NWS's condition, from its icon's address
@@ -401,7 +442,7 @@ fn open_meteo(body: &Value, place: String, imperial: bool) -> Result<WeatherData
         })
         .collect();
 
-    Ok(WeatherData { place, imperial, source: "Open-Meteo", now, hours, days })
+    Ok(WeatherData { place, imperial, source: "Open-Meteo", now, hours, days, alerts: Vec::new() })
 }
 
 /// A place name for a URL query: letters and digits as they are, the rest
@@ -479,6 +520,24 @@ mod tests {
         assert_eq!(w.days[1].text.as_deref(), Some("Sunny"));
         assert_eq!(w.now.temp, Some(48.0));
         assert_eq!(w.source, "NWS");
+    }
+
+    #[test]
+    fn alerts_worst_first_without_tests_or_repeats() {
+        let alert = |event: &str, severity: &str, status: &str| json!({"properties": {
+            "event": event, "severity": severity, "status": status, "messageType": "Alert",
+            "headline": "h", "ends": "2026-10-26T09:00:00-04:00"
+        }});
+        let body = json!({"features": [
+            alert("Frost Advisory", "Minor", "Actual"),
+            alert("Test Message", "Unknown", "Test"),
+            alert("Wind Advisory", "Moderate", "Actual"),
+            alert("Frost Advisory", "Minor", "Actual"),
+        ]});
+        let found = alerts(&body);
+        let events: Vec<&str> = found.iter().map(|a| a.event.as_str()).collect();
+        assert_eq!(events, ["Wind Advisory", "Frost Advisory"]);
+        assert_eq!(found[0].until, "2026-10-26T09:00");
     }
 
     #[test]
