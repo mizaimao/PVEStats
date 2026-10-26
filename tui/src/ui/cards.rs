@@ -9,7 +9,7 @@ use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
 use crate::sources::{AgentData, Guest, NasData, Nic, Node, PveData, RouterData};
-use crate::state::{clock, Source, Status};
+use crate::state::{clock, History, Source, Status};
 
 /// One guest's place on screen. `guest` is None for the GPU and NAS cards
 /// until PVE first answers: they have sources of their own and must not
@@ -152,7 +152,7 @@ fn disk_line(look: &Look, guest: Option<&Guest>) -> Part {
 
 // ------------------------------------------------------------ PVE host
 
-pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) -> Card {
+pub fn host(look: &Look, node: &Node, pve: &dyn History, status: &Status) -> Card {
     let p = look.p;
     // Trim pve-manager's build hash: it is noise at a glance.
     let version = node.pveversion.as_deref().unwrap_or("").split('/').take(2).collect::<Vec<_>>().join(" ");
@@ -187,7 +187,7 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
 /// PVE's series named in `keys`.
 fn cpu_and_memory(
     look: &Look,
-    pve: &Source<PveData>,
+    pve: &dyn History,
     keys: (&str, &str),
     (cpu, mem, maxmem): (Option<f64>, Option<f64>, Option<f64>),
     last: Line<'static>,
@@ -206,14 +206,15 @@ fn cpu_and_memory(
         top: Some(100.0),
         floor: 0.0,
         axis: axis_pct,
-        seconds_per_sample: pve.interval,
+        seconds_per_sample: pve.interval(),
         caption: String::new(),
         min_rows: 5,
         max_rows,
         weight: 1,
-        // A cell per 10s sample, so the chart reaches back further than the
-        // buffer would stretched across.
-        sample_width: Some(1.0),
+        // A cell per 10s sample from PVE, so the chart reaches back further
+        // than the buffer would stretched across; from the host agent's 2 s
+        // samples, two to a cell.
+        sample_width: Some(if pve.interval() < 10.0 { 0.5 } else { 1.0 }),
     });
     let figures = Part::Stack(vec![
         figure("CPU", fmt::pct(cpu)),
@@ -794,7 +795,7 @@ pub fn guest(
     look: &Look,
     slot: &Slot,
     status: &Status,
-    pve: &Source<PveData>,
+    pve: &dyn History,
     chart: u16,
     width: u16,
     height: u16,

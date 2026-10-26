@@ -16,8 +16,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::config::{Config, View};
-use crate::sources::{lock, PveData, Shared};
-use crate::state::{clock, Source, Status};
+use crate::sources::{lock, HostData, PveData, Shared};
+use crate::state::{clock, History, Status};
 use cards::Slot;
 use draw::{share, Card, Part, Pen};
 use theme::Look;
@@ -61,11 +61,18 @@ impl Screen {
 
     pub fn draw(&mut self, buf: &mut Buffer, area: Rect, shared: &Shared, config: &Config, look: &Look) {
         let pve = lock(&shared.pve);
+        let host_agent = lock(&shared.host);
         let agent = lock(&shared.agent);
         let nas = lock(&shared.nas);
         let router = lock(&shared.router);
         let forecast = lock(&shared.weather);
         let (sp, sa, sn, sr) = (pve.status(), agent.status(), nas.status(), router.status());
+        let sh = host_agent.status();
+        // The host agent's live figures over PVE's while it answers, and its
+        // 2 s history for the host's and guests' charts; PVE's otherwise.
+        let live = config.host_configured() && sh.ok && !sh.stale;
+        let data: Option<PveData> = pve.data.as_ref().map(|d| if live { overlay(d, host_agent.data.as_ref()) } else { d.clone() });
+        let history: &dyn History = if live { &*host_agent } else { &*pve };
         let mut pen = Pen { buf, look };
         pen.fill_bg(area, look.p.plane);
         let body = if self.orbit && area.width > 1 && area.height > 1 {
@@ -103,7 +110,7 @@ impl Screen {
         // A name in config.yaml wins over the VM's name in Proxmox, which can
         // be years out of date.
         let mut slots: BTreeMap<u64, Slot> = BTreeMap::new();
-        if let Some(data) = pve.data.as_ref() {
+        if let Some(data) = data.as_ref() {
             for (&vmid, guest) in &data.guests {
                 let name = config
                     .hosts
@@ -125,11 +132,16 @@ impl Screen {
 
         let names: Vec<&str> = theme::names().collect();
         let theme_now = self.tour.as_ref().map(|t| names[t.index % names.len()]);
-        let host_card = match pve.data.as_ref() {
-            Some(d) => cards::host(look, &d.node, &pve, &sp),
+        let host_card = match data.as_ref() {
+            Some(d) => cards::host(look, &d.node, history, &sp),
             None => cards::pve_note(look, &sp),
         };
-        let mut sources = vec![("pve", &sp), ("agent", &sa), ("truenas", &sn)];
+        let mut sources = vec![("pve", &sp)];
+        // The host agent's dot beside PVE's, whose live figures it gives.
+        if config.host_configured() {
+            sources.push(("host", &sh));
+        }
+        sources.extend([("agent", &sa), ("truenas", &sn)]);
         if config.router_shown() {
             sources.push(("router", &sr));
         }
@@ -141,7 +153,7 @@ impl Screen {
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
         nas_cards.extend(config.router_shown().then(|| cards::router(look, &router, &sr)));
         let basic: Vec<&Slot> = of(View::Basic).collect();
-        let guests = Guests { slots: &basic, status: &sp, pve: &pve };
+        let guests = Guests { slots: &basic, status: &sp, pve: history };
         let tour = self.tour.as_ref().map(|t| cards::tour(look, &names, t.index % names.len(), t.next_in));
 
         if self.focus && !gpu_cards.is_empty() {
@@ -231,8 +243,8 @@ impl Screen {
 struct Guests<'a> {
     slots: &'a [&'a Slot<'a>],
     status: &'a Status,
-    /// For each guest's CPU history.
-    pve: &'a Source<PveData>,
+    /// For each guest's CPU history: PVE's, or the host agent's while live.
+    pve: &'a dyn History,
 }
 
 /// Narrowest a guest card may be: room for "CPU ■■■ 12%".
@@ -507,6 +519,32 @@ fn local_time() -> String {
     format!("{h:02}:{m:02}")
 }
 
+/// PVE's data with the host agent's live figures in its place where the
+/// agent has them: the host's CPU, memory, load, uptime and threads, and
+/// each guest's CPU, network and uptime. Names, limits, guest memory,
+/// addresses and disk usage stay PVE's.
+fn overlay(pve: &PveData, host: Option<&HostData>) -> PveData {
+    let mut d = pve.clone();
+    let Some(h) = host else { return d };
+    d.node.cpu_pct = h.cpu_pct.or(d.node.cpu_pct);
+    if h.maxmem.is_some() {
+        (d.node.mem, d.node.maxmem) = (h.mem, h.maxmem);
+    }
+    if !h.loadavg.is_empty() {
+        d.node.loadavg = h.loadavg.clone();
+    }
+    d.node.uptime = h.uptime.or(d.node.uptime);
+    d.node.cpus = h.cpus.or(d.node.cpus);
+    for (vmid, g) in d.guests.iter_mut() {
+        let Some(hg) = h.guests.get(vmid) else { continue };
+        g.cpu_pct = hg.cpu_pct.or(g.cpu_pct);
+        g.net_in_bps = hg.net_in_bps.or(g.net_in_bps);
+        g.net_out_bps = hg.net_out_bps.or(g.net_out_bps);
+        g.uptime = hg.uptime.or(g.uptime);
+    }
+    d
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,6 +555,7 @@ mod tests {
             name: None,
             uptime: None,
             cpu_pct: None,
+            maxcpu: None,
             mem: None,
             maxmem: Some(memory_gib * 1024f64.powi(3)),
             addresses: Vec::new(),
@@ -538,7 +577,7 @@ mod tests {
             .collect();
         let refs: Vec<&Slot> = slots.iter().collect();
         let status = Status { ok: true, error: None, age: None, interval: 10.0, stale: false };
-        let pve = Source::new(10.0, 600.0);
+        let pve: crate::state::Source<PveData> = crate::state::Source::new(10.0, 600.0);
         let g = Guests { slots: &refs, status: &status, pve: &pve };
         // 57 x 12: two rows of six, three cards and then two.
         assert_eq!(g.rows(57, 12), Some(2));
