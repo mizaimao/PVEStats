@@ -179,6 +179,12 @@ impl Screen {
                 None => forecast_card.render(&mut pen, above),
             }
             guests.render(&mut pen, Rect { y: area.bottom() - guests_h, height: guests_h, ..area });
+            // In the gap above the guests, once, since their cards have no
+            // room for it: PVE counts a VM's disk cache as used memory.
+            if guests_h > 0 && !basic.is_empty() {
+                let note = "VM memory as Proxmox counts it: disk cache included";
+                pen.text(area, area.x + 1, area.bottom() - guests_h - 1, note, Style::default().fg(look.p.muted));
+            }
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
             let mut left_cards = vec![top];
