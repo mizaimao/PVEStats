@@ -40,20 +40,31 @@ case "$1" in
         exec 8>"$LOCK"
         flock -n 8 || exit 0
         echo $$ >"$PIDFILE"
+        # Should the agent ever crash, no core file: none at all, and in
+        # memory if the limit were ever lifted, since the firmware writes
+        # cores to the working folder.
+        ulimit -c 0
+        cd /tmp || exit 1
+        # 8>&- on everything it starts: nothing but the keeper holds its
+        # lock, so a stop and a quick start cannot find it held by a
+        # leftover sleep.
         while :; do
-            ip=$(nvram get lan_ipaddr)
+            ip=$(nvram get lan_ipaddr 8>&-)
             if [ -n "$ip" ]; then
-                # 8>&-: the agent does not hold the keeper's lock.
                 "$DIR/pvestats-router" --listen "$ip:$PORT" 8>&-
             fi
-            sleep 30
+            sleep 30 8>&-
         done
         ;;
     stop)
-        # The keeper first, so it cannot start the agent again.
-        keeper_alive && kill "$pid"
+        # The keeper first, so it cannot start the agent again; twice, a
+        # second apart, for a keeper that was only starting the first time.
+        for pass in 1 2; do
+            keeper_alive && kill "$pid"
+            for p in $(pidof pvestats-router); do kill "$p" 2>/dev/null; done
+            [ $pass = 1 ] && sleep 1
+        done
         rm -f "$PIDFILE"
-        for p in $(pidof pvestats-router); do kill "$p" 2>/dev/null; done
         ;;
     status)
         if netstat -ltn | grep -q ":$PORT "; then echo running; else echo stopped; fi

@@ -26,28 +26,36 @@ On the build machine a request takes 0.09 ms of CPU.
 
 ## Limits, so it cannot hurt the router
 
-- Requests are answered one at a time, each given at most 3 seconds; at
-  most 8 KiB of a request is read and none of it is looked at. A client
-  that connects and says nothing delays the next answer by 3 seconds and no
-  more.
+- Requests are answered one at a time, at least 100 ms apart, each given at
+  most 3 seconds; at most 8 KiB of a request is read and none of it is
+  looked at. A client asking in a tight loop gets ten answers a second, and
+  one that connects and says nothing delays the next answer by 3 seconds.
+- Per request it reads no file the kernel locks its network stack for: the
+  ports' link speeds are read every 30 s, with the devices.
 - Each `nvram` or `wl` run is killed after 5 seconds. One that will not die
   even then stops any more from starting until it has gone, so a hung driver
   cannot pile processes up; the device counts just grow old, and
-  `devices_age` says how old.
+  `devices_age` says how old. Each band keeps its own count, so one network
+  that will not answer does not hold back the rest; a radio that is off is
+  not asked.
 - One keeper (`service.sh`), even if started twice. Should the program ever
   exit, the keeper starts it again after 30 seconds; it sleeps the rest of
   the time. It neither starts without a LAN address nor binds to anything
-  else.
+  else, and should the LAN address change, the program exits for the keeper
+  to start it on the new one.
 - Nothing logs (the router keeps its log on flash). The program writes
-  nothing; the keeper writes a process id and a lock file to `/tmp`, which is
-  memory. Both use only the firmware's own tools, never Entware's on the USB
-  drive.
+  nothing, and should it ever crash it leaves no core file: the keeper turns
+  them off and runs from `/tmp`, which is memory, where it also keeps a
+  process id and a lock file. Both use only the firmware's own tools, never
+  Entware's on the USB drive.
 
 Tested on the build machine with stand-in `nvram` and `wl`: 300 requests 50
-at a time all answered, with memory (2.1 MB), threads (2) and open files (4)
-unchanged; 100 KB of junk answered and closed; a `wl` hanging for 15
-seconds left answers under 7 ms, never more than one stuck run, and the
-counts back once it answered again.
+at a time all answered, with memory (2.2 MB), threads (2) and open files (4)
+unchanged; a client in a tight loop got 49 answers in 5 s for 10 ms of CPU;
+junk and byte-at-a-time heads answered and closed; a `wl` hanging for a
+round left answers within the 100 ms gap, never more than one stuck run,
+and the counts back once it answered again; a changed LAN address made it
+exit; a failing guest network held back only its own band.
 
 ## What it answers
 
@@ -67,8 +75,9 @@ the dashboard turns both into rates. `mem` is bytes, `temp` °C (the SoC's
 own sensor; the radios' sensors are left alone, since reading them asks each
 chip directly). A band's rx is what its devices sent, tx what they got, over
 the radio and the networks it carries (`wl0` with `wl0.1` and so on). Two
-radios on one band are numbered: "6 GHz-1", "6 GHz-2". `devices_age` is
-seconds since the devices were counted, null before the first count.
+radios on one band are numbered: "6 GHz-1", "6 GHz-2". A band's `devices`
+is null until it is first counted. `devices_age` is seconds since the
+oldest band's count, null before any.
 
 ## Building
 
