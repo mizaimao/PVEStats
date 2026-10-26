@@ -106,10 +106,14 @@ Checked on TrueNAS, as `pvestats`, in user-level units (2026-10-26):
    - Timeout: 10
    - Command (one line):
 
-         systemd-run --unit=pvestats-nas --uid=pvestats --gid=pvestats -p Restart=always -p RestartSec=30 -p StartLimitIntervalSec=600 -p StartLimitBurst=10 -p StandardOutput=null -p StandardError=journal -p RequiresMountsFor=/mnt/CompoundZ2FS/NAS/pvestats -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes -p ProtectHostname=yes -p RestrictAddressFamilies="AF_INET AF_INET6" -p RestrictNamespaces=yes -p LockPersonality=yes -p MemoryDenyWriteExecute=yes -p RestrictRealtime=yes -p SystemCallArchitectures=native -p CapabilityBoundingSet= -p LimitNOFILE=64 -p TasksMax=16 -p LimitCORE=0 /mnt/CompoundZ2FS/NAS/pvestats/pvestats-nas --listen 10.10.10.2:9839
+         systemd-run --unit=pvestats-nas --uid=pvestats -p Restart=always -p RestartSec=30 -p StartLimitIntervalSec=600 -p StartLimitBurst=10 -p StandardOutput=null -p StandardError=journal -p RequiresMountsFor=/mnt/CompoundZ2FS/NAS/pvestats -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes -p ProtectHostname=yes -p RestrictAddressFamilies="AF_INET AF_INET6" -p RestrictNamespaces=yes -p LockPersonality=yes -p MemoryDenyWriteExecute=yes -p RestrictRealtime=yes -p SystemCallArchitectures=native -p CapabilityBoundingSet= -p LimitNOFILE=64 -p TasksMax=16 -p LimitCORE=0 /mnt/CompoundZ2FS/NAS/pvestats/pvestats-nas --listen 10.10.10.2:9839
 
 3. To start it now without a reboot, go to System › Shell and run the same
-   command with `sudo` in front.
+   command with `sudo` in front. systemd refuses the name while an earlier
+   try is still loaded, so before running it again, run
+   `sudo systemctl stop pvestats-nas; sudo systemctl reset-failed pvestats-nas`.
+   For the same reason, the command does nothing when the agent is already
+   running. The group is pvestats's own (`--uid` alone sets it).
 
 4. Check it from the repo:
 
