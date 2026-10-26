@@ -4,7 +4,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Spark, Table, Trace};
+use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Table, Trace};
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
@@ -316,8 +316,8 @@ pub fn gpu(
 
     // The guest's CPU and memory are PVE's, at its 10s pace. When PVE is not
     // answering they keep its last values, greyed, rather than looking live.
-    // On one chart like the host's, and as tall. ml60's storage is passed
-    // through, so the hypervisor never sees its disk traffic: network only.
+    // The guest's CPU and memory, and network: ml60's storage is passed
+    // through, so the hypervisor never sees its disk traffic.
     let guest = slot.guest;
     let net = Line::from(vec![
         Span::styled("net ↓", style(p.muted)),
@@ -325,16 +325,15 @@ pub fn gpu(
         Span::styled(" ↑", style(p.muted)),
         Span::styled(fmt::rate(guest.and_then(|g| g.net_out_bps)), style(p.ink)),
     ]);
+    let cpu = guest.and_then(|g| g.cpu_pct);
+    let mem = guest.and_then(|g| ratio(g.mem, g.maxmem)).map(|r| r * 100.0);
     let mut pve_parts = Part::Stack(vec![
-        cpu_and_memory(
-            look,
-            pve_data,
-            (&format!("cpu.{}", slot.vmid), &format!("mem.{}", slot.vmid)),
-            (guest.and_then(|g| g.cpu_pct), guest.and_then(|g| g.mem), guest.and_then(|g| g.maxmem)),
-            net,
-            5,
-        ),
-        disk_line(look, guest),
+        // Two small charts side by side, CPU and memory, a figure under each.
+        Part::Row(vec![
+            (0, small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu)))),
+            (0, small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem)))),
+        ]),
+        Part::Flow(24, vec![Part::Text(net), disk_line(look, guest)]),
     ]);
     if !pve.ok {
         pve_parts = Part::Dim(Box::new(pve_parts));
@@ -439,13 +438,26 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
     let data = nas.data.as_ref();
     let interfaces = data.map_or(&[][..], |d| d.interfaces.as_slice());
 
+    // The bars at half length, side by side; the GiB ride on the line above.
+    let mem_ratio = guest.and_then(|g| ratio(g.mem, g.maxmem));
     let mut usage = Part::Flow(
-        30,
+        24,
         vec![
             meter(look, "CPU", guest.and_then(|g| g.cpu_pct).map(|v| v / 100.0), fmt::pct(guest.and_then(|g| g.cpu_pct)), 4),
-            meter(look, "Mem", guest.and_then(|g| ratio(g.mem, g.maxmem)), mem_text(guest.and_then(|g| g.mem), guest.and_then(|g| g.maxmem)), 0),
+            meter(look, "Mem", mem_ratio, fmt::pct(mem_ratio.map(|r| r * 100.0)), 4),
         ],
     );
+    let heading = match guest {
+        None => sub(look, vec![fmt::DASH.into()]),
+        Some(g) => sub(
+            look,
+            vec![
+                g.addresses.first().cloned().unwrap_or_default(),
+                format!("up {}", fmt::uptime(g.uptime)),
+                mem_text(g.mem, g.maxmem),
+            ],
+        ),
+    };
     if !pve.ok {
         usage = Part::Dim(Box::new(usage));
     }
@@ -536,7 +548,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
         stale: !status.ok,
         error: status.error.clone(),
         body: vec![
-            guest_sub(look, guest),
+            heading,
             usage,
             Part::Gap,
             Part::Stack(network),
@@ -589,22 +601,18 @@ pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16)
         lines.push(guest_sub(look, g));
     } else {
         lines.push(meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4));
-        lines.push(Part::Text(Line::from(vec![
-            Span::styled("net ↓", muted),
-            rate(g.and_then(|g| g.net_in_bps)),
-            Span::styled(" ↑", muted),
-            rate(g.and_then(|g| g.net_out_bps)),
-        ])));
+        // Spread across the card, so a wide one has no empty right half.
+        let pair = |mark: &str, v: Option<f64>| Line::from(vec![Span::styled(mark.to_string(), muted), rate(v)]);
+        lines.push(Part::Spread(vec![
+            Line::styled("net", muted),
+            pair("↓", g.and_then(|g| g.net_in_bps)),
+            pair("↑", g.and_then(|g| g.net_out_bps)),
+        ]));
         // Passed-through storage reads near zero however busy it is.
-        lines.push(Part::Text(Line::from(match g.filter(|g| g.disk_io_visible) {
-            Some(g) => vec![
-                Span::styled("io  r", muted),
-                rate(g.disk_read_bps),
-                Span::styled(" w", muted),
-                rate(g.disk_write_bps),
-            ],
-            None => vec![Span::styled("io  –", muted)],
-        })));
+        lines.push(Part::Spread(match g.filter(|g| g.disk_io_visible) {
+            Some(g) => vec![Line::styled("io", muted), pair("r", g.disk_read_bps), pair("w", g.disk_write_bps)],
+            None => vec![Line::styled("io", muted), Line::styled(fmt::DASH, muted)],
+        }));
         let disk = g
             .and_then(|g| g.filesystem.as_ref())
             .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
@@ -719,121 +727,20 @@ pub fn tour(look: &Look, names: &[&str], index: usize, next_in: u64) -> Card {
     }
 }
 
-// ----------------------------------------------------------- ml60 trials
-
-/// Trial versions of ml60's CPU and memory, for picking one; shown in the
-/// right-hand column until then.
-pub fn ml60_options(look: &Look, slot: &Slot, pve: &Source<PveData>, status: &Status) -> Vec<Card> {
-    let p = look.p;
-    let g = slot.guest;
-    let cpu = g.and_then(|g| g.cpu_pct);
-    let (mem, maxmem) = (g.and_then(|g| g.mem), g.and_then(|g| g.maxmem));
-    let mem_ratio = ratio(mem, maxmem);
-    let mem_pct = fmt::pct(mem_ratio.map(|r| r * 100.0));
-    let gib = mem_text(mem, maxmem);
-    let (cpu_key, mem_key) = (format!("cpu.{}", slot.vmid), format!("mem.{}", slot.vmid));
-    let trace = |key: &str, series: usize| Trace::from(pve.series(key), series, "");
-    let figure = |text: String| Line::styled(text, bold(p.ink));
-    let named = |text: &str, series: usize| Line::styled(text.to_string(), style(look.flat(series)));
-    let net = || {
-        Part::Text(Line::from(vec![
-            Span::styled("net ↓", style(p.muted)),
-            Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), style(p.ink)),
-            Span::styled(" ↑", style(p.muted)),
-            Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), style(p.ink)),
-            Span::styled(" MiB/s", style(p.muted)),
-        ]))
-    };
-    let footer = || Part::Flow(24, vec![net(), disk_line(look, g)]);
-    let spark = |label: Line<'static>, key: &str, series: usize, value: Line<'static>| {
-        Part::Spark(Spark {
-            label,
-            label_w: 8,
-            trace: trace(key, series),
-            capacity: pve.capacity(),
-            top: 100.0,
-            value,
-            value_w: 24,
-            rows: 2,
-            sample_width: Some(1.0),
-        })
-    };
-    let small_chart = |key: &str, series: usize, caption: String| {
-        Part::Chart(Chart {
-            traces: vec![trace(key, series)],
-            capacity: pve.capacity(),
-            top: Some(100.0),
-            floor: 0.0,
-            axis: axis_pct,
-            seconds_per_sample: pve.interval,
-            caption,
-            min_rows: 5,
-            max_rows: 5,
-            weight: 1,
-            sample_width: Some(1.0),
-        })
-    };
-    let card = |name: &str, body: Vec<Part>| Card {
-        title: format!("ml60 CPU and memory, option {name}"),
-        right: String::new(),
-        stale: !status.ok,
-        error: status.error.clone(),
-        body,
-    };
-    vec![
-        // A: btop's per-core rows, a short graph each.
-        card("A", vec![
-            spark(named("CPU", 0), &cpu_key, 0, figure(fmt::pct(cpu))),
-            spark(named("Memory", 1), &mem_key, 1, figure(format!("{mem_pct} · {gib}"))),
-            footer(),
-        ]),
-        // B: the bars, half as long, side by side.
-        card("B", vec![
-            Part::Flow(
-                24,
-                vec![
-                    meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
-                    meter(look, "Mem", mem_ratio, mem_pct.clone(), 4),
-                ],
-            ),
-            Part::Chips(vec![
-                Line::styled(gib.clone(), style(p.ink2)),
-                match net() {
-                    Part::Text(line) => line,
-                    _ => Line::default(),
-                },
-                chip(look, "disk", match g.and_then(|g| g.filesystem.as_ref()) {
-                    Some(fs) => fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)),
-                    None => fmt::DASH.into(),
-                }),
-            ]),
-        ]),
-        // C: btop's network style, CPU rising and memory hanging.
-        card("C", vec![
-            Part::Mirror(Mirror {
-                up: trace(&cpu_key, 0),
-                down: trace(&mem_key, 1),
-                up_label: named("CPU", 0),
-                down_label: named("Memory", 1),
-                up_value: fmt::pct(cpu),
-                down_value: format!("{mem_pct} · {gib}"),
-                label_w: 8,
-                value_w: 24,
-                capacity: pve.capacity(),
-                floor: 0.0,
-                scale: Some(100.0),
-                format: |v| fmt::pct(Some(v)),
-                rows: 4,
-            }),
-            footer(),
-        ]),
-        // D: two small charts side by side, each with its own figure.
-        card("D", vec![
-            Part::Row(vec![
-                (0, small_chart(&cpu_key, 0, format!("CPU {}", fmt::pct(cpu)))),
-                (0, small_chart(&mem_key, 1, format!("Mem {mem_pct}"))),
-            ]),
-            footer(),
-        ]),
-    ]
+/// One PVE series on its own small 0-100 chart, its figure in the caption:
+/// a cell per 10s sample, like the host's.
+fn small_chart(pve: &Source<PveData>, key: &str, series: usize, caption: String) -> Part {
+    Part::Chart(Chart {
+        traces: vec![Trace::from(pve.series(key), series, "")],
+        capacity: pve.capacity(),
+        top: Some(100.0),
+        floor: 0.0,
+        axis: axis_pct,
+        seconds_per_sample: pve.interval,
+        caption,
+        min_rows: 5,
+        max_rows: 5,
+        weight: 1,
+        sample_width: Some(1.0),
+    })
 }

@@ -74,8 +74,6 @@ pub enum Part {
     Text(Line<'static>),
     Meter(Meter),
     Chart(Chart),
-    /// A label, a short graph and the figure, btop's per-core style.
-    Spark(Spark),
     /// Two graphs on one axis, one up and one down, btop's network style.
     Mirror(Mirror),
     /// A value in big digits.
@@ -84,6 +82,9 @@ pub enum Part {
     Tile(String, Line<'static>),
     /// Short lines set side by side, wrapped onto as many rows as needed.
     Chips(Vec<Line<'static>>),
+    /// Items spread across one row: the first at the left edge, the last at
+    /// the right, the rest evenly between.
+    Spread(Vec<Line<'static>>),
     Table(Table),
     /// Children side by side: (fixed width or 0 for a share of the rest).
     Row(Vec<(u16, Part)>),
@@ -101,9 +102,8 @@ impl Part {
     /// Rows needed at this width, before any share of spare rows.
     pub fn height(&self, width: u16) -> u16 {
         match self {
-            Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
+            Part::Gap | Part::Text(_) | Part::Meter(_) | Part::Spread(_) => 1,
             Part::Chart(c) => c.min_rows,
-            Part::Spark(s) => s.rows,
             Part::Mirror(m) => m.rows,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
@@ -157,13 +157,13 @@ impl Part {
             }
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
-            Part::Spark(s) => s.render(pen, area),
             Part::Mirror(m) => m.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
                 pen.line(area, area.x, area.y + 1, value);
             }
+            Part::Spread(items) => spread_row(pen, area, items),
             Part::Chips(chips) => {
                 for (i, line) in chip_lines(chips, area.width).iter().enumerate() {
                     pen.line(area, area.x, area.y + i as u16, line);
@@ -457,37 +457,6 @@ impl Chart {
         }
         pen.line(left, x, y, &Line::from(legend));
         pen.text(area, now_x, y, "now", muted);
-    }
-}
-
-/// btop's per-core row: a label, a short graph of the recent past on a fixed
-/// scale, and the figure now, across `rows` rows.
-pub struct Spark {
-    pub label: Line<'static>,
-    pub label_w: u16,
-    pub trace: Trace,
-    pub capacity: usize,
-    pub top: f64,
-    pub value: Line<'static>,
-    pub value_w: u16,
-    pub rows: u16,
-    /// As on a chart: cells per sample, or None to fit the buffer across.
-    pub sample_width: Option<f64>,
-}
-
-impl Spark {
-    fn render(&self, pen: &mut Pen, area: Rect) {
-        // Label and figure sit on the graph's foot, where the bars stand.
-        let y = area.bottom() - 1;
-        pen.line(area, area.x, y, &self.label);
-        let vw = (self.value.width() as u16).min(self.value_w);
-        pen.line(area, area.right().saturating_sub(vw), y, &self.value);
-        let graph = Rect {
-            x: area.x + self.label_w,
-            width: area.width.saturating_sub(self.label_w + self.value_w + 1),
-            ..area
-        };
-        plot(pen, graph, std::slice::from_ref(&self.trace), self.capacity, self.top, false, self.sample_width);
     }
 }
 
@@ -1005,5 +974,22 @@ mod tests {
         assert_eq!(nice(31.0 * mib), 50.0 * mib);
         assert_eq!(span(180.0), "3m ago");
         assert_eq!(span(90.0), "90s ago");
+    }
+}
+
+/// Items across one row, the first flush left and the last flush right,
+/// with the room left over shared evenly between them. Short of room they
+/// sit two columns apart and run off the edge.
+fn spread_row(pen: &mut Pen, area: Rect, items: &[Line<'static>]) {
+    let widths: Vec<u16> = items.iter().map(|l| l.width() as u16).collect();
+    let used: u16 = widths.iter().sum();
+    let gaps = items.len().saturating_sub(1) as u16;
+    let room = area.width.saturating_sub(used);
+    let mut x = area.x;
+    for (i, (item, w)) in items.iter().zip(&widths).enumerate() {
+        pen.line(area, x, area.y, item);
+        let i = i as u16;
+        let gap = if gaps == 0 { 0 } else { (room / gaps + u16::from(i < room % gaps)).max(2) };
+        x += w + gap;
     }
 }
