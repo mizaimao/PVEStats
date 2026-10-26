@@ -120,7 +120,7 @@ impl Part {
             Part::Hours(_) => 4,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
-            Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
+            Part::Chips(chips) => chip_rows(chips, width).len().max(1) as u16,
             Part::Table(t) => t.caption.is_some() as u16 + 1 + t.rows.len().max(1) as u16,
             Part::Growing(t, least) => t.caption.is_some() as u16 + 1 + t.rows.len().min(*least).max(1) as u16,
             Part::Row(children) => {
@@ -190,9 +190,10 @@ impl Part {
                     pen.text(area, area.x, area.y + i as u16, line, *style);
                 }
             }
+            // Each line of chips spread across the width, as a Spread is.
             Part::Chips(chips) => {
-                for (i, line) in chip_lines(chips, area.width).iter().enumerate() {
-                    pen.line(area, area.x, area.y + i as u16, line);
+                for (i, row) in chip_rows(chips, area.width).into_iter().enumerate() {
+                    spread_row(pen, Rect { y: area.y + i as u16, height: 1, ..area }, &row);
                 }
             }
             Part::Table(t) | Part::Growing(t, _) => t.render(pen, area),
@@ -318,27 +319,27 @@ fn stack(pen: &mut Pen, area: Rect, parts: &[Part]) {
     }
 }
 
-fn chip_lines(chips: &[Line<'static>], width: u16) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let mut current: Vec<Span<'static>> = Vec::new();
+/// Chips in rows: as many to a row as fit with three columns between them.
+fn chip_rows(chips: &[Line<'static>], width: u16) -> Vec<Vec<Line<'static>>> {
+    let mut rows = Vec::new();
+    let mut current: Vec<Line<'static>> = Vec::new();
     let mut used = 0usize;
     for chip in chips {
         let w = chip.width();
         if used > 0 && used + 3 + w > width as usize {
-            lines.push(Line::from(std::mem::take(&mut current)));
+            rows.push(std::mem::take(&mut current));
             used = 0;
         }
         if used > 0 {
-            current.push(Span::raw("   "));
             used += 3;
         }
-        current.extend(chip.spans.iter().cloned());
+        current.push(chip.clone());
         used += w;
     }
     if !current.is_empty() {
-        lines.push(Line::from(current));
+        rows.push(current);
     }
-    lines
+    rows
 }
 
 // ----------------------------------------------------------------- meters
@@ -389,6 +390,8 @@ pub struct Trace {
     /// Series 1 (0) or 2 (1), for its colour.
     pub series: usize,
     pub label: String,
+    /// Drawn in dashes, not a solid line (a trace after the first only).
+    pub dashed: bool,
 }
 
 impl Trace {
@@ -397,7 +400,12 @@ impl Trace {
             data: data.map(|s| s.iter().copied().collect()).unwrap_or_default(),
             series,
             label: label.to_string(),
+            dashed: false,
         }
+    }
+
+    pub fn dashed(self) -> Trace {
+        Trace { dashed: true, ..self }
     }
 
     fn peak(&self) -> f64 {
@@ -487,7 +495,12 @@ impl Chart {
                 continue;
             }
             legend.push(Span::raw("  "));
-            let swatch = if i == 0 { area_swatch } else { "─" };
+            let swatch = match (i, trace.dashed, pen.look.console_glyphs) {
+                (0, ..) => area_swatch,
+                (_, true, false) => "┄",
+                (_, true, true) => "-",
+                _ => "─",
+            };
             legend.push(Span::styled(swatch, Style::default().fg(pen.look.flat(trace.series))));
             legend.push(Span::styled(format!(" {}", trace.label), muted));
         }
@@ -607,6 +620,10 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     }
     for trace in traces.iter().skip(1) {
         for sub in 0..across {
+            // Dashes: two cells drawn, one left out.
+            if trace.dashed && sub % 6 >= 4 {
+                continue;
+            }
             let Some(v) = sample_at(&trace.data, capacity, sub, across, per) else { continue };
             let level = ((v / top * levels as f64).floor() as usize).min(levels - 1);
             set(&mut dots, sub, level);
@@ -645,6 +662,10 @@ fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top:
             }
         }
         for trace in traces.iter().skip(1) {
+            // Dashes: two cells drawn, one left out.
+            if trace.dashed && c % 3 == 2 {
+                continue;
+            }
             let Some(v) = column(trace) else { continue };
             let level = ((v / top * rows as f64).floor() as u16).min(rows - 1);
             let mut style = Style::default().fg(look.flat(trace.series));

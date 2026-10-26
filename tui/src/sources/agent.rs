@@ -54,7 +54,8 @@ impl Agent {
             .collect();
 
         let ram = ram(&payload);
-        let ram_used = ram.as_ref().filter(|r| r.total > 0.0).map(|r| (r.total - r.available).max(0.0) / r.total * 100.0);
+        let ram = ram.filter(|r| r.total > 0.0);
+        let (ram_used, ram_cached) = (ram.as_ref().map(Ram::used_pct), ram.as_ref().map(Ram::cached_pct));
 
         let Some(gpu) = payload.get("gpu").filter(|g| g.is_object()) else {
             // NVML failed on ml60, but the agent still serves Ollama's models
@@ -63,6 +64,7 @@ impl Agent {
             let mut source = lock(source);
             let previous = source.data.as_ref().and_then(|d| d.gpu.clone());
             source.push("ram.used", ram_used);
+            source.push("ram.cached", ram_cached);
             source.data = Some(AgentData { gpu: previous, models, ram });
             return Err(text(&payload, "error").unwrap_or("agent reported no GPU").to_string());
         };
@@ -112,6 +114,8 @@ impl Agent {
         source.push("gpu.power", gpu.power);
         source.push("gpu.temp", gpu.temp);
         source.push("ram.used", ram_used);
+        // Programs and cache together: the dashed line on the memory chart.
+        source.push("ram.cached", ram_cached);
         source.succeed(AgentData { gpu: Some(gpu), models, ram });
         Ok(())
     }
