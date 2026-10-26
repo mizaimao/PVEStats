@@ -151,10 +151,6 @@ impl Screen {
             column(&mut pen, Rect { width: left, ..body }, &left_cards, Some(&guests));
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None);
             let mut right_cards = vec![cards::weather_placeholder(look)];
-            // Trial host cards, until one is picked.
-            if let Some(d) = pve.data.as_ref() {
-                right_cards.extend(cards::host_variants(look, &d.node, &pve, &sp));
-            }
             right_cards.extend(tour);
             column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, None);
         } else if w >= TWO_COLUMNS {
