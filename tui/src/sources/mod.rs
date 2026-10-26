@@ -250,6 +250,9 @@ pub struct RouterData {
 #[derive(Clone, Debug, Default)]
 pub struct Port {
     pub up: bool,
+    /// The port the internet comes in on (the router reports it): every
+    /// download crosses it, so it is no LAN traffic of its own.
+    pub wan: bool,
     /// Bytes per second to what is plugged in, and from it.
     pub down_bps: Option<f64>,
     pub up_bps: Option<f64>,

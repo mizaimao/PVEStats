@@ -48,7 +48,42 @@ pub fn home_ca_tls() -> Arc<ClientConfig> {
 }
 
 pub fn http(tls: Arc<ClientConfig>, timeout: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new().tls_config(tls).timeout(timeout).build()
+    ureq::AgentBuilder::new().tls_config(tls).timeout(timeout).resolver(resolve).build()
+}
+
+/// How long a name's addresses are reused before asking DNS again.
+const DNS_FRESH: Duration = Duration::from_secs(600);
+/// How long old addresses still serve when DNS does not answer.
+const DNS_STALE_OK: Duration = Duration::from_secs(3600);
+
+/// Host names looked up once and kept for ten minutes. ureq asks the
+/// system on every new connection, and some sources open one per poll: a
+/// lookup a second, each a query (and a connection-table entry) on the
+/// router's DNS. Addresses pass straight through.
+pub fn resolve(netloc: &str) -> io::Result<Vec<std::net::SocketAddr>> {
+    use std::collections::HashMap;
+    use std::net::ToSocketAddrs;
+    use std::sync::{Mutex, OnceLock};
+    type Cache = Mutex<HashMap<String, (Instant, Vec<std::net::SocketAddr>)>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let cache = CACHE.get_or_init(Cache::default);
+    let cached = cache.lock().unwrap_or_else(|e| e.into_inner()).get(netloc).cloned();
+    if let Some((at, addrs)) = &cached {
+        if at.elapsed() < DNS_FRESH {
+            return Ok(addrs.clone());
+        }
+    }
+    match netloc.to_socket_addrs().map(Iterator::collect::<Vec<_>>) {
+        Ok(addrs) if !addrs.is_empty() => {
+            cache.lock().unwrap_or_else(|e| e.into_inner()).insert(netloc.to_string(), (Instant::now(), addrs.clone()));
+            Ok(addrs)
+        }
+        // DNS down for a moment: the last answer, while it is not too old.
+        failed => match cached {
+            Some((at, addrs)) if at.elapsed() < DNS_STALE_OK => Ok(addrs),
+            _ => failed,
+        },
+    }
 }
 
 /// A short reason for a failed request. Never includes the URL's query or

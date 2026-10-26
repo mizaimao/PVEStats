@@ -835,6 +835,9 @@ pub struct Col {
     /// Columns wide, or 0 to take what the others leave.
     pub width: u16,
     pub right: bool,
+    /// A chart series (0 or 1) whose colour the title takes, so a column
+    /// reads as the half of a chart it matches; None for the muted default.
+    pub tint: Option<usize>,
 }
 
 pub struct Table {
@@ -866,7 +869,8 @@ impl Table {
             } else {
                 crate::format::left(col.title, *w as usize)
             };
-            pen.text(area, x, y, &title, header);
+            let style = col.tint.map_or(header, |s| Style::default().fg(pen.look.flat(s)).add_modifier(Modifier::BOLD));
+            pen.text(area, x, y, &title, style);
             x += w + GAP;
         }
         y += 1;

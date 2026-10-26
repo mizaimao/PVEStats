@@ -318,14 +318,14 @@ fn week_table(look: &Look, days: &[Day], (rain_unit, ..): (&str, &str, &str)) ->
         })
         .collect();
     let mut cols = vec![
-        Col { title: "Day", width: 6, right: false },
-        Col { title: "", width: 1, right: false },
-        Col { title: "Sky", width: 0, right: false },
-        Col { title: "High / low", width: 10, right: true },
-        Col { title: "Rain", width: 4, right: true },
+        Col { title: "Day", width: 6, right: false, tint: None },
+        Col { title: "", width: 1, right: false, tint: None },
+        Col { title: "Sky", width: 0, right: false, tint: None },
+        Col { title: "High / low", width: 10, right: true, tint: None },
+        Col { title: "Rain", width: 4, right: true, tint: None },
     ];
     if amounts {
-        cols.push(Col { title: "Amount", width: 7, right: true });
+        cols.push(Col { title: "Amount", width: 7, right: true, tint: None });
     }
     Table { caption: None, cols, rows, empty: "no forecast" }
 }

@@ -46,7 +46,7 @@ pub struct Weather {
 impl Weather {
     pub fn new(config: Arc<Config>) -> Self {
         // Public certificates: ureq's bundled roots trust them.
-        let http = ureq::AgentBuilder::new().timeout(WEATHER_TIMEOUT).user_agent(AGENT).build();
+        let http = ureq::AgentBuilder::new().timeout(WEATHER_TIMEOUT).user_agent(AGENT).resolver(crate::net::resolve).build();
         Weather { config, http, place: None, provider: None }
     }
 

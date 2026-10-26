@@ -396,10 +396,10 @@ pub fn gpu(
             Part::Table(Table {
                 caption: None,
                 cols: vec![
-                    Col { title: "Loaded model", width: 0, right: false },
-                    Col { title: "Processor", width: 15, right: false },
-                    Col { title: "VRAM", width: 9, right: true },
-                    Col { title: "Unloads in", width: 10, right: true },
+                    Col { title: "Loaded model", width: 0, right: false, tint: None },
+                    Col { title: "Processor", width: 15, right: false, tint: None },
+                    Col { title: "VRAM", width: 9, right: true, tint: None },
+                    Col { title: "Unloads in", width: 10, right: true, tint: None },
                 ],
                 rows: models,
                 empty: "no models loaded",
@@ -408,9 +408,9 @@ pub fn gpu(
             Part::Table(Table {
                 caption: None,
                 cols: vec![
-                    Col { title: "GPU process", width: 0, right: false },
-                    Col { title: "PID", width: 7, right: true },
-                    Col { title: "VRAM", width: 9, right: true },
+                    Col { title: "GPU process", width: 0, right: false, tint: None },
+                    Col { title: "PID", width: 7, right: true, tint: None },
+                    Col { title: "VRAM", width: 9, right: true, tint: None },
                 ],
                 rows: procs,
                 empty: "no processes on the GPU",
@@ -560,11 +560,11 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             Part::Table(Table {
                 caption: None,
                 cols: vec![
-                    Col { title: "Disk", width: 0, right: false },
-                    Col { title: "Size", width: 9, right: true },
+                    Col { title: "Disk", width: 0, right: false, tint: None },
+                    Col { title: "Size", width: 9, right: true, tint: None },
                     // Wider than its figures, so Size sits nearer the names.
-                    Col { title: "Read MiB/s", width: 12, right: true },
-                    Col { title: "Write MiB/s", width: 11, right: true },
+                    Col { title: "Read MiB/s", width: 12, right: true, tint: None },
+                    Col { title: "Write MiB/s", width: 11, right: true, tint: None },
                 ],
                 rows: disk_rows,
                 empty: "no disks yet",
@@ -573,11 +573,11 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             Part::Table(Table {
                 caption: None,
                 cols: vec![
-                    Col { title: "Pool", width: 0, right: false },
-                    Col { title: "Status", width: 8, right: false },
+                    Col { title: "Pool", width: 0, right: false, tint: None },
+                    Col { title: "Status", width: 8, right: false, tint: None },
                     // Wider bars, so Status sits nearer the names.
-                    Col { title: "Capacity", width: 10, right: false },
-                    Col { title: "Used", width: 15, right: true },
+                    Col { title: "Capacity", width: 10, right: false, tint: None },
+                    Col { title: "Used", width: 15, right: true, tint: None },
                 ],
                 rows: pool_rows,
                 empty: "no pools yet",
@@ -622,18 +622,18 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
     load.spans.push(Span::raw("  "));
     load.spans.push(Span::styled(temp, bold(p.ink)));
 
-    let label = |series: usize, arrow: &str, word: &'static str| {
-        Line::from(vec![Span::styled(format!("{arrow} "), style(look.flat(series))), Span::styled(word, style(p.muted))])
-    };
+    // Words in their half's colour, not arrows: an arrow glyph is too small
+    // to read across the room. The table's columns take the same colours.
+    let label = |series: usize, word: &'static str| Line::styled(word, bold(look.flat(series)));
     let speed = |v: Option<f64>| v.map_or(fmt::DASH.to_string(), fmt::bits_auto);
     let internet = Part::Mirror(Mirror {
         up: Trace::from(router.series("wan.down"), 0, ""),
         down: Trace::from(router.series("wan.up"), 1, ""),
-        up_label: label(0, "↓", "download"),
-        down_label: label(1, "↑", "upload"),
+        up_label: label(0, "download"),
+        down_label: label(1, "upload"),
         up_value: speed(d.wan_down_bps),
         down_value: speed(d.wan_up_bps),
-        label_w: 11,
+        label_w: 9,
         value_w: 17,
         capacity: router.capacity(),
         // 1 Mbit/s, so an idle line stays flat.
@@ -644,12 +644,15 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
     });
 
     let rate = |v: Option<f64>| Line::styled(fmt::mbit(v), style(p.ink));
-    let linked = d.ports.iter().filter(|port| port.up).count();
+    // The LAN ports only: the port the internet comes in on carries every
+    // download in and would count it again as wired traffic.
+    let lan: Vec<_> = d.ports.iter().filter(|port| !port.wan).collect();
+    let linked = lan.iter().filter(|port| port.up).count();
     let mut rows = vec![vec![
         Line::styled("wired", style(p.ink)),
-        Line::styled(format!("{linked}/{} ports", d.ports.len()), style(p.ink2)),
-        rate(total(d.ports.iter().map(|port| port.down_bps))),
-        rate(total(d.ports.iter().map(|port| port.up_bps))),
+        Line::styled(format!("{linked}/{} ports", lan.len()), style(p.ink2)),
+        rate(total(lan.iter().map(|port| port.down_bps))),
+        rate(total(lan.iter().map(|port| port.up_bps))),
     ]];
     rows.extend(d.bands.iter().map(|band| {
         let devices = if !band.on { "off".to_string() } else { band.devices.map_or(fmt::DASH.to_string(), |n| n.to_string()) };
@@ -663,10 +666,10 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
     let links = Part::Table(Table {
         caption: None,
         cols: vec![
-            Col { title: "Link", width: 0, right: false },
-            Col { title: "Devices", width: 9, right: true },
-            Col { title: "↓ Mbit/s", width: 9, right: true },
-            Col { title: "↑ Mbit/s", width: 9, right: true },
+            Col { title: "Link · Mbit/s", width: 0, right: false, tint: None },
+            Col { title: "Devices", width: 9, right: true, tint: None },
+            Col { title: "download", width: 9, right: true, tint: Some(0) },
+            Col { title: "upload", width: 9, right: true, tint: Some(1) },
         ],
         rows,
         empty: "no links",
@@ -807,10 +810,10 @@ pub fn guest_list(look: &Look, slots: &[&Slot], status: &Status) -> Card {
         body: vec![Part::Table(Table {
             caption: None,
             cols: vec![
-                Col { title: "Guest", width: 0, right: false },
-                Col { title: "CPU", width: 11, right: false },
-                Col { title: "Mem", width: 11, right: false },
-                Col { title: "MiB/s", width: 9, right: false },
+                Col { title: "Guest", width: 0, right: false, tint: None },
+                Col { title: "CPU", width: 11, right: false, tint: None },
+                Col { title: "Mem", width: 11, right: false, tint: None },
+                Col { title: "MiB/s", width: 9, right: false, tint: None },
             ],
             rows,
             empty: "no other guests running",
