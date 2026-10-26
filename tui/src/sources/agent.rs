@@ -114,7 +114,7 @@ impl Agent {
         source.push("gpu.power", gpu.power);
         source.push("gpu.temp", gpu.temp);
         source.push("ram.used", ram_used);
-        // Programs and cache together: the dashed line on the memory chart.
+        // Programs and cache together: the line over the memory chart.
         source.push("ram.cached", ram_cached);
         source.succeed(AgentData { gpu: Some(gpu), models, ram });
         Ok(())

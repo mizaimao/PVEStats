@@ -366,11 +366,10 @@ pub fn gpu(
         Line::from(vec![Span::styled("disk ", style(p.muted)), Span::styled(disk, pve_ink)]),
     ];
     if let Some(r) = ram {
-        // The memory chart's dashed line, which adds the cache to what
-        // programs use, carries this mark: the chart's legend has no room.
+        // The memory chart's line, which adds the cache to what programs
+        // use, carries this mark: the chart's legend has no room.
         let mut cache = chip(look, "cache", format!("{} GiB", pad(fmt::gib(Some(r.cache)), 4)));
-        let dash = if look.console_glyphs { "- " } else { "┄ " };
-        cache.spans.insert(0, Span::styled(dash, bold(look.flat(1))));
+        cache.spans.insert(0, Span::styled("─ ", bold(look.flat(1))));
         chips.push(cache);
     }
     let chips = Part::Chips(chips);
@@ -384,12 +383,12 @@ pub fn gpu(
         Some(r) => {
             let used = r.used_pct();
             // One dot a second, as the agent reads it. Programs' use filled;
-            // with the cache added, dashed (about what Proxmox counts as
-            // used), its mark on the cache figure above.
+            // with the cache added, a line over it (about what Proxmox counts
+            // as used), its mark on the cache figure above.
             let caption = format!("Mem {}", fmt::pct(Some(used)));
             let traces = vec![
                 Trace::from(agent.series("ram.used"), 1, ""),
-                Trace::from(agent.series("ram.cached"), 1, "").dashed(),
+                Trace::from(agent.series("ram.cached"), 1, ""),
             ];
             pct_chart(traces, agent.capacity(), agent.interval, caption, Some(0.5))
         }
