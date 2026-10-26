@@ -40,11 +40,6 @@ pub fn bits_auto(v: f64) -> String {
     }
 }
 
-/// Bytes per second as Mbit/s, one decimal.
-pub fn mbit(v: Option<f64>) -> String {
-    v.map_or_else(|| DASH.into(), |v| format!("{:.1}", v * 8.0 / 1e6))
-}
-
 /// A percentage with its sign, or a bare dash when missing.
 pub fn pct(v: Option<f64>) -> String {
     v.map_or_else(|| DASH.into(), |v| format!("{}%", v.round() as i64))
