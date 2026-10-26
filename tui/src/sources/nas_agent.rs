@@ -1,8 +1,8 @@
 //! TrueNAS's own agent (nas/ in this repo), on TrueNAS's LAN address: its
 //! counters since boot, made into rates here from one reading to the next.
-//! While it is configured the TrueNAS card reads nothing else: not TrueNAS's
-//! API, which costs TrueNAS 25 ms of CPU a request against the agent's
-//! 0.41 ms (nas/README.md), and not PVE.
+//! The TrueNAS card reads nothing else: not TrueNAS's API, which cost
+//! TrueNAS 25 ms of CPU a request against the agent's 0.41 ms
+//! (nas/README.md), and not PVE.
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -121,8 +121,6 @@ impl NasAgent {
                     name: text(p, "name").unwrap_or("?").to_string(),
                     healthy: state.as_deref() == Some("ONLINE"),
                     status: state,
-                    size: None,
-                    allocated: None,
                     used_bytes: used,
                     usable: used.zip(num(p, "available")).map(|(u, a)| u + a),
                     old: num(p, "age").is_some_and(|a| a > OLD_POOL_SECONDS),

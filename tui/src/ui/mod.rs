@@ -159,7 +159,7 @@ impl Screen {
         let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &pve, &sp)).collect();
         // The router rides under the NAS in every layout.
         let mut nas_cards: Vec<Card> =
-            of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
+            of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn)).collect();
         nas_cards.extend(config.router_shown().then(|| cards::router(look, &router, &sr)));
         let basic: Vec<&Slot> = of(View::Basic).collect();
         // Guest cards grey with the source their live figures come from.

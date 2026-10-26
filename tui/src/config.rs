@@ -27,15 +27,13 @@ pub struct Config {
     pub pve_node: Option<String>,
     pub pve_token_id: String,
     pub pve_token_secret: String,
-    pub truenas_host: String,
-    pub truenas_api_key: String,
     pub agent_url: String,
     /// The router's own agent (router/), plain HTTP on its LAN address.
     pub router_url: String,
     /// The Proxmox host's own agent (pve/), plain HTTP on its LAN address.
     pub pve_agent_url: String,
-    /// TrueNAS's own agent (nas/), plain HTTP on its LAN address. With it,
-    /// TrueNAS's API is not asked at all.
+    /// TrueNAS's own agent (nas/), plain HTTP on its LAN address: the
+    /// TrueNAS card's only source.
     pub nas_agent_url: String,
     /// Where the forecast is for, from .env so it stays off GitHub: a place
     /// name to look up (WEATHER_PLACE), or coordinates (WEATHER_LATITUDE and
@@ -112,8 +110,6 @@ impl Config {
             pve_node: Some(var("PVE_NODE")).filter(|n| !n.is_empty()),
             pve_token_id: var("PVE_TOKEN_ID"),
             pve_token_secret: var("PVE_TOKEN_SECRET"),
-            truenas_host: var("TRUENAS_HOST"),
-            truenas_api_key: var("TRUENAS_API_KEY"),
             agent_url: var("ML60_AGENT_URL"),
             router_url: var("ROUTER_AGENT_URL"),
             pve_agent_url: var("PVE_AGENT_URL"),
@@ -145,21 +141,8 @@ impl Config {
         !self.pve_host.is_empty() && !self.pve_token_id.is_empty() && !self.pve_token_secret.is_empty()
     }
 
-    pub fn truenas_configured(&self) -> bool {
-        !self.truenas_host.is_empty() && !self.truenas_api_key.is_empty()
-    }
-
     pub fn nas_agent_configured(&self) -> bool {
         !self.nas_agent_url.is_empty()
-    }
-
-    /// The TrueNAS card's poll: its agent's, or the API's every 5 s.
-    pub fn nas_interval(&self) -> f64 {
-        if self.nas_agent_configured() {
-            self.nas_agent_every
-        } else {
-            crate::sources::TRUENAS_INTERVAL
-        }
     }
 
     pub fn agent_configured(&self) -> bool {

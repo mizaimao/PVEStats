@@ -2,16 +2,15 @@
 name = "pvestats-tui"
 version = "0.1.0"
 edition = "2021"
-description = "Terminal dashboard for the PVEStats homelab: Proxmox VE, TrueNAS and the ml60 GPU agent."
+description = "Terminal dashboard for the PVEStats homelab: Proxmox VE and the agents on its machines."
 publish = false
 
 [dependencies]
 ratatui = "0.30"
-# Blocking HTTP and WebSocket over rustls with the ring provider: no async
+# Blocking HTTP over rustls with the ring provider: no async
 # runtime, one thread per source.
 ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 libc = "0.2"
 serde_json = "1"
 serde_yaml = "0.9"
