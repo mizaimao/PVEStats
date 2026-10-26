@@ -542,7 +542,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 Span::styled("● ", style(if pool.healthy { p.good } else { p.critical })),
                 Span::styled(pool.status.clone().unwrap_or_else(|| "?".into()), style(p.ink2)),
             ]);
-            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 8, color), Line::styled(figure, style(p.ink))]
+            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 10, color), Line::styled(figure, style(p.ink))]
         })
         .collect();
 
@@ -562,7 +562,8 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 cols: vec![
                     Col { title: "Disk", width: 0, right: false },
                     Col { title: "Size", width: 9, right: true },
-                    Col { title: "Read MiB/s", width: 10, right: true },
+                    // Wider than its figures, so Size sits nearer the names.
+                    Col { title: "Read MiB/s", width: 12, right: true },
                     Col { title: "Write MiB/s", width: 11, right: true },
                 ],
                 rows: disk_rows,
@@ -574,7 +575,8 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 cols: vec![
                     Col { title: "Pool", width: 0, right: false },
                     Col { title: "Status", width: 8, right: false },
-                    Col { title: "Capacity", width: 8, right: false },
+                    // Wider bars, so Status sits nearer the names.
+                    Col { title: "Capacity", width: 10, right: false },
                     Col { title: "Used", width: 15, right: true },
                 ],
                 rows: pool_rows,
