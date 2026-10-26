@@ -7,8 +7,8 @@
 # glibc linked in (crt-static): TrueNAS 25.10 is Debian 12, glibc 2.36, and
 # a program built on the build machine's Debian 13 that starts programs
 # (`zpool`, `zfs`) asks for glibc 2.39. Linked in, it needs none at all;
-# it does no name lookups, the one thing static glibc does badly. The last
-# line checks that it came out static.
+# it does no name lookups, the one thing static glibc does badly. A build
+# that came out dynamic is not copied.
 set -euo pipefail
 . "$(dirname "$0")/../tui/machines.sh"
 
@@ -19,9 +19,16 @@ on_build "cd \"$B/nas/agent\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"
     && cargo test --release --quiet \
     && RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --quiet --target x86_64-unknown-linux-gnu"
 
+built="$B/nas/agent/target/x86_64-unknown-linux-gnu/release/pvestats-nas"
+# Static or not copied: a dynamic one would not start on TrueNAS.
+kind=$(on_build "file -b \"$built\"")
+case "$kind" in
+    *static*) ;;
+    *) echo "== not static, not copied: $kind" >&2; exit 1 ;;
+esac
+
 mkdir -p "$repo/nas/bin"
-on_build "cat \"$B/nas/agent/target/x86_64-unknown-linux-gnu/release/pvestats-nas\"" >"$repo/nas/bin/pvestats-nas.new"
+on_build "cat \"$built\"" >"$repo/nas/bin/pvestats-nas.new"
 chmod 755 "$repo/nas/bin/pvestats-nas.new"
 mv "$repo/nas/bin/pvestats-nas.new" "$repo/nas/bin/pvestats-nas"
-echo "== built nas/bin/pvestats-nas ($(wc -c <"$repo/nas/bin/pvestats-nas" | tr -d ' ') bytes)"
-echo "== $(on_build "file -b \"$B/nas/agent/target/x86_64-unknown-linux-gnu/release/pvestats-nas\" | cut -d, -f1-2,4")"
+echo "== built nas/bin/pvestats-nas ($(wc -c <"$repo/nas/bin/pvestats-nas" | tr -d ' ') bytes), $(echo "$kind" | cut -d, -f1-2,4)"
