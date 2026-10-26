@@ -152,7 +152,8 @@ impl Screen {
         if w >= THREE_COLUMNS {
             // Status, host, NAS and router on the left, the GPU in the
             // middle, the forecast and the guests on the right. The left
-            // keeps its cards to their smallest.
+            // keeps its cards to their smallest, but for the router's chart,
+            // which takes any rows left at the foot.
             let left = (w - 2) / 3;
             let mid = (w - left - 2) / 2;
             let right = w - left - mid - 2;
@@ -381,16 +382,25 @@ fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
 
 /// Cards stacked top to bottom with a blank row between each, then the
 /// guests filling every row left. With guests below them, or without
-/// `grow`, the cards keep to their smallest; otherwise charts grow into
-/// spare rows.
+/// `grow`, the cards keep to their smallest (without `grow`, the last
+/// card's charts still take rows left at the foot); otherwise charts grow
+/// into spare rows.
 fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>, grow: bool) {
     let w = area.width;
     let dividers = cards.len().saturating_sub(1) as u16;
-    let rows = if !grow || guests.is_some_and(|g| !g.slots.is_empty()) {
+    let mut rows: Vec<u16> = if !grow || guests.is_some_and(|g| !g.slots.is_empty()) {
         cards.iter().map(|c| c.height(w)).collect()
     } else {
         card_rows(cards, w, area.height.saturating_sub(dividers))
     };
+    if !grow && guests.is_none() {
+        // Rows left at the foot go to the last card's charts, as far as
+        // they grow, rather than stay blank.
+        let left = area.height.saturating_sub(dividers + rows.iter().sum::<u16>());
+        if let (Some(card), Some(h)) = (cards.last(), rows.last_mut()) {
+            *h += left.min(card.room());
+        }
+    }
     let mut y = area.y;
     for (card, h) in cards.iter().zip(rows) {
         card.render(pen, Rect { y, height: h.min(area.bottom().saturating_sub(y)), ..area });
