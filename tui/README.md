@@ -21,8 +21,7 @@ The layout follows the terminal's width:
 The source dots and the clock are a small panel at the top of the first
 column, so the other columns start at the top row. Guests fill the rows
 left under the other cards: the fullest cards that fit them all (full,
-compact, then tiny, up to three across), else one line each. Rows a guest
-card has over hold its CPU history, the same height across a row of them.
+compact, then tiny, up to three across), else one line each.
 
 Charts grow into spare rows up to a set height; a card without a chart
 keeps to its own height. Keys: `f` shows the GPU card alone and back, `q`

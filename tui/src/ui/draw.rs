@@ -422,15 +422,12 @@ pub struct Chart {
     /// Cells each sample takes, for a slow source whose buffer would
     /// otherwise fill only part of the width; None fits the buffer across.
     pub sample_width: Option<f64>,
-    /// The span, legend and "now" under the plot; without it a small card
-    /// keeps its rows for the plot.
-    pub time_row: bool,
 }
 
 impl Chart {
     fn render(&self, pen: &mut Pen, area: Rect) {
         let p = pen.look.p;
-        let rows = area.height.saturating_sub(u16::from(self.time_row));
+        let rows = area.height.saturating_sub(1);
         let peak = self.traces.iter().map(Trace::peak).fold(0.0, f64::max);
         let top = self.top.unwrap_or_else(|| nice(peak.max(self.floor)));
         let label_w = (self.axis)(top).chars().count().max((self.axis)(0.0).chars().count()) as u16;
@@ -468,9 +465,6 @@ impl Chart {
             pen.cell(area, area.x + label_w, y, if label.is_some() { "┤" } else { "│" }, grid);
         }
         plot(pen, plot_area, &self.traces, self.capacity, top, false, self.sample_width);
-        if !self.time_row {
-            return;
-        }
 
         // Bottom row: the span on the left, the legend, "now" on the right.
         let y = area.bottom() - 1;
@@ -994,7 +988,6 @@ mod tests {
             max_rows: 9,
             weight: 1,
             sample_width: None,
-            time_row: true,
         });
         let parts = vec![Part::Gap, chart, Part::Gap, Part::Text(Line::raw("x"))];
         // Six spare rows: four to the chart, two to the gap below it.
