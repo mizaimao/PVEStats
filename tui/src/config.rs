@@ -30,6 +30,8 @@ pub struct Config {
     pub truenas_host: String,
     pub truenas_api_key: String,
     pub agent_url: String,
+    /// The router's own agent (router/), plain HTTP on its LAN address.
+    pub router_url: String,
     /// Where the forecast is for, from .env so it stays off GitHub: a place
     /// name to look up (WEATHER_PLACE), or coordinates (WEATHER_LATITUDE and
     /// WEATHER_LONGITUDE), which win. WEATHER_UNITS=imperial for °F, mph, in.
@@ -103,6 +105,7 @@ impl Config {
             truenas_host: var("TRUENAS_HOST"),
             truenas_api_key: var("TRUENAS_API_KEY"),
             agent_url: var("ML60_AGENT_URL"),
+            router_url: var("ROUTER_AGENT_URL"),
             weather_place: var("WEATHER_PLACE"),
             weather_at: var("WEATHER_LATITUDE").parse().ok().zip(var("WEATHER_LONGITUDE").parse().ok()),
             weather_imperial: var("WEATHER_UNITS").eq_ignore_ascii_case("imperial"),
@@ -140,6 +143,12 @@ impl Config {
 
     pub fn agent_configured(&self) -> bool {
         !self.agent_url.is_empty()
+    }
+
+    /// The router card shows when its agent is configured, or made up in
+    /// demo mode.
+    pub fn router_shown(&self) -> bool {
+        !self.router_url.is_empty() || self.demo
     }
 
     pub fn weather_configured(&self) -> bool {
