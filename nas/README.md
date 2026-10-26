@@ -56,6 +56,35 @@ As the `pvestats` user Frank made (no sudo, no admin role; home on the pool,
 
 then `kill` that pid and `rm ~/pvestats-nas`.
 
+## Measured (test run, 2026-10-26)
+
+Run by hand as `pvestats` for about 10 minutes, then stopped and deleted.
+
+It gives the same figures as the kiosk's card, which reads TrueNAS's API, over the same
+seconds:
+
+- CompoundZ2FS: 21.89 TB used and 8.97 TB free, which is 71% of 28.1 TiB, as the card shows.
+- Disks sdb to sdf: the card's sizes, and no reads or writes over 10 s, as the card shows.
+  sda belongs to the boot pool, which the card also leaves off.
+- ens18: 0.5 KB/s in and 1.9 KB/s out. The card shows 0 KiB/s each.
+- Address 10.10.10.2 and up 3 d 18 h, as the card shows.
+- CPU: 0.4%. The card shows 1%, because Proxmox counts the VM's CPU from outside,
+  including QEMU's own work.
+- Memory: 1.1 GB available, and 13.0 GB held by the ARC, which Linux counts as used.
+  Proxmox's 14.6 GiB counts the ARC too.
+
+Its cost comes from its process counters: its own CPU, plus its `zfs`/`zpool` runs.
+
+| | CPU | |
+|---|---|---|
+| no requests, 120 s (its 30 s `zfs get` only) | 20 ms | 0.017% of one core |
+| 600 requests at 10 a second | 0.41 ms a request | |
+| one dashboard polling every 2 s | | about 0.04% of one core |
+| TrueNAS's API, one dashboard every 5 s | 25 ms a request | 0.68% of one core |
+
+That is about 60 times less per request. A dashboard polling it every 2 s costs
+about a seventeenth of one polling the API every 5 s. It uses 0.8 MB of memory.
+
 ## The answer
 
 ```
