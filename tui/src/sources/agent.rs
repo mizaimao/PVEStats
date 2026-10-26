@@ -5,7 +5,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use super::{lock, AgentData, Gpu, Model, Pcie, Proc, Ram, AGENT_TIMEOUT};
+use super::{lock, AgentData, Gpu, Inside, Model, Pcie, Proc, Ram, AGENT_TIMEOUT};
 use crate::json::{int, list, num, text};
 use crate::net;
 use crate::state::{clock, Source};
@@ -15,12 +15,25 @@ pub struct Agent {
     http: ureq::Agent,
     /// Made-up models and processes on each reading (`tui: demo`).
     demo: bool,
+    /// ml60's counters at the last reading, for its rates.
+    last: Option<Counters>,
+}
+
+/// ml60's CPU jiffies (busy, total) and its network bytes (in, out), and
+/// when they were read.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Counters {
+    at: f64,
+    busy: f64,
+    total: f64,
+    rx: f64,
+    tx: f64,
 }
 
 impl Agent {
     pub fn new(url: String, demo: bool) -> Self {
         // Caddy on ml60 serves the agent with a home-CA certificate.
-        Agent { url, http: net::http(net::home_ca_tls(), AGENT_TIMEOUT), demo }
+        Agent { url, http: net::http(net::home_ca_tls(), AGENT_TIMEOUT), demo, last: None }
     }
 
     pub fn poll(&mut self, source: &Mutex<Source<AgentData>>) -> Result<(), String> {
@@ -56,6 +69,8 @@ impl Agent {
         let ram = ram(&payload);
         let ram = ram.filter(|r| r.total > 0.0);
         let (ram_used, ram_cached) = (ram.as_ref().map(Ram::used_pct), ram.as_ref().map(Ram::cached_pct));
+        let inside = self.inside(&payload);
+        let cpu = inside.as_ref().and_then(|i| i.cpu_pct);
 
         let Some(gpu) = payload.get("gpu").filter(|g| g.is_object()) else {
             // NVML failed on ml60, but the agent still serves Ollama's models
@@ -65,7 +80,8 @@ impl Agent {
             let previous = source.data.as_ref().and_then(|d| d.gpu.clone());
             source.push("ram.used", ram_used);
             source.push("ram.cached", ram_cached);
-            source.data = Some(AgentData { gpu: previous, models, ram });
+            source.push("host.cpu", cpu);
+            source.data = Some(AgentData { gpu: previous, models, ram, inside });
             return Err(text(&payload, "error").unwrap_or("agent reported no GPU").to_string());
         };
 
@@ -116,9 +132,47 @@ impl Agent {
         source.push("ram.used", ram_used);
         // Programs and cache together: the line over the memory chart.
         source.push("ram.cached", ram_cached);
-        source.succeed(AgentData { gpu: Some(gpu), models, ram });
+        source.push("host.cpu", cpu);
+        source.succeed(AgentData { gpu: Some(gpu), models, ram, inside });
         Ok(())
     }
+
+    /// ml60's CPU, network, disk, uptime and address, with rates against
+    /// the last reading. None from an agent that does not send "host".
+    fn inside(&mut self, payload: &Value) -> Option<Inside> {
+        let h = payload.get("host").filter(|h| h.is_object())?;
+        let cpu = h.get("cpu").cloned().unwrap_or_default();
+        let net = h.get("net").cloned().unwrap_or_default();
+        let disk = h.get("disk").cloned().unwrap_or_default();
+        let now = clock();
+        let counters = match (num(&cpu, "busy"), num(&cpu, "total"), num(&net, "rx"), num(&net, "tx")) {
+            (Some(busy), Some(total), Some(rx), Some(tx)) => Some(Counters { at: now, busy, total, rx, tx }),
+            _ => None,
+        };
+        let (cpu_pct, net_in_bps, net_out_bps) = rates(self.last, counters);
+        self.last = counters;
+        Some(Inside {
+            cpu_pct,
+            net_in_bps,
+            net_out_bps,
+            disk_used: num(&disk, "used"),
+            disk_total: num(&disk, "total"),
+            uptime: num(h, "uptime"),
+            ip: text(h, "ip").map(str::to_string),
+            at: now,
+        })
+    }
+}
+
+/// CPU % of all cores, and bytes a second in and out, from one reading to
+/// the next. None for the first, and for a counter that went backwards (ml60
+/// rebooted, or its interface was replaced).
+fn rates(last: Option<Counters>, now: Option<Counters>) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let (Some(a), Some(b)) = (last, now) else { return (None, None, None) };
+    let seconds = b.at - a.at;
+    let cpu = (b.total > a.total && b.busy >= a.busy).then(|| ((b.busy - a.busy) / (b.total - a.total) * 100.0).clamp(0.0, 100.0));
+    let rate = |x: f64, y: f64| (seconds > 0.0 && y >= x).then(|| (y - x) / seconds);
+    (cpu, rate(a.rx, b.rx), rate(a.tx, b.tx))
 }
 
 /// ml60's own memory, from inside it: an agent from before it was added
@@ -263,5 +317,36 @@ mod tests {
         assert!(ram(&serde_json::json!({"ram": null})).is_none());
         assert!(ram(&serde_json::json!({"ram": {"total": 64}})).is_none());
         assert_eq!(ram(&serde_json::json!({"ram": {"total": 64, "available": 8}})).unwrap().cache, 0.0);
+    }
+
+    #[test]
+    fn rates_between_readings() {
+        let a = Counters { at: 10.0, busy: 100.0, total: 1000.0, rx: 5000.0, tx: 100.0 };
+        let b = Counters { at: 11.0, busy: 150.0, total: 1100.0, rx: 7000.0, tx: 100.0 };
+        assert_eq!(rates(Some(a), Some(b)), (Some(50.0), Some(2000.0), Some(0.0)));
+        assert_eq!(rates(None, Some(b)), (None, None, None));
+        // ml60 rebooted: every counter went back.
+        let c = Counters { at: 12.0, busy: 5.0, total: 50.0, rx: 10.0, tx: 1.0 };
+        assert_eq!(rates(Some(b), Some(c)), (None, None, None));
+    }
+
+    #[test]
+    fn inside_from_the_reply() {
+        let mut agent = Agent { url: String::new(), http: ureq::AgentBuilder::new().build(), demo: false, last: None };
+        let reply = |busy: u64, total: u64, rx: u64| {
+            serde_json::json!({"host": {"cpu": {"busy": busy, "total": total}, "cpus": 4, "uptime": 99.5,
+                "net": {"iface": "ens18", "rx": rx, "tx": 1}, "disk": {"total": 100, "used": 40}, "ip": "10.10.10.4"}})
+        };
+        let first = agent.inside(&reply(100, 1000, 0)).unwrap();
+        assert_eq!(first.cpu_pct, None, "no rate from one reading");
+        assert_eq!((first.disk_used, first.disk_total, first.uptime), (Some(40.0), Some(100.0), Some(99.5)));
+        assert_eq!(first.ip.as_deref(), Some("10.10.10.4"));
+        // A second later.
+        agent.last.as_mut().unwrap().at -= 1.0;
+        let second = agent.inside(&reply(150, 1100, 2000)).unwrap();
+        assert_eq!(second.cpu_pct, Some(50.0));
+        assert!((second.net_in_bps.unwrap() - 2000.0).abs() < 1.0, "{second:?}");
+        // An agent from before "host": the card keeps PVE's figures.
+        assert!(agent.inside(&serde_json::json!({"gpu": null})).is_none());
     }
 }

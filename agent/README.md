@@ -31,6 +31,15 @@ change) and these differences:
   so it showed ml60 at 95% while its programs used about 12%. Both
   dashboards show this figure while it is fresh; clients that don't know
   the field ignore it.
+- **And the rest of what ml60's card shows**, as `"host"`, so the terminal
+  dashboard needs nothing from Proxmox for it: CPU busy and total jiffies
+  (`/proc/stat`), the number of cores, uptime, the default route's interface
+  and its byte counters (`/proc/net/dev`), the largest local filesystem's
+  total and used bytes (statvfs on mounts backed by a block device, so no
+  NAS shares; the same figure Proxmox's guest agent gave), and ml60's LAN
+  address (a UDP socket connected towards the gateway, which sends
+  nothing). Counters are totals; the dashboard makes rates. Read per
+  request; any part that cannot be read is null.
 
 - **The GPU is read by one thread**, about once a second and only while
   someone has asked in the last 15 s; requests are served its latest
