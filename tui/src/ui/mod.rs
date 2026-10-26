@@ -128,7 +128,7 @@ impl Screen {
         };
         let top = with_status(look, &[("pve", &sp), ("agent", &sa), ("truenas", &sn)], theme_now, host_card);
         let of = |view: View| slots.values().filter(move |s| s.view == view);
-        let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &sp)).collect();
+        let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &pve, &sp)).collect();
         let nas_cards: Vec<Card> =
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
         let basic: Vec<&Slot> = of(View::Basic).collect();

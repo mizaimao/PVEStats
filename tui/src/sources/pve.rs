@@ -301,6 +301,11 @@ impl Pve {
             }
             let cpu_pct = num(guest, "cpu").map(|f| f * 100.0); // 0.0-1.0, NOT a percentage
             samples.push((format!("cpu.{vmid}"), cpu_pct));
+            let mem_pct = match (num(guest, "mem"), num(guest, "maxmem")) {
+                (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
+                _ => None,
+            };
+            samples.push((format!("mem.{vmid}"), mem_pct));
             guests.insert(
                 vmid,
                 Guest {

@@ -142,19 +142,44 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
         info.push(format!("{threads} threads"));
     }
     let load = node.loadavg.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>().join(" ");
+    let usage = cpu_and_memory(
+        look,
+        pve,
+        ("node.cpu", "node.mem_pct"),
+        (node.cpu_pct, node.mem, node.maxmem),
+        Line::styled(format!("load {load}"), style(p.muted)),
+        8,
+    );
+    Card {
+        title: format!("Proxmox host · {}", node.name),
+        right: version,
+        stale: !status.ok,
+        error: status.error.clone(),
+        body: vec![sub(look, info), usage],
+    }
+}
+
+/// CPU as an area and memory as a line on one 0-100 chart, as GPU and VRAM
+/// share one, with the figures in a panel at its side: CPU, memory, GiB,
+/// and a last line of the caller's. For the host and for guests, from
+/// PVE's series named in `keys`.
+fn cpu_and_memory(
+    look: &Look,
+    pve: &Source<PveData>,
+    keys: (&str, &str),
+    (cpu, mem, maxmem): (Option<f64>, Option<f64>, Option<f64>),
+    last: Line<'static>,
+    max_rows: u16,
+) -> Part {
+    let p = look.p;
     let figure = |label: &str, value: String| {
         Part::Text(Line::from(vec![
             Span::styled(fmt::left(label, 7), style(p.muted)),
             Span::styled(value, bold(p.ink)),
         ]))
     };
-    // CPU as an area and memory as a line on one 0-100 chart, as on the GPU
-    // card, with the figures in a panel at its side.
     let chart = Part::Chart(Chart {
-        traces: vec![
-            Trace::from(pve.series("node.cpu"), 0, "CPU"),
-            Trace::from(pve.series("node.mem_pct"), 1, "mem"),
-        ],
+        traces: vec![Trace::from(pve.series(keys.0), 0, "CPU"), Trace::from(pve.series(keys.1), 1, "mem")],
         capacity: pve.capacity(),
         top: Some(100.0),
         floor: 0.0,
@@ -162,25 +187,19 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
         seconds_per_sample: pve.interval,
         caption: String::new(),
         min_rows: 5,
-        max_rows: 8,
+        max_rows,
         weight: 1,
         // A cell per 10s sample, so the chart reaches back further than the
         // buffer would stretched across.
         sample_width: Some(1.0),
     });
     let figures = Part::Stack(vec![
-        figure("CPU", fmt::pct(node.cpu_pct)),
-        figure("Memory", fmt::pct(ratio(node.mem, node.maxmem).map(|r| r * 100.0))),
-        Part::Text(Line::styled(mem_text(node.mem, node.maxmem), style(p.ink2))),
-        Part::Text(Line::styled(format!("load {load}"), style(p.muted))),
+        figure("CPU", fmt::pct(cpu)),
+        figure("Memory", fmt::pct(ratio(mem, maxmem).map(|r| r * 100.0))),
+        Part::Text(Line::styled(mem_text(mem, maxmem), style(p.ink2))),
+        Part::Text(last),
     ]);
-    Card {
-        title: format!("Proxmox host · {}", node.name),
-        right: version,
-        stale: !status.ok,
-        error: status.error.clone(),
-        body: vec![sub(look, info), Part::Row(vec![(0, chart), (18, figures)])],
-    }
+    Part::Row(vec![(0, chart), (18, figures)])
 }
 
 /// While PVE has given no data the host card cannot exist, so a note in
@@ -201,7 +220,14 @@ pub fn pve_note(look: &Look, status: &Status) -> Card {
 
 // ----------------------------------------------------------------- GPU
 
-pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status, pve: &Status) -> Card {
+pub fn gpu(
+    look: &Look,
+    slot: &Slot,
+    agent: &Source<AgentData>,
+    status: &Status,
+    pve_data: &Source<PveData>,
+    pve: &Status,
+) -> Card {
     let p = look.p;
     let data = agent.data.as_ref();
     let gpu = data.and_then(|d| d.gpu.as_ref());
@@ -290,18 +316,25 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
 
     // The guest's CPU and memory are PVE's, at its 10s pace. When PVE is not
     // answering they keep its last values, greyed, rather than looking live.
+    // On one chart like the host's, and as tall. ml60's storage is passed
+    // through, so the hypervisor never sees its disk traffic: network only.
     let guest = slot.guest;
+    let net = Line::from(vec![
+        Span::styled("net ↓", style(p.muted)),
+        Span::styled(fmt::rate(guest.and_then(|g| g.net_in_bps)), style(p.ink)),
+        Span::styled(" ↑", style(p.muted)),
+        Span::styled(fmt::rate(guest.and_then(|g| g.net_out_bps)), style(p.ink)),
+    ]);
     let mut pve_parts = Part::Stack(vec![
-        Part::Flow(
-            30,
-            vec![
-                meter(look, "CPU", guest.and_then(|g| g.cpu_pct).map(|v| v / 100.0), fmt::pct(guest.and_then(|g| g.cpu_pct)), 4),
-                meter(look, "Mem", guest.and_then(|g| ratio(g.mem, g.maxmem)), mem_text(guest.and_then(|g| g.mem), guest.and_then(|g| g.maxmem)), 0),
-            ],
+        cpu_and_memory(
+            look,
+            pve_data,
+            (&format!("cpu.{}", slot.vmid), &format!("mem.{}", slot.vmid)),
+            (guest.and_then(|g| g.cpu_pct), guest.and_then(|g| g.mem), guest.and_then(|g| g.maxmem)),
+            net,
+            5,
         ),
-        // ml60's storage is passed through, so the hypervisor never sees its
-        // disk traffic: the panel would only ever read zero.
-        Part::Flow(24, vec![io_line(look, guest, false), disk_line(look, guest)]),
+        disk_line(look, guest),
     ]);
     if !pve.ok {
         pve_parts = Part::Dim(Box::new(pve_parts));
