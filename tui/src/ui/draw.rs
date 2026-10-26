@@ -97,6 +97,9 @@ pub enum Part {
     /// an ellipsis if it still runs over.
     Wrap(String, Style, usize),
     Table(Table),
+    /// A table showing this many of its rows at least, and more as spare
+    /// rows allow: the rest of the forecast, say.
+    Growing(Table, usize),
     /// Children side by side: (fixed width or 0 for a share of the rest).
     Row(Vec<(u16, Part)>),
     /// Children side by side when each gets at least this many columns,
@@ -125,6 +128,7 @@ impl Part {
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
             Part::Table(t) => t.caption.is_some() as u16 + 1 + t.rows.len().max(1) as u16,
+            Part::Growing(t, least) => t.caption.is_some() as u16 + 1 + t.rows.len().min(*least).max(1) as u16,
             Part::Row(children) => {
                 let widths = row_widths(children, width);
                 children.iter().zip(widths).map(|((_, p), w)| p.height(w)).max().unwrap_or(0)
@@ -144,6 +148,7 @@ impl Part {
         match self {
             Part::Chart(c) => c.max_rows.saturating_sub(c.min_rows),
             Part::HourList(_) => super::weather::HourList::MAX_ROWS - super::weather::HourList::MIN_ROWS,
+            Part::Growing(t, least) => t.rows.len().saturating_sub(*least) as u16,
             Part::Row(children) => children.iter().map(|(_, p)| p.room()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::room).sum(),
             Part::Dim(inner) => inner.room(),
@@ -151,11 +156,12 @@ impl Part {
         }
     }
 
-    /// Weight for a share of spare rows; only charts grow.
+    /// Weight for a share of spare rows; only charts, the hour list and a
+    /// growing table grow.
     pub fn flex(&self) -> u16 {
         match self {
             Part::Chart(c) => c.weight,
-            Part::HourList(_) => 1,
+            Part::HourList(_) | Part::Growing(..) => 1,
             Part::Row(children) => children.iter().map(|(_, p)| p.flex()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::flex).sum(),
             Part::Dim(inner) => inner.flex(),
@@ -196,7 +202,7 @@ impl Part {
                     pen.line(area, area.x, area.y + i as u16, line);
                 }
             }
-            Part::Table(t) => t.render(pen, area),
+            Part::Table(t) | Part::Growing(t, _) => t.render(pen, area),
             Part::Row(children) => {
                 // Columns the shares leave over (an odd one, say) widen the
                 // gaps rather than sit after the last child, so the row
