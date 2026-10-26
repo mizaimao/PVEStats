@@ -386,7 +386,10 @@ pub fn gpu(
     // Two small charts side by side, CPU and memory, a figure under each;
     // PVE's are greyed while it is not answering.
     let pve_dim = |part: Part| if pve.ok { part } else { Part::Dim(Box::new(part)) };
-    let cpu_chart = match inside {
+    // The agent's CPU once it has sent any, so the chart does not switch back
+    // and forth; PVE's until then, or from an agent without it.
+    let agent_cpu = agent.series("host.cpu").is_some_and(|s| s.iter().any(Option::is_some));
+    let cpu_chart = match inside.filter(|_| agent_cpu) {
         // One dot a second, as the agent reads it, like the memory beside it.
         Some(i) => {
             let caption = format!("CPU {}", fmt::pct(i.cpu_pct));
