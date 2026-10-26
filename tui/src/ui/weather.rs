@@ -151,6 +151,11 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
     let units = if w.imperial { ("in", "mph", "°F") } else { ("mm", "km/h", "°C") };
 
     let mut body = banner(look, &w.alerts);
+    // A blank row under the title when there is no alert; an alert takes
+    // the top row itself. The week table gives up its last day for it.
+    if body.is_empty() {
+        body.push(Part::Gap);
+    }
     body.extend([now(look, w, units), sun(look, w, units), Part::Gap]);
     // Every two hours from the next one: the next 22 hours in a row.
     body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 2, skip: 1 }));
