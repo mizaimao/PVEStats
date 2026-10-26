@@ -332,6 +332,7 @@ impl TrueNas {
                     allocated: num(p, "allocated"),
                     used_bytes: usable.map(|u| u.0),
                     usable: usable.map(|u| u.1),
+                    old: false,
                     name,
                 }
             })

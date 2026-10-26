@@ -642,7 +642,9 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 Span::styled("● ", style(if pool.healthy { p.good } else { p.critical })),
                 Span::styled(pool.status.clone().unwrap_or_else(|| "?".into()), style(p.ink2)),
             ]);
-            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 10, color), Line::styled(figure, style(p.ink))]
+            // Greyed when the agent's reads of it have been failing.
+            let ink = if pool.old { p.muted } else { p.ink };
+            vec![Line::styled(pool.name.clone(), style(p.ink)), health, bar(look, r, 10, color), Line::styled(figure, style(ink))]
         })
         .collect();
 

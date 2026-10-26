@@ -337,6 +337,9 @@ pub struct Pool {
     /// TrueNAS did not say, and the card falls back to raw zpool figures.
     pub used_bytes: Option<f64>,
     pub usable: Option<f64>,
+    /// The figures are over two minutes old: TrueNAS's agent reads them
+    /// every 30 s, and its last reads failed.
+    pub old: bool,
 }
 
 // ------------------------------------------------------------- router data
