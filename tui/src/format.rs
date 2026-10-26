@@ -82,20 +82,6 @@ pub fn countdown(seconds: Option<i64>) -> String {
     }
 }
 
-/// Thousands separators, as the app prints the SM clock.
-pub fn int(v: Option<f64>) -> String {
-    let Some(v) = v else { return DASH.into() };
-    let digits = (v.round() as i64).to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 && c != '-' {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 /// Cut to `width` characters, marking the cut with an ellipsis.
 pub fn fit(s: &str, width: usize) -> String {
     let n = s.chars().count();
@@ -135,8 +121,6 @@ mod tests {
         assert_eq!(rate(Some(1.5 * MIB)), "1.5");
         assert_eq!(rate_auto(1.5 * MIB), "1.5 MiB/s");
         assert_eq!(rate_auto(13_000.0), "13 KiB/s");
-        assert_eq!(int(Some(2100.0)), "2,100");
-        assert_eq!(int(Some(210.0)), "210");
     }
 
     #[test]
