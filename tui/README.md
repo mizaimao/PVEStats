@@ -56,6 +56,10 @@ each on screen, for picking one. `tui: screen_off: "03:00-05:00"` switches the
 display off for those hours every day, through `wlr-randr`, when it runs in
 the kiosk (any Wayland session). `--orbit` steps the screen one cell around a
 small square every four minutes, against burn-in; it is off by default.
+`tui/kiosk off` switches the kiosk's monitor off and pauses the dashboard,
+so no machine is asked for anything; `tui/kiosk on` undoes it, and
+`tui/kiosk status` says which it is. No sudo; a deploy or a restart of the
+screen machine turns it back on.
 
 ## Build
 
