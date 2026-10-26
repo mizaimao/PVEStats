@@ -41,3 +41,8 @@ tui/shot/target/
 router/agent/target/
 router/agent/.cargo-home/
 router/bin/
+
+# The ml60 agent's build output, its cargo cache and the built program
+agent/rust/target/
+agent/rust/.cargo-home/
+agent/bin/

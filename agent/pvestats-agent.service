@@ -19,7 +19,9 @@ Type=simple
 User=ollama
 Group=ollama
 
-ExecStart=/opt/pvestats-agent/.venv/bin/python /opt/pvestats-agent/agent.py
+# The Rust agent (agent/rust); the Python one it replaces ran as
+#   ExecStart=/opt/pvestats-agent/.venv/bin/python /opt/pvestats-agent/agent.py
+ExecStart=/opt/pvestats-agent/pvestats-agent
 Restart=always
 RestartSec=5
 
@@ -27,9 +29,6 @@ RestartSec=5
 # Nothing is persisted: NVML handle and the Ollama model cache live in memory
 # and are rebuilt on start. What remains are incidental writes, closed here.
 
-# Python writes .pyc on first import. ProtectSystem=strict already makes that
-# fail, but this avoids the pointless syscalls.
-Environment=PYTHONDONTWRITEBYTECODE=1
 # The agent will honour a "stop this model" request from the dashboard, which
 # sets keep_alive=0 on it — the same thing `ollama stop` does. Nothing else on
 # this host is writable through the agent. To refuse those requests and make
@@ -38,8 +37,8 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 #   Environment=PVESTATS_AGENT_ALLOW_UNLOAD=0
 
 # Both startup messages go to stderr, so stdout has nothing to carry and its
-# journal writes are pure overhead. stderr is kept: it is two lines per start
-# plus a traceback if the thing dies, which is worth having on disk.
+# journal writes are pure overhead. stderr is kept: it is two lines per start,
+# which is worth having on disk.
 StandardOutput=null
 StandardError=journal
 # For literally zero journal writes, swap the line above for:
@@ -48,7 +47,15 @@ StandardError=journal
 # code and nothing else.
 
 # No socket activation, deliberately: NVML re-initialisation on each wake
-# costs more than the ~20 MB this process idles at (spec §3.2).
+# costs more than keeping this small process running (spec §3.2).
+
+# Bounds, should anything ever go wrong: the agent itself holds at most 16
+# connections and a handful of threads. No core files: a crash loop would
+# otherwise write one to disk each time. (No MemoryMax: a cgroup memory cap
+# set off a kernel crash on ml60 on 2026-10-21.)
+LimitNOFILE=256
+TasksMax=64
+LimitCORE=0
 
 NoNewPrivileges=true
 # The whole filesystem is read-only to this unit, apart from the API trees
