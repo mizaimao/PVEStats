@@ -147,6 +147,7 @@ impl Part {
     pub fn room(&self) -> u16 {
         match self {
             Part::Chart(c) => c.max_rows.saturating_sub(c.min_rows),
+            Part::Mirror(m) => m.max_rows.saturating_sub(m.rows),
             Part::HourList(_) => super::weather::HourList::MAX_ROWS - super::weather::HourList::MIN_ROWS,
             Part::Growing(t, least) => t.rows.len().saturating_sub(*least) as u16,
             Part::Row(children) => children.iter().map(|(_, p)| p.room()).max().unwrap_or(0),
@@ -161,6 +162,7 @@ impl Part {
     pub fn flex(&self) -> u16 {
         match self {
             Part::Chart(c) => c.weight,
+            Part::Mirror(m) => u16::from(m.max_rows > m.rows),
             Part::HourList(_) | Part::Growing(..) => 1,
             Part::Row(children) => children.iter().map(|(_, p)| p.flex()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::flex).sum(),
@@ -451,7 +453,9 @@ impl Chart {
         let grid = Style::default().fg(p.grid);
 
         // Axis: labels at the top and bottom, and on the row holding the
-        // halfway mark when the chart is tall enough to spare one.
+        // halfway mark when the chart is tall enough to spare one. A dotted
+        // line runs along the top and the halfway mark, so a value near the
+        // top reads against the line.
         let mid = (rows >= 6).then(|| rows - 1 - rows / 2);
         for r in 0..rows {
             let y = area.y + r;
@@ -466,7 +470,7 @@ impl Chart {
             };
             if let Some(label) = &label {
                 pen.text(area, area.x, y, &crate::format::right(label, label_w as usize), muted);
-                if r != 0 && r != rows - 1 {
+                if r != rows - 1 {
                     for x in plot_area.left()..plot_area.right() {
                         pen.cell(area, x, y, "·", grid);
                     }
@@ -530,14 +534,16 @@ pub struct Mirror {
     pub scale: Option<f64>,
     /// Formats the peaks.
     pub format: fn(f64) -> String,
-    /// Both halves together.
+    /// Both halves together, at the fewest and at the most it takes from
+    /// spare rows. An odd row goes to the upper half.
     pub rows: u16,
+    pub max_rows: u16,
 }
 
 impl Mirror {
     fn render(&self, pen: &mut Pen, area: Rect) {
         let p = pen.look.p;
-        let half = area.height / 2;
+        let half = area.height.div_ceil(2);
         let (top, bottom) = (area.y, area.bottom().saturating_sub(1));
         let value_x = area.right().saturating_sub(self.value_w);
         let bold = Style::default().fg(p.ink).add_modifier(Modifier::BOLD);
@@ -924,7 +930,12 @@ impl Card {
     pub fn max_extra(&self) -> Option<u16> {
         let first = self.body.iter().position(|p| p.flex() > 0);
         let gaps = self.body.iter().skip(first.map_or(0, |f| f + 1)).any(|p| matches!(p, Part::Gap));
-        (!gaps).then(|| self.body.iter().map(Part::room).sum())
+        (!gaps).then(|| self.room())
+    }
+
+    /// Rows beyond its height its charts can put to use.
+    pub fn room(&self) -> u16 {
+        self.body.iter().map(Part::room).sum()
     }
 
     pub fn render(&self, pen: &mut Pen, area: Rect) {

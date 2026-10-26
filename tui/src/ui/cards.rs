@@ -520,6 +520,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             scale: None,
             format: fmt::rate_auto,
             rows: 4,
+            max_rows: 4,
         }));
     }
     if network.is_empty() {
@@ -660,7 +661,10 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
         floor: 125_000.0,
         scale: None,
         format: fmt::bits_auto,
+        // Rows the left column has spare at its foot, the router being
+        // its last card.
         rows: 4,
+        max_rows: 6,
     });
 
     // With their units, in the size that suits: 12 kbit/s, 3.2 Mbit/s.
