@@ -160,6 +160,28 @@ then `sudo systemctl restart pvestats-agent`.
 `/opt` matters too: the unit sets `ProtectHome=true`, so installing under a
 home directory will not start.
 
+## Removing it completely (Frank, with sudo)
+
+Everything the agent put on ml60: `/opt/pvestats-agent/` (the program, and
+the old `agent.py` with its venv), the unit and any drop-in made for it, and
+one block in Caddy's config. It runs as the existing `ollama` user, so no
+user or group of its own is left behind. On ml60:
+
+    sudo systemctl disable --now pvestats-agent
+    sudo rm -f /etc/systemd/system/pvestats-agent.service
+    sudo rm -rf /etc/systemd/system/pvestats-agent.service.d
+    sudo systemctl daemon-reload
+    sudo rm -rf /opt/pvestats-agent
+    systemctl status pvestats-agent 2>&1 | head -1; ls /opt/pvestats-agent 2>&1
+
+The last line should say the unit and the folder are gone. Then delete the
+`pvestats.ml60.lan { … }` block from `/opt/ml60-stack/Caddyfile` (owned by
+frank, no sudo) and restart Caddy the way `update_all.sh` does; left in
+place, the name only answers 502. The `*.ml60.lan` DNS rewrite is shared
+with every ml60 service and stays. Then empty `ML60_AGENT_URL` in `.env`
+and run `tui/deploy`: ml60's card goes back to Proxmox's figures, with no
+GPU.
+
 ## Troubleshooting
 
 `active (running)` with an uptime of milliseconds means it is restarting

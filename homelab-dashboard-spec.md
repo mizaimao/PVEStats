@@ -8,6 +8,12 @@ Proxmox VE host and its guests. Different guests need different panels.
 Explicit design constraints, in priority order:
 
 1. **Nothing may be installed on the PVE host.** Read-only API access only.
+   *Exception 2026-10-26, with Frank's go-ahead:* one read-only agent,
+   `pvestats-pve` (`pve/`), a systemd service under a dynamic user with no
+   capabilities and a read-only filesystem. It reads the host's and VMs'
+   counters from world-readable kernel files every 2 s, beside the API every
+   30 s, for less load on the host than the API every 10 s (measured,
+   pve/README.md). Removal: pve/README.md.
 2. **No SSH** anywhere in the data path.
 3. **No writes to any homelab disk.** All persistence, if any, happens on the Mac.
 4. Read-only credentials only. No root, no write-capable tokens.
@@ -19,6 +25,8 @@ Explicit design constraints, in priority order:
    reads only, logs nothing and writes nothing to flash. Both dashboards poll
    it once a second when `ROUTER_AGENT_URL` is set, and turn its counters into
    rates themselves.
+   Every agent's README ends with how to remove it completely: `router/`,
+   `agent/` (ml60), `pve/`.
 
 ## 2. Architecture
 

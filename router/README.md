@@ -140,9 +140,16 @@ Start it now and check it from the LAN:
     ssh router '/jffs/addons/pvestats/service.sh start; sleep 2; /jffs/addons/pvestats/service.sh status'
     curl -s http://<router>:9837/
 
-## Uninstalling
+## Removing it completely
+
+Everything it put on the router: `/jffs/addons/pvestats/` (the program and
+`service.sh`) and its one line in `/jffs/scripts/services-start`. It runs as
+the admin account, the only one Merlin has, so no user is left behind. One
+login:
 
     ssh router '/jffs/addons/pvestats/service.sh stop; sed -i "/pvestats/d" /jffs/scripts/services-start;
-        rm -r /jffs/addons/pvestats'
+        rm -r /jffs/addons/pvestats; ls /jffs/addons/pvestats 2>&1; grep -c pvestats /jffs/scripts/services-start'
 
-What it left in `/tmp` goes at the next reboot.
+The last two lines should say the folder is gone and count 0. What it left
+in `/tmp` (its lock and pid files) goes at the next reboot. Then empty
+`ROUTER_AGENT_URL` in `.env` and run `tui/deploy`: the router card goes.

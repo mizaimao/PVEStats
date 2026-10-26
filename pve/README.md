@@ -2,9 +2,11 @@
 
 A small read-only program for the Proxmox VE host. It serves the host's and
 each running VM's counters as JSON over HTTP, read straight from the kernel
-instead of through Proxmox's API (`pveproxy`). It was built to compare the
-two (Linear MOO-191). It is not installed, and it is no part of either
-dashboard.
+instead of through Proxmox's API (`pveproxy`). Installed on the host on
+2026-10-26 with Frank's go-ahead (Linear MOO-191), the one thing PVEStats
+installs there. The terminal dashboard polls it every 2 s
+(`tui: pve_agent_every` in config.yaml) when `PVE_AGENT_URL` is set in
+`.env`, and asks PVE's API every 30 s for the rest.
 
 ## What it reads
 
@@ -42,6 +44,51 @@ which denies the agent to others but does not load the host.
 
 `pve/build` tests it and builds it on the build machine (Debian 13, the same
 glibc as Proxmox VE 9), into `pve/bin/pvestats-pve` (git-ignored).
+
+## What it may do (pvestats-pve.service)
+
+- **User:** `DynamicUser=yes`: a system user (`pvestats-pve`) that systemd
+  makes when the service starts and drops when it stops. No password, no
+  login, no home, no groups, not root.
+- **Capabilities:** none (`CapabilityBoundingSet=` empty,
+  `NoNewPrivileges`).
+- **Files:** the whole filesystem read-only (`ProtectSystem=strict`), a
+  private empty `/tmp`, no home directories, no devices. It reads only
+  world-readable files (above); VM configs and QEMU's sockets are root's
+  and stay out of reach.
+- **Network:** IPv4 and IPv6 sockets only; listens on 10.10.10.100:9838.
+- **Bounds:** 64 open files, 16 tasks, no core files; gives up after 10
+  failed starts in 5 minutes. Nothing per request reaches the journal.
+
+## Installing (done 2026-10-26; only with Frank's go-ahead)
+
+From the repo, after `pve/build`, as root on the host:
+
+    scp pve/bin/pvestats-pve pve/pvestats-pve.service root@pve.lan:/tmp/
+    ssh root@pve.lan 'install -m 755 -o root -g root /tmp/pvestats-pve /usr/local/bin/pvestats-pve
+        install -m 644 -o root -g root /tmp/pvestats-pve.service /etc/systemd/system/pvestats-pve.service
+        rm /tmp/pvestats-pve /tmp/pvestats-pve.service
+        systemd-analyze verify /etc/systemd/system/pvestats-pve.service
+        systemctl daemon-reload && systemctl start pvestats-pve && systemctl enable pvestats-pve'
+    curl -s http://10.10.10.100:9838/ | head -c 300
+
+Then `PVE_AGENT_URL=http://10.10.10.100:9838/` in `.env`, and `tui/deploy`.
+To update: `pve/build`, the same `install` of the program (never `cp` over
+the running one), `systemctl restart pvestats-pve`.
+
+## Removing it completely
+
+Everything it put on the host is the program, its unit and the unit's boot
+link; its user exists only while it runs and keeps no files.
+
+    ssh root@pve.lan 'systemctl disable --now pvestats-pve
+        rm -f /etc/systemd/system/pvestats-pve.service /usr/local/bin/pvestats-pve
+        systemctl daemon-reload
+        systemctl status pvestats-pve 2>&1 | head -1; ls /usr/local/bin/pvestats-pve 2>&1'
+
+The last line should say the unit and the program are gone. Then delete the
+`PVE_AGENT_URL` line from `.env` and run `tui/deploy`: the dashboard asks
+PVE's API every 10 s again, as before the agent.
 
 ## A test run (only with Frank's go-ahead)
 
