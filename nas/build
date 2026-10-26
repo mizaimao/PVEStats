@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Tests the TrueNAS agent and builds it on the build machine named in
+# tui/deploy.conf, then copies the program to nas/bin/pvestats-nas. Running
+# it on TrueNAS is a separate step, only with Frank's go-ahead: see
+# nas/README.md.
+#
+# glibc linked in (crt-static): TrueNAS 25.10 is Debian 12, glibc 2.36, and
+# a program built on the build machine's Debian 13 that starts programs
+# (`zpool`, `zfs`) asks for glibc 2.39. Linked in, it needs none at all;
+# it does no name lookups, the one thing static glibc does badly. The last
+# line checks that it came out static.
+set -euo pipefail
+. "$(dirname "$0")/../tui/machines.sh"
+
+echo "== test and build on $BUILD_HOST"
+on_build "mkdir -p \"$B\""
+pack ./nas | on_build "tar -xf - -C \"$B\""
+on_build "cd \"$B/nas/agent\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
+    && cargo test --release --quiet \
+    && RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --quiet --target x86_64-unknown-linux-gnu"
+
+mkdir -p "$repo/nas/bin"
+on_build "cat \"$B/nas/agent/target/x86_64-unknown-linux-gnu/release/pvestats-nas\"" >"$repo/nas/bin/pvestats-nas.new"
+chmod 755 "$repo/nas/bin/pvestats-nas.new"
+mv "$repo/nas/bin/pvestats-nas.new" "$repo/nas/bin/pvestats-nas"
+echo "== built nas/bin/pvestats-nas ($(wc -c <"$repo/nas/bin/pvestats-nas" | tr -d ' ') bytes)"
+echo "== $(on_build "file -b \"$B/nas/agent/target/x86_64-unknown-linux-gnu/release/pvestats-nas\" | cut -d, -f1-2,4")"
