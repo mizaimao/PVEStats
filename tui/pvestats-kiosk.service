@@ -23,6 +23,11 @@ StandardOutput=journal
 StandardError=journal
 UtmpIdentifier=tty1
 UtmpMode=user
+# No pointer on screen. Ignoring mice is not enough: a keyboard with a
+# scroll wheel counts as a pointer too, and foot then draws its I-beam. So
+# every cursor in this theme is one transparent pixel.
+Environment=XCURSOR_PATH=/home/frank/Projects/PVEStats/tui/cursor
+Environment=XCURSOR_THEME=default
 # -s keeps Ctrl+Alt+F2 and on working.
 ExecStart=/usr/bin/cage -s -- /usr/bin/foot --config=/home/frank/Projects/PVEStats/tui/foot.ini /home/frank/Projects/PVEStats/tui/bin/pvestats-tui
 Restart=always
