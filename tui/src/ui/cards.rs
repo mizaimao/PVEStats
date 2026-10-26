@@ -4,7 +4,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Table, Trace};
+use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Table, Trace, Upright};
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
@@ -170,6 +170,117 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
             }),
         ],
     }
+}
+
+/// Trial versions of the host card with CPU and memory on one chart and no
+/// bars, shown in the right-hand column until one is picked. Each is as tall
+/// as it would be in the first column.
+pub fn host_variants(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) -> Vec<Card> {
+    let p = look.p;
+    let cpu = node.cpu_pct;
+    let mem_ratio = ratio(node.mem, node.maxmem);
+    let mem_pct = fmt::pct(mem_ratio.map(|r| r * 100.0));
+    let gib = mem_text(node.mem, node.maxmem);
+    let load = node.loadavg.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>().join(" ");
+    let info = || {
+        sub(
+            look,
+            vec![
+                node.name.clone(),
+                format!("up {}", fmt::uptime(node.uptime)),
+                format!("guests {} / {}", node.guests_running, node.guests_total),
+                format!("load {load}"),
+            ],
+        )
+    };
+    let chart = |cpu_label: String, mem_label: String, caption: String| {
+        Part::Chart(Chart {
+            traces: vec![
+                Trace::from(pve.series("node.cpu"), 0, &cpu_label),
+                Trace::from(pve.series("node.mem_pct"), 1, &mem_label),
+            ],
+            capacity: pve.capacity(),
+            top: Some(100.0),
+            floor: 0.0,
+            axis: axis_pct,
+            seconds_per_sample: pve.interval,
+            caption,
+            min_rows: 5,
+            max_rows: 5,
+            weight: 1,
+        })
+    };
+    let card = |name: &str, body: Vec<Part>| Card {
+        title: format!("Host, variant {name}"),
+        right: node.name.clone(),
+        stale: !status.ok,
+        error: status.error.clone(),
+        body,
+    };
+    let figure = |label: &str, value: String| {
+        Part::Text(Line::from(vec![
+            Span::styled(fmt::left(label, 7), style(p.muted)),
+            Span::styled(value, bold(p.ink)),
+        ]))
+    };
+    vec![
+        // A: the figures ride in the legend, the GiB in the caption.
+        card("A", vec![
+            info(),
+            chart(format!("CPU {}", fmt::pct(cpu)), format!("mem {mem_pct}"), gib.clone()),
+        ]),
+        // B: the chart, and the figures in a panel at its side.
+        card("B", vec![
+            info(),
+            Part::Row(vec![
+                (0, chart("CPU".into(), "mem".into(), String::new())),
+                (
+                    18,
+                    Part::Stack(vec![
+                        figure("CPU", fmt::pct(cpu)),
+                        figure("Memory", mem_pct.clone()),
+                        Part::Text(Line::styled(gib.clone(), style(p.ink2))),
+                        Part::Text(Line::styled(format!("load {load}"), style(p.muted))),
+                    ]),
+                ),
+            ]),
+        ]),
+        // C: the chart, and memory as an upright gauge at its side.
+        card("C", vec![
+            info(),
+            Part::Row(vec![
+                (0, chart(format!("CPU {}", fmt::pct(cpu)), "mem".into(), gib.clone())),
+                (
+                    7,
+                    Part::Upright(Upright {
+                        label: "Mem".into(),
+                        ratio: mem_ratio,
+                        color: severity(look, mem_ratio, p.s2),
+                        value: mem_pct.clone(),
+                    }),
+                ),
+            ]),
+        ]),
+        // D: btop's network style, CPU rising and memory hanging.
+        card("D", vec![
+            info(),
+            Part::Mirror(Mirror {
+                up: Trace::from(pve.series("node.cpu"), 0, ""),
+                down: Trace::from(pve.series("node.mem_pct"), 1, ""),
+                up_label: Line::styled("CPU", style(look.flat(0))),
+                down_label: Line::styled("Memory", style(look.flat(1))),
+                up_value: fmt::pct(cpu),
+                down_value: format!("{mem_pct} · {gib}"),
+                label_w: 8,
+                value_w: 24,
+                capacity: pve.capacity(),
+                floor: 0.0,
+                scale: Some(100.0),
+                format: |v| fmt::pct(Some(v)),
+                rows: 5,
+            }),
+        ]),
+    ]
 }
 
 /// While PVE has given no data the host card cannot exist, so a note in
@@ -436,6 +547,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             value_w: 15,
             capacity: nas.capacity(),
             floor: MIB,
+            scale: None,
             format: fmt::rate_auto,
             rows: 4,
         }));

@@ -355,6 +355,11 @@ impl Pve {
             source.push(&key, value);
         }
         source.push("node.cpu", node.cpu_pct);
+        let mem_pct = match (node.mem, node.maxmem) {
+            (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
+            _ => None,
+        };
+        source.push("node.mem_pct", mem_pct);
         source.succeed(PveData { node, guests });
         Ok(())
     }

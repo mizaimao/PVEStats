@@ -76,6 +76,8 @@ pub enum Part {
     Chart(Chart),
     /// Two graphs on one axis, one up and one down, btop's network style.
     Mirror(Mirror),
+    /// A meter standing upright, filling from the foot.
+    Upright(Upright),
     /// A value in big digits.
     Big(Big),
     /// A muted label over its value.
@@ -102,6 +104,7 @@ impl Part {
             Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
             Part::Chart(c) => c.min_rows,
             Part::Mirror(m) => m.rows,
+            Part::Upright(_) => 3,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
@@ -155,6 +158,7 @@ impl Part {
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
             Part::Mirror(m) => m.render(pen, area),
+            Part::Upright(u) => u.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
@@ -467,6 +471,9 @@ pub struct Mirror {
     pub capacity: usize,
     /// Neither half's scale goes below this, so an idle link stays flat.
     pub floor: f64,
+    /// A fixed top for both halves (100 for percentages), or None for each
+    /// to scale to its own peak.
+    pub scale: Option<f64>,
     /// Formats the peaks.
     pub format: fn(f64) -> String,
     /// Both halves together.
@@ -497,8 +504,8 @@ impl Mirror {
         let width = area.width.saturating_sub(self.label_w + self.value_w + 1);
         let upper = Rect { x, y: top, width, height: half };
         let lower = Rect { x, y: top + half, width, height: area.height - half };
-        plot(pen, upper, std::slice::from_ref(&self.up), self.capacity, nice(up_peak.max(self.floor)), false);
-        plot(pen, lower, std::slice::from_ref(&self.down), self.capacity, nice(down_peak.max(self.floor)), true);
+        plot(pen, upper, std::slice::from_ref(&self.up), self.capacity, self.scale.unwrap_or_else(|| nice(up_peak.max(self.floor))), false);
+        plot(pen, lower, std::slice::from_ref(&self.down), self.capacity, self.scale.unwrap_or_else(|| nice(down_peak.max(self.floor))), true);
     }
 }
 
@@ -954,5 +961,51 @@ mod tests {
         assert_eq!(nice(31.0 * mib), 50.0 * mib);
         assert_eq!(span(180.0), "3m ago");
         assert_eq!(span(90.0), "90s ago");
+    }
+}
+
+// --------------------------------------------------------- upright meter
+
+/// A meter standing upright: its label on top, the figure at the foot, and
+/// between them a bar filling from the bottom, as tall as it is given.
+pub struct Upright {
+    pub label: String,
+    pub ratio: Option<f64>,
+    pub color: Color,
+    pub value: String,
+}
+
+impl Upright {
+    fn render(&self, pen: &mut Pen, area: Rect) {
+        let p = pen.look.p;
+        if area.height < 3 {
+            return;
+        }
+        let centre = |text: &str| area.x + area.width.saturating_sub(text.chars().count() as u16) / 2;
+        pen.text(area, centre(&self.label), area.y, &self.label, Style::default().fg(p.muted));
+        pen.text(area, centre(&self.value), area.bottom() - 1, &self.value, Style::default().fg(p.ink));
+        let rows = area.height - 2;
+        let bar_w = area.width.saturating_sub(2).clamp(1, 5);
+        let x = area.x + (area.width - bar_w) / 2;
+        let filled = self.ratio.unwrap_or(0.0).clamp(0.0, 1.0) * rows as f64;
+        let full = filled.floor() as u16;
+        let partial: &[&str] = if pen.look.console_glyphs { &["░", "▒"] } else { &["▁", "▂", "▃", "▄", "▅", "▆", "▇"] };
+        // The empty part of the track: dim blocks, or a shade on the console,
+        // whose dim grey would read as filled.
+        let track = if pen.look.console_glyphs { "░" } else { "█" };
+        for r in 0..rows {
+            let y = area.bottom() - 2 - r;
+            let (symbol, color) = if r < full {
+                ("█", self.color)
+            } else if r == full {
+                let step = ((filled - full as f64) * (partial.len() + 1) as f64).floor() as usize;
+                if step > 0 { (partial[step - 1], self.color) } else { (track, p.grid) }
+            } else {
+                (track, p.grid)
+            };
+            for dx in 0..bar_w {
+                pen.cell(area, x + dx, y, symbol, Style::default().fg(color));
+            }
+        }
     }
 }
