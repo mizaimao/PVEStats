@@ -222,9 +222,10 @@ CPU %, memory used/total, 1/5/15 load average, uptime, guest count
 
 Merged from two sources — PVE for CPU/RAM, the agent for everything else.
 
-- CPU % and RAM (PVE, 10s). *Update 2026-10-26:* the terminal dashboard
-  takes RAM from the agent's `ram` (1s) while it is fresh, with the cache
-  shown beside it, and PVE's figure otherwise.
+- CPU % and RAM (PVE, 10s). *Update 2026-10-26:* both dashboards take RAM
+  from the agent's `ram` (1s) while it is under three polls old, with the
+  cache shown beside it, and PVE's figure otherwise. The collector passes
+  it to the page as the guest's `ram`.
 - GPU utilisation %, large and prominent (agent, 1s)
 - VRAM used / total, with a bar (agent, 1s)
 - Temperature, power draw vs limit, fan % (agent, 1s)

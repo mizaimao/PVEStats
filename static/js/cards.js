@@ -205,9 +205,20 @@ export function gpuCard(guest) {
       cpu.set(g.cpu_pct || 0, 100, fmt.pctText(g.cpu_pct));
       setSub(shell, [`vmid ${g.vmid}`, "GPU", (g.addresses || [])[0],
                      `up ${fmt.uptime(g.uptime)}`]);
-      mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
+      // ml60's memory as ml60 sees it, while its agent's reading is fresh:
+      // PVE counts the disk cache as used, and read 95% while ml60's
+      // programs used 12%. Live from the agent, so never greyed with PVE.
+      const ram = g.ram;
+      if (ram) {
+        const used = Math.max(0, ram.total - ram.available);
+        mem.set(used, ram.total,
+          `${fmt.gib(used)} / ${fmt.gib(ram.total)} GiB · cache ${fmt.gib(ram.cache)}`);
+      } else {
+        mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
+      }
       io.update(g);
-      markPve([usage, io.el], status);
+      markPve([cpu.el, io.el], status);
+      markPve([mem.el], ram ? { ok: true } : status);
 
       const gpu = g.gpu;
       if (gpu) {

@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 
 use crate::config::Config;
 use crate::sources::{self, agent::Agent, lock, pve::Pve, run_poller, truenas::TrueNas};
-use crate::state::Source;
+use crate::state::{clock, Source};
 
 pub struct Collector {
     pub config: Arc<Config>,
@@ -115,7 +115,17 @@ impl Collector {
                 Some("gpu") => {
                     guest.insert("gpu_status".into(), agent.status());
                     if !agent.data.is_empty() {
-                        guest.insert("gpu".into(), Value::Object(agent.data.clone()));
+                        let mut gpu = agent.data.clone();
+                        let (ram, ram_at) = (gpu.shift_remove("ram"), gpu.shift_remove("ram_at"));
+                        guest.insert("gpu".into(), Value::Object(gpu));
+                        // ml60's memory from inside it, in place of PVE's
+                        // (which counts the disk cache as used) while under
+                        // three polls old; after that the card goes back to
+                        // PVE's.
+                        let fresh = ram_at.and_then(|t| t.as_f64()).is_some_and(|t| clock() - t <= sources::AGENT_INTERVAL * 3.0);
+                        if let Some(ram) = ram.filter(|r| fresh && !r.is_null()) {
+                            guest.insert("ram".into(), ram);
+                        }
                     }
                 }
                 Some("nas") => {

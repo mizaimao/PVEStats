@@ -1,5 +1,6 @@
 """The ml60 GPU agent (spec §3.2)."""
 
+from ..state import clock
 from .base import AGENT_TIMEOUT
 
 # --------------------------------------------------------------------------
@@ -33,6 +34,9 @@ class AgentSource:
         # Absent on an agent that predates the unload endpoint, which is
         # exactly right: the dashboard then shows no stop buttons.
         can_unload = bool(payload.get("can_unload"))
+        # ml60's own memory, with when it was read: the agent still sends it
+        # while NVML fails, so the collector judges its age, not the source's.
+        ram = {"ram": _ram(payload.get("ram")), "ram_at": clock()}
 
         gpu = payload.get("gpu")
         if gpu is None:
@@ -40,7 +44,7 @@ class AgentSource:
             # for exactly this case. Keep them current (and Stop usable), and
             # still fail, so the card says why its GPU readings are old.
             self.source.data = {**self.source.data, "models": models,
-                                "can_unload": can_unload}
+                                "can_unload": can_unload, **ram}
             raise RuntimeError(payload.get("error") or "agent reported no GPU")
 
         procs = []
@@ -64,7 +68,20 @@ class AgentSource:
         self.source.push("gpu.temp", gpu.get("temp"))
 
         self.source.succeed({**gpu, "procs": procs, "models": models,
-                             "can_unload": can_unload})
+                             "can_unload": can_unload, **ram})
+
+
+def _ram(ram):
+    """ml60's memory as ml60 sees it, in bytes, or None from an agent that
+    does not send it. PVE counts a VM's disk cache as used memory."""
+    if not isinstance(ram, dict):
+        return None
+    number = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    total, available = number(ram.get("total")), number(ram.get("available"))
+    if total is None or available is None or total <= 0:
+        return None
+    cache = number(ram.get("cache"))
+    return {"total": total, "available": available, "cache": 0 if cache is None else cache}
 
 
 def _placement(size, size_vram):
