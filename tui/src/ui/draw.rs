@@ -78,8 +78,6 @@ pub enum Part {
     Mirror(Mirror),
     /// The coming hours, a column each: time, sky, temperature, rain chance.
     Hours(super::weather::HourStrip),
-    /// Temperature over the coming hours, the chance of rain under it.
-    Outlook(super::weather::Outlook),
     /// The coming hours a line each, as many as there are rows for.
     HourList(super::weather::HourList),
     /// The week as tiles side by side, each with its icon.
@@ -93,6 +91,9 @@ pub enum Part {
     /// Items spread across one row: the first at the left edge, the last at
     /// the right, the rest evenly between.
     Spread(Vec<Line<'static>>),
+    /// Text wrapped at spaces onto at most this many lines, the last cut with
+    /// an ellipsis if it still runs over.
+    Wrap(String, Style, usize),
     Table(Table),
     /// Children side by side: (fixed width or 0 for a share of the rest).
     Row(Vec<(u16, Part)>),
@@ -111,10 +112,10 @@ impl Part {
     pub fn height(&self, width: u16) -> u16 {
         match self {
             Part::Gap | Part::Text(_) | Part::Meter(_) | Part::Spread(_) => 1,
+            Part::Wrap(text, _, most) => wrap(text, width, *most).len().max(1) as u16,
             Part::Chart(c) => c.min_rows,
             Part::Mirror(m) => m.rows,
             Part::Hours(_) => 4,
-            Part::Outlook(o) => o.min_rows,
             Part::HourList(_) => super::weather::HourList::MIN_ROWS,
             Part::Week(_) => super::weather::WeekTiles::ROWS,
             Part::Big(b) => b.height(),
@@ -139,7 +140,6 @@ impl Part {
     pub fn room(&self) -> u16 {
         match self {
             Part::Chart(c) => c.max_rows.saturating_sub(c.min_rows),
-            Part::Outlook(o) => o.max_rows.saturating_sub(o.min_rows),
             Part::HourList(_) => super::weather::HourList::MAX_ROWS - super::weather::HourList::MIN_ROWS,
             Part::Row(children) => children.iter().map(|(_, p)| p.room()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::room).sum(),
@@ -152,7 +152,7 @@ impl Part {
     pub fn flex(&self) -> u16 {
         match self {
             Part::Chart(c) => c.weight,
-            Part::Outlook(_) | Part::HourList(_) => 1,
+            Part::HourList(_) => 1,
             Part::Row(children) => children.iter().map(|(_, p)| p.flex()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::flex).sum(),
             Part::Dim(inner) => inner.flex(),
@@ -174,7 +174,6 @@ impl Part {
             Part::Chart(c) => c.render(pen, area),
             Part::Mirror(m) => m.render(pen, area),
             Part::Hours(h) => h.render(pen, area),
-            Part::Outlook(o) => o.render(pen, area),
             Part::HourList(l) => l.render(pen, area),
             Part::Week(w) => w.render(pen, area),
             Part::Big(b) => b.render(pen, area),
@@ -183,6 +182,11 @@ impl Part {
                 pen.line(area, area.x, area.y + 1, value);
             }
             Part::Spread(items) => spread_row(pen, area, items),
+            Part::Wrap(text, style, most) => {
+                for (i, line) in wrap(text, area.width, *most).iter().enumerate() {
+                    pen.text(area, area.x, area.y + i as u16, line, *style);
+                }
+            }
             Part::Chips(chips) => {
                 for (i, line) in chip_lines(chips, area.width).iter().enumerate() {
                     pen.line(area, area.x, area.y + i as u16, line);
@@ -1018,5 +1022,43 @@ fn spread_row(pen: &mut Pen, area: Rect, items: &[Line<'static>]) {
         let i = i as u16;
         let gap = if gaps == 0 { 0 } else { (room / gaps + u16::from(i < room % gaps)).max(2) };
         x += w + gap;
+    }
+}
+
+/// `text` broken at spaces into lines of at most `width` characters, at
+/// most `most` of them, the last cut with an ellipsis if text is left over.
+fn wrap(text: &str, width: u16, most: usize) -> Vec<String> {
+    let width = width.max(1) as usize;
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let fits = current.is_empty() || current.chars().count() + 1 + word.chars().count() <= width;
+        if !fits {
+            lines.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() > most {
+        lines.truncate(most);
+        if let Some(last) = lines.last_mut() {
+            *last = crate::format::fit(&format!("{last} …"), width);
+        }
+    }
+    lines.iter().map(|l| crate::format::fit(l, width)).collect()
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    #[test]
+    fn wraps_at_spaces() {
+        assert_eq!(super::wrap("one two three four", 9, 3), ["one two", "three", "four"]);
+        assert_eq!(super::wrap("one two three four", 9, 2), ["one two", "three …"]);
+        assert_eq!(super::wrap("", 9, 2), Vec::<String>::new());
     }
 }

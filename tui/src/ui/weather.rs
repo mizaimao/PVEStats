@@ -1,7 +1,7 @@
 //! The forecast card: the weather now in big figures beside an ASCII icon,
 //! then the coming hours and the week, in one of three layouts:
 //!
-//!   A  an hourly strip, a chart of the coming days, the week as a table
+//!   A  an hourly strip, then the week as a table
 //!   B  the hours a line each, as many as fit, then the week as a table
 //!   C  an hourly strip, a three-hourly strip after it, the week as tiles
 
@@ -9,11 +9,11 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{plot, Big, Card, Col, Part, Pen, Table, Trace};
+use super::draw::{Big, Card, Col, Part, Pen, Table};
 use super::theme::Look;
 use crate::format as fmt;
 use crate::sources::agent::days_from_civil;
-use crate::sources::{Day, Hour, WeatherData};
+use crate::sources::{Alert, Day, Hour, WeatherData};
 use crate::state::{Source, Status};
 
 fn style(color: Color) -> Style {
@@ -154,7 +154,8 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
     };
     let units = if w.imperial { ("in", "mph", "°F") } else { ("mm", "km/h", "°C") };
 
-    let mut body = vec![now(look, w, units), sun(look, w, units), Part::Gap];
+    let mut body = banner(look, &w.alerts);
+    body.extend([now(look, w, units), sun(look, w, units), Part::Gap]);
     match layout {
         'b' => {
             // No gap after the list: with none below it, it runs down to the
@@ -172,8 +173,6 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
         _ => {
             body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 1, skip: 0 }));
             body.push(Part::Gap);
-            body.push(Part::Outlook(Outlook { hours: w.hours.clone(), min_rows: 6, max_rows: 24 }));
-            body.push(Part::Gap);
             body.push(week_table(look, w, units));
         }
     }
@@ -186,6 +185,39 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
         error: status.error.clone(),
         body,
     }
+}
+
+/// Alerts in force, at the very top: each one's event and when it ends,
+/// coloured by severity, with its headline under it. Nothing at all when
+/// there are none.
+fn banner(look: &Look, alerts: &[Alert]) -> Vec<Part> {
+    const SHOWN: usize = 2;
+    let p = look.p;
+    let mut parts = Vec::new();
+    for alert in alerts.iter().take(SHOWN) {
+        let color = match alert.severity.as_str() {
+            "Extreme" | "Severe" => p.critical,
+            "Moderate" => p.warning,
+            _ => p.ink2,
+        };
+        let mark = if look.console_glyphs { "!" } else { "⚠" };
+        let mut spans = vec![Span::styled(format!("{mark} {}", alert.event), bold(color))];
+        if !alert.until.is_empty() {
+            spans.push(Span::styled(" · until ", style(p.muted)));
+            spans.push(Span::styled(format!("{} {}", weekday(&alert.until), clock(&alert.until)), style(color)));
+        }
+        parts.push(Part::Text(Line::from(spans)));
+        if let Some(headline) = &alert.headline {
+            parts.push(Part::Wrap(headline.clone(), style(p.muted), 2));
+        }
+    }
+    if alerts.len() > SHOWN {
+        parts.push(Part::Text(Line::styled(format!("and {} more", alerts.len() - SHOWN), style(p.muted))));
+    }
+    if !parts.is_empty() {
+        parts.push(Part::Gap);
+    }
+    parts
 }
 
 /// The weather now: its icon, the temperature in big digits, and the sky,
@@ -395,77 +427,6 @@ impl WeekTiles {
             pen.line(column, centre(&temps), area.y + 4, &temps);
             let rain = rain_chance(pen.look, d.rain_chance);
             pen.line(column, centre(&rain), area.y + 5, &rain);
-        }
-    }
-}
-
-/// Temperature over the coming hours as a graph scaled to its own range,
-/// the chance of rain under it, and the days marked along the foot.
-pub struct Outlook {
-    pub hours: Vec<Hour>,
-    pub min_rows: u16,
-    pub max_rows: u16,
-}
-
-impl Outlook {
-    pub fn render(&self, pen: &mut Pen, area: Rect) {
-        let p = pen.look.p;
-        if area.height < 4 || self.hours.is_empty() {
-            return;
-        }
-        let temps: Vec<f64> = self.hours.iter().filter_map(|h| h.temp).collect();
-        let lo = temps.iter().fold(f64::MAX, |a, &b| a.min(b)).floor() - 1.0;
-        let hi = temps.iter().fold(f64::MIN, |a, &b| a.max(b)).ceil() + 1.0;
-        let label_w = [degrees(Some(hi)), degrees(Some(lo)), "rain".into()].iter().map(|s| s.chars().count()).max().unwrap_or(4) as u16;
-        let plot_x = area.x + label_w + 1;
-        let width = area.width.saturating_sub(label_w + 1);
-        // A cell per hour: as many hours as fit, from now.
-        let n = self.hours.len().min(width as usize);
-        let rain_rows = 2;
-        let temp_rows = area.height - rain_rows - 1;
-        let temp_area = Rect { x: plot_x, y: area.y, width, height: temp_rows };
-        let rain_area = Rect { x: plot_x, y: area.y + temp_rows, width, height: rain_rows };
-        let hours = &self.hours[..n];
-        // Shown oldest first and newest at the right edge, so the n hours
-        // fill the width with now at its left.
-        let temp = Trace { data: hours.iter().map(|h| h.temp.map(|t| t - lo)).collect(), series: 1, label: String::new() };
-        let rain = Trace { data: hours.iter().map(|h| h.rain_chance).collect(), series: 0, label: String::new() };
-        let muted = style(p.muted);
-        let grid = style(p.grid);
-        let axis = |pen: &mut Pen, y: u16, label: Option<String>| {
-            if let Some(label) = &label {
-                pen.text(area, area.x, y, &fmt::right(label, label_w as usize), muted);
-            }
-            pen.cell(area, area.x + label_w, y, if label.is_some() { "┤" } else { "│" }, grid);
-        };
-        for r in 0..temp_rows {
-            let label = match r {
-                0 => Some(degrees(Some(hi))),
-                r if r == temp_rows - 1 => Some(degrees(Some(lo))),
-                _ => None,
-            };
-            axis(pen, area.y + r, label);
-        }
-        for r in 0..rain_rows {
-            axis(pen, rain_area.y + r, (r == rain_rows - 1).then(|| "rain".to_string()));
-        }
-        plot(pen, temp_area, std::slice::from_ref(&temp), n, hi - lo, false, Some(1.0));
-        plot(pen, rain_area, std::slice::from_ref(&rain), n, 100.0, false, Some(1.0));
-
-        // The foot: each day's name where it starts, and "now" at the left
-        // edge when the first day's name leaves room for it.
-        let y = area.bottom() - 1;
-        let left = plot_x + width.saturating_sub(n as u16);
-        let midnights: Vec<u16> =
-            (0..n).filter(|&i| hours[i].time.get(11..13) == Some("00")).map(|i| left + i as u16).collect();
-        if midnights.first().map_or(true, |&x| x >= left + 4) {
-            pen.text(area, left, y, "now", muted);
-        }
-        for (&x, i) in midnights.iter().zip(0..) {
-            let name = weekday(&hours[(x - left) as usize].time);
-            if midnights.get(i + 1).map_or(true, |&next| next >= x + name.len() as u16 + 1) {
-                pen.text(area, x, y, name, style(p.ink2));
-            }
         }
     }
 }
