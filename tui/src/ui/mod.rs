@@ -16,8 +16,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::config::{Config, View};
-use crate::sources::{lock, Shared};
-use crate::state::{clock, Status};
+use crate::sources::{lock, PveData, Shared};
+use crate::state::{clock, Source, Status};
 use cards::Slot;
 use draw::{share, Card, Part, Pen};
 use theme::Look;
@@ -134,7 +134,7 @@ impl Screen {
         let nas_cards: Vec<Card> =
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
         let basic: Vec<&Slot> = of(View::Basic).collect();
-        let guests = Guests { slots: &basic, status: &sp };
+        let guests = Guests { slots: &basic, status: &sp, pve: &pve };
         let tour = self.tour.as_ref().map(|t| cards::tour(look, &names, t.index % names.len(), t.next_in));
 
         if self.focus && !gpu_cards.is_empty() {
@@ -211,6 +211,8 @@ impl Screen {
 struct Guests<'a> {
     slots: &'a [&'a Slot<'a>],
     status: &'a Status,
+    /// For each guest's CPU history.
+    pve: &'a Source<PveData>,
 }
 
 /// Narrowest a guest card may be: room for "CPU ■■■ 12%".
@@ -301,10 +303,20 @@ impl Guests<'_> {
             let h = area.height / rows as u16 + u16::from((r as u16) < area.height % rows as u16);
             let k = row.len() as u16;
             let spare = area.width + 1 - k * ((area.width + 1) / k);
+            let width = |i: usize| (area.width + 1) / k - 1 + u16::from((i as u16) < spare);
+            // One chart height for the whole row, so its cards' lines stay
+            // level: the rows the fullest card leaves over.
+            let chart = row
+                .iter()
+                .enumerate()
+                .map(|(i, s)| h.saturating_sub(2 + cards::guest_lines(width(i), s.guest)))
+                .min()
+                .unwrap_or(0);
             let mut x = area.x;
             for (i, slot) in row.iter().enumerate() {
-                let w = (area.width + 1) / k - 1 + u16::from((i as u16) < spare);
-                cards::guest(pen.look, slot, self.status, w, h).render(pen, Rect { x, y, width: w, height: h });
+                let w = width(i);
+                cards::guest(pen.look, slot, self.status, self.pve, chart, w, h)
+                    .render(pen, Rect { x, y, width: w, height: h });
                 x += w + 1;
             }
             y += h;
@@ -486,7 +498,8 @@ mod tests {
             .collect();
         let refs: Vec<&Slot> = slots.iter().collect();
         let status = Status { ok: true, error: None, age: None, interval: 10.0, stale: false };
-        let g = Guests { slots: &refs, status: &status };
+        let pve = Source::new(10.0, 600.0);
+        let g = Guests { slots: &refs, status: &status, pve: &pve };
         // 57 x 12: two rows of six, three cards and then two.
         assert_eq!(g.rows(57, 12), Some(2));
         let rows: Vec<Vec<u64>> = g.arrange(2).iter().map(|r| r.iter().map(|s| s.vmid).collect()).collect();
