@@ -1,18 +1,30 @@
-//! ml60's own CPU, network, disk, uptime and address, read from inside it on
-//! each request, so the dashboard's ml60 card needs nothing from Proxmox.
+//! ml60's own CPU, network, disk, uptime and address, read from inside it,
+//! so the dashboard's ml60 card needs nothing from Proxmox.
 //!
-//! Kernel files only, apart from one statvfs per local filesystem and one
-//! UDP socket that is never sent on: connecting it towards the default
-//! gateway makes the kernel pick the address ml60 talks from, which is
-//! ml60's address on the LAN. Counters are totals; the client makes rates.
+//! Each request reads kernel files only: CPU, uptime and the network
+//! counters. Disk usage and the address change slowly and are read by a
+//! thread of their own every 10 seconds (`slow_forever`): a statvfs that
+//! hangs (a dying disk, a stuck FUSE mount) then holds up only that thread
+//! and those two figures, never a request. The address comes from a UDP
+//! socket that is never sent on: connecting it towards the default gateway
+//! makes the kernel pick the address ml60 talks from. Counters are totals;
+//! the client makes rates.
 
 use std::ffi::CString;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
+/// How often disk usage and the address are read again.
+const SLOW_EVERY: Duration = Duration::from_secs(10);
+
+/// A file as text, any bytes that are not UTF-8 replaced: a mount point or
+/// interface name in another encoding must not blank the whole file.
 fn read(path: &str) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+    std::fs::read(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
 /// Busy and total jiffies over all cores, from /proc/stat's first line
@@ -98,8 +110,10 @@ fn unescape(path: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Total and used bytes of the filesystem at `path`, as `df` and Proxmox's
-/// guest agent count them (blocks, and blocks less free ones), or None.
+/// Total and used bytes of the filesystem at `path`, as `df`'s Use% and
+/// Proxmox's guest agent (QEMU 9.1 on) count them: used is blocks less free
+/// ones, and total is used plus what an ordinary user may still fill, so the
+/// blocks ext4 keeps back for root (5% by default) are in neither. Or None.
 fn usage(path: &str) -> Option<(u64, u64)> {
     let path = CString::new(path).ok()?;
     // SAFETY: statvfs fills the struct it is given and reads only the path,
@@ -109,9 +123,8 @@ fn usage(path: &str) -> Option<(u64, u64)> {
         return None;
     }
     let size = u64::from(s.f_frsize);
-    let blocks = u64::from(s.f_blocks);
-    let total = blocks.saturating_mul(size);
-    let used = blocks.saturating_sub(u64::from(s.f_bfree)).saturating_mul(size);
+    let used = u64::from(s.f_blocks).saturating_sub(u64::from(s.f_bfree)).saturating_mul(size);
+    let total = used.saturating_add(u64::from(s.f_bavail).saturating_mul(size));
     (total > 0).then_some((total, used))
 }
 
@@ -123,17 +136,16 @@ fn address(gateway: Ipv4Addr) -> Option<IpAddr> {
     Some(socket.local_addr().ok()?.ip())
 }
 
-/// The reading served as "host": null for whatever cannot be read.
-pub fn reading() -> Value {
-    let (busy, total, cpus) = read("/proc/stat").and_then(|t| cpu(&t)).map_or((None, None, None), |(b, t, n)| (Some(b), Some(t), Some(n)));
-    let uptime = read("/proc/uptime")
-        .and_then(|t| t.split_whitespace().next()?.parse::<f64>().ok())
-        .filter(|u| u.is_finite());
-    let route = read("/proc/net/route").and_then(|t| default_route(&t));
-    let net = route.as_ref().and_then(|(iface, _)| {
-        let (rx, tx) = read("/proc/net/dev").and_then(|t| net_bytes(&t, iface))?;
-        Some(json!({"iface": iface, "rx": rx, "tx": tx}))
-    });
+/// Disk usage and the address, as last read; null until first read, or for
+/// what cannot be.
+#[derive(Clone, Debug, Default)]
+pub struct Slow {
+    pub disk: Value,
+    pub ip: Value,
+}
+
+/// Disk usage and the address, read now.
+pub fn slow() -> Slow {
     // The largest local filesystem, as the dashboard took the largest that
     // Proxmox's guest agent listed.
     let disk = read("/proc/self/mounts")
@@ -142,15 +154,41 @@ pub fn reading() -> Value {
         .iter()
         .filter_map(|m| usage(m))
         .max_by_key(|(total, _)| *total)
-        .map(|(total, used)| json!({"total": total, "used": used}));
-    let ip = route.and_then(|(_, gateway)| address(gateway)).map(|ip| ip.to_string());
+        .map_or(Value::Null, |(total, used)| json!({"total": total, "used": used}));
+    let ip = read("/proc/net/route")
+        .and_then(|t| default_route(&t))
+        .and_then(|(_, gateway)| address(gateway))
+        .map_or(Value::Null, |ip| Value::String(ip.to_string()));
+    Slow { disk, ip }
+}
+
+/// Reads disk usage and the address into `slot` every SLOW_EVERY, for ever.
+pub fn slow_forever(slot: &Mutex<Slow>) -> ! {
+    loop {
+        let fresh = slow();
+        *slot.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
+        thread::sleep(SLOW_EVERY);
+    }
+}
+
+/// The reading served as "host": CPU, uptime and network read now, disk and
+/// address as `slow` last found them; null for whatever cannot be read.
+pub fn reading(slow: &Slow) -> Value {
+    let (busy, total, cpus) = read("/proc/stat").and_then(|t| cpu(&t)).map_or((None, None, None), |(b, t, n)| (Some(b), Some(t), Some(n)));
+    let uptime = read("/proc/uptime")
+        .and_then(|t| t.split_whitespace().next()?.parse::<f64>().ok())
+        .filter(|u| u.is_finite());
+    let net = read("/proc/net/route").and_then(|t| default_route(&t)).and_then(|(iface, _)| {
+        let (rx, tx) = read("/proc/net/dev").and_then(|t| net_bytes(&t, &iface))?;
+        Some(json!({"iface": iface, "rx": rx, "tx": tx}))
+    });
     json!({
         "cpu": {"busy": busy, "total": total},
         "cpus": cpus,
         "uptime": uptime.map(|u| (u * 100.0).round() / 100.0),
         "net": net,
-        "disk": disk,
-        "ip": ip,
+        "disk": slow.disk,
+        "ip": slow.ip,
     })
 }
 
@@ -213,7 +251,7 @@ mod tests {
     fn the_reading_is_whole() {
         // The build machine's own figures: every field present and the
         // shapes right, whatever the values.
-        let r = reading();
+        let r = reading(&slow());
         assert!(r["cpu"]["busy"].as_u64().unwrap() <= r["cpu"]["total"].as_u64().unwrap(), "{r}");
         assert!(r["cpus"].as_u64().unwrap() >= 1, "{r}");
         assert!(r["uptime"].as_f64().unwrap() > 0.0, "{r}");

@@ -36,10 +36,13 @@ change) and these differences:
   (`/proc/stat`), the number of cores, uptime, the default route's interface
   and its byte counters (`/proc/net/dev`), the largest local filesystem's
   total and used bytes (statvfs on mounts backed by a block device, so no
-  NAS shares; the same figure Proxmox's guest agent gave), and ml60's LAN
-  address (a UDP socket connected towards the gateway, which sends
-  nothing). Counters are totals; the dashboard makes rates. Read per
-  request; any part that cannot be read is null.
+  NAS shares; total is used plus what users may still fill, as `df`'s Use%
+  and Proxmox's guest agent count it, leaving out ext4's 5% kept for root),
+  and ml60's LAN address (a UDP socket connected towards the gateway, which
+  sends nothing). Counters are totals; the dashboard makes rates. CPU,
+  uptime and network are read per request; disk and address by a thread of
+  their own every 10 s, so a hung disk cannot hold up a request. Any part
+  that cannot be read is null.
 
 - **The GPU is read by one thread**, about once a second and only while
   someone has asked in the last 15 s; requests are served its latest

@@ -108,6 +108,8 @@ pub struct Shared {
     stopped: Mutex<HashMap<String, Instant>>,
     /// When an unload last went to Ollama: at most one a second.
     last_unload: Mutex<Option<Instant>>,
+    /// ml60's disk usage and address, from their own thread (host.rs).
+    host_slow: Mutex<host::Slow>,
 }
 
 impl Shared {
@@ -124,6 +126,7 @@ impl Shared {
             unloading: AtomicBool::new(false),
             stopped: Mutex::new(HashMap::new()),
             last_unload: Mutex::new(None),
+            host_slow: Mutex::new(host::Slow::default()),
         }
     }
 }
@@ -155,6 +158,8 @@ fn main() {
     thread::spawn(move || sample_forever(&s));
     let s = Arc::clone(&shared);
     thread::spawn(move || models_forever(&s));
+    let s = Arc::clone(&shared);
+    thread::spawn(move || host::slow_forever(&s.host_slow));
     serve(&listener, &shared);
 }
 
@@ -285,7 +290,8 @@ fn payload(s: &Shared) -> Value {
         (None, None) => Value::String("no GPU reading yet".into()),
     };
     let ram = std::fs::read_to_string("/proc/meminfo").map_or(Value::Null, |t| meminfo(&t));
-    let host = host::reading();
+    let slow = lock(&s.host_slow).clone();
+    let host = host::reading(&slow);
     json!({"gpu": gpu, "models": models, "can_unload": s.config.allow_unload, "error": error, "ram": ram, "host": host})
 }
 
@@ -466,6 +472,8 @@ mod tests {
         let listener = TcpListener::bind(config.bind).unwrap();
         let addr = listener.local_addr().unwrap().to_string();
         let shared = Arc::new(Shared::new(config));
+        // What the disk thread would have read by the first request.
+        *lock(&shared.host_slow) = host::slow();
         let s = Arc::clone(&shared);
         thread::spawn(move || loop {
             *lock(&s.gpu) = Reading { value: Some(json!({"util": 7, "procs": []})), error: None, at: Some(Instant::now()) };
