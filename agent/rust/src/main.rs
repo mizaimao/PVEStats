@@ -1,8 +1,10 @@
 //! pvestats-agent: ml60's GPU and loaded-model agent for PVEStats (spec
-//! §3.2), in place of agent.py and with the same replies, plus "ram".
+//! §3.2), in place of agent.py and with the same replies, plus "ram" and
+//! "host".
 //!
-//! GET / answers with the GPU (NVML), Ollama's loaded models and ml60's
-//! own memory (/proc/meminfo) as JSON;
+//! GET / answers with the GPU (NVML), Ollama's loaded models, ml60's own
+//! memory (/proc/meminfo) and its CPU, network, disk, uptime and address
+//! (host.rs) as JSON;
 //! POST /unload {"model": name} asks Ollama to drop a loaded model, the one
 //! write this project makes. Both are served on 127.0.0.1:9836, which Caddy
 //! publishes to the LAN with no auth.
@@ -21,6 +23,7 @@
 //! to stderr per start.
 
 mod gpu;
+mod host;
 mod http;
 mod ollama;
 
@@ -282,7 +285,8 @@ fn payload(s: &Shared) -> Value {
         (None, None) => Value::String("no GPU reading yet".into()),
     };
     let ram = std::fs::read_to_string("/proc/meminfo").map_or(Value::Null, |t| meminfo(&t));
-    json!({"gpu": gpu, "models": models, "can_unload": s.config.allow_unload, "error": error, "ram": ram})
+    let host = host::reading();
+    json!({"gpu": gpu, "models": models, "can_unload": s.config.allow_unload, "error": error, "ram": ram, "host": host})
 }
 
 /// ml60's own memory, from /proc/meminfo, in bytes: the total; what is
@@ -508,6 +512,9 @@ mod tests {
         let ram = &body["ram"];
         assert!(ram["total"].as_u64().unwrap() >= ram["available"].as_u64().unwrap(), "{ram}");
         assert!(ram["cache"].is_u64(), "{ram}");
+        // And its CPU, network, disk and address, in the reply too.
+        let host = &body["host"];
+        assert!(host["cpu"]["total"].is_u64() && host["disk"]["total"].is_u64() && host["ip"].is_string(), "{host}");
         // Cached: more requests do not call Ollama again.
         for _ in 0..5 {
             ask(&addr, "GET / HTTP/1.1\r\n\r\n");

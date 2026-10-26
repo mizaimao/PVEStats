@@ -159,6 +159,12 @@ null. PVE's figure for a VM counts the guest's disk cache as used (95% on
 ml60 while its programs used 12%); used = total − available and cache =
 buffers + page cache + reclaimable slab, as `free` counts them.
 
+*Update 2026-10-26 (later):* and `"host": {"cpu": {"busy", "total"},
+"cpus", "uptime", "net": {"iface", "rx", "tx"}, "disk": {"total", "used"},
+"ip"}`, read from inside ml60 per request (see agent/README.md), so the
+terminal dashboard's ml60 card takes its CPU, network, disk, uptime and
+address from the agent, once a second, and needs PVE only as a fallback.
+
 Agent requirements:
 - `pip install nvidia-ml-py` — the official binding. Not the abandoned `pynvml`
   package on PyPI.
@@ -227,7 +233,8 @@ Merged from two sources — PVE for CPU/RAM, the agent for everything else.
 - CPU % and RAM (PVE, 10s). *Update 2026-10-26:* both dashboards take RAM
   from the agent's `ram` (1s) while it is under three polls old, with the
   cache shown beside it, and PVE's figure otherwise. The collector passes
-  it to the page as the guest's `ram`.
+  it to the page as the guest's `ram`. The terminal dashboard takes CPU,
+  network, disk, uptime and address from the agent's `host` the same way.
 - GPU utilisation %, large and prominent (agent, 1s)
 - VRAM used / total, with a bar (agent, 1s)
 - Temperature, power draw vs limit, fan % (agent, 1s)

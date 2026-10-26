@@ -143,6 +143,27 @@ pub struct AgentData {
     /// ml60's memory as ml60 itself sees it; None from an agent that does
     /// not report it.
     pub ram: Option<Ram>,
+    /// ml60's CPU, network, disk, uptime and address as ml60 itself sees
+    /// them; None from an agent that does not report them.
+    pub inside: Option<Inside>,
+}
+
+/// A guest's CPU, network, disk, uptime and address from inside it, the
+/// rates made from one reading to the next.
+#[derive(Clone, Debug, Default)]
+pub struct Inside {
+    /// Of all its cores, 0-100; None for the first reading.
+    pub cpu_pct: Option<f64>,
+    /// Bytes a second into the guest and out of it.
+    pub net_in_bps: Option<f64>,
+    pub net_out_bps: Option<f64>,
+    /// Its largest local filesystem, in bytes.
+    pub disk_used: Option<f64>,
+    pub disk_total: Option<f64>,
+    pub uptime: Option<f64>,
+    pub ip: Option<String>,
+    /// clock() when it was read.
+    pub at: f64,
 }
 
 /// Memory from inside a guest, in bytes. PVE's figure for a VM counts the

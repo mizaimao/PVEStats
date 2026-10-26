@@ -329,22 +329,32 @@ pub fn gpu(
         }
         Some(text)
     });
-    // The guest's network, disk usage, CPU and memory are PVE's, at its 10s
-    // pace. When PVE is not answering they keep its last values, greyed,
-    // rather than looking live. ml60's storage is passed through, so the
-    // hypervisor never sees its disk traffic: usage only.
+    // ml60's CPU, network, disk, uptime and address come from its agent,
+    // read from inside it every second, while that reading is fresh. Without
+    // one (an agent from before "host", or none for three polls) they are
+    // PVE's, at its 10 s pace, and kept, greyed, while PVE is not answering.
+    // ml60's storage is passed through, so the hypervisor never sees its
+    // disk traffic: usage only.
     let guest = slot.guest;
-    let pve_ink = style(if pve.ok { p.ink } else { p.muted });
+    let inside = data
+        .and_then(|d| d.inside.as_ref())
+        .filter(|i| clock() - i.at <= agent.interval * 3.0);
+    let pve_ink = style(if pve.ok || inside.is_some() { p.ink } else { p.muted });
+    let (net_in, net_out) = match inside {
+        Some(i) => (i.net_in_bps, i.net_out_bps),
+        None => (guest.and_then(|g| g.net_in_bps), guest.and_then(|g| g.net_out_bps)),
+    };
     let net = Line::from(vec![
         Span::styled("net ↓", style(p.muted)),
-        Span::styled(fixed_rate(guest.and_then(|g| g.net_in_bps), 5), pve_ink),
+        Span::styled(fixed_rate(net_in, 5), pve_ink),
         Span::styled(" ↑", style(p.muted)),
-        Span::styled(fixed_rate(guest.and_then(|g| g.net_out_bps), 5), pve_ink),
+        Span::styled(fixed_rate(net_out, 5), pve_ink),
     ]);
-    let disk = guest
-        .and_then(|g| g.filesystem.as_ref())
-        .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
-    let disk = pad(disk, 4);
+    let disk_ratio = match inside {
+        Some(i) => ratio(i.disk_used, i.disk_total),
+        None => guest.and_then(|g| g.filesystem.as_ref()).and_then(|fs| ratio(fs.used, Some(fs.total))),
+    };
+    let disk = pad(fmt::pct(disk_ratio.map(|r| r * 100.0)), 4);
     // ml60's memory as ml60 sees it, where its agent says: PVE counts the
     // disk cache as used, and on ml60, with model files read into cache,
     // that read 95% while its programs used 12%. The agent still sends it
@@ -377,8 +387,17 @@ pub fn gpu(
     // Two small charts side by side, CPU and memory, a figure under each;
     // PVE's are greyed while it is not answering.
     let pve_dim = |part: Part| if pve.ok { part } else { Part::Dim(Box::new(part)) };
-    let cpu = guest.and_then(|g| g.cpu_pct);
-    let cpu_chart = pve_dim(small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu))));
+    let cpu_chart = match inside {
+        // One dot a second, as the agent reads it, like the memory beside it.
+        Some(i) => {
+            let caption = format!("CPU {}", fmt::pct(i.cpu_pct));
+            pct_chart(vec![Trace::from(agent.series("host.cpu"), 0, "")], agent.capacity(), agent.interval, caption, Some(0.5))
+        }
+        None => {
+            let cpu = guest.and_then(|g| g.cpu_pct);
+            pve_dim(small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu))))
+        }
+    };
     let mem_chart = match ram {
         Some(r) => {
             let used = r.used_pct();
@@ -439,7 +458,11 @@ pub fn gpu(
         stale: !status.ok,
         error: status.error.clone(),
         body: vec![
-            guest_sub(look, guest),
+            // Address and uptime from inside ml60 too, while its agent says.
+            match inside {
+                Some(i) => sub(look, vec![i.ip.clone().unwrap_or_default(), format!("up {}", fmt::uptime(i.uptime))]),
+                None => guest_sub(look, guest),
+            },
             Part::Gap,
             headline,
             Part::Gap,

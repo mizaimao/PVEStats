@@ -9,6 +9,8 @@ publish = false
 # NVIDIA's management library, loaded at run time from the driver.
 nvml-wrapper = "0.13"
 serde_json = "1"
+# statvfs, for ml60's disk usage (host.rs): the standard library has none.
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
