@@ -88,6 +88,18 @@ To give tty1 its login prompt back:
     sudo systemctl disable --now pvestats-kiosk.service
     sudo systemctl enable --now getty@tty1.service
 
+cage draws a mouse pointer whenever the machine has a mouse or touchpad.
+`90-pvestats-no-pointer.rules` makes libinput ignore both, so it never
+does; keyboards and the text consoles are unaffected:
+
+    sudo cp ~/Projects/PVEStats/tui/90-pvestats-no-pointer.rules /etc/udev/rules.d/
+    sudo udevadm control --reload
+    sudo udevadm trigger --subsystem-match=input --action=change
+    sudo systemctl restart pvestats-kiosk.service
+
+To have the pointer back, delete the file from /etc/udev/rules.d and run the
+last three lines again.
+
 ### On the text console instead
 
 Without a graphics stack, `pvestats-tui.service` runs it straight on tty1's
