@@ -94,8 +94,8 @@ cage and foot at `tui/cursor`, a theme whose every cursor is a single
 transparent pixel, so no pointer shows. The rule below also stops mice and
 touchpads from moving it:
 
-`90-pvestats-no-pointer.rules` makes libinput ignore both, so it never
-does; keyboards and the text consoles are unaffected:
+`90-pvestats-no-pointer.rules` makes libinput ignore mice and touchpads;
+keyboards and the text consoles are unaffected:
 
     sudo cp ~/Projects/PVEStats/tui/90-pvestats-no-pointer.rules /etc/udev/rules.d/
     sudo udevadm control --reload

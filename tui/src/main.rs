@@ -38,6 +38,8 @@ Reads .env and config.yaml from the PVEStats folder.
   --snapshot WxH      print one frame as text instead of running, then exit
   --after SECONDS     how long to collect before the snapshot (default 12)
   --focus             start on the GPU card alone
+  --demo              with --snapshot: made-up models and GPU processes on the
+                      ml60 card, for checking how a busy GPU lays out
   --orbit             step the screen around one cell every 4 minutes, against burn-in
 
 keys: f  GPU card alone / everything     up, down, j, k  scroll a narrow column
@@ -50,11 +52,12 @@ struct Args {
     snapshot: Option<(u16, u16)>,
     after: f64,
     focus: bool,
+    demo: bool,
     orbit: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, orbit: false };
+    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or(format!("{arg} needs a value"));
@@ -78,6 +81,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--after" => args.after = value()?.parse().map_err(|_| "bad --after")?,
             "--focus" => args.focus = true,
+            "--demo" => args.demo = true,
             "--orbit" => args.orbit = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -122,6 +126,9 @@ fn main() {
 
     if let Some((w, h)) = args.snapshot {
         thread::sleep(Duration::from_secs_f64(args.after.max(0.0)));
+        if args.demo {
+            demo(&shared);
+        }
         let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("a test backend never fails");
         let mut touring = Touring::new(config.tour);
         let look = touring.look(&look, &mut screen);
@@ -309,5 +316,32 @@ mod tests {
     fn wlr_randr_listing() {
         let text = "HDMI-A-2 \"Monitor (HDMI-A-2)\"\n  Make: X\n  Enabled: no\n  Modes:\n    1920x1080 px\nDP-1 \"Other\"\n  Enabled: yes\n";
         assert_eq!(super::outputs(text), vec![("HDMI-A-2", false), ("DP-1", true)]);
+    }
+}
+
+/// Made-up models and GPU processes on the agent's last reading, to see how
+/// a busy ml60 lays out. Snapshots only; the next poll would replace them.
+fn demo(shared: &Shared) {
+    use sources::{Model, Proc};
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let mut agent = lock(&shared.agent);
+    let data = agent.data.get_or_insert_with(Default::default);
+    let model = |name: &str, gib: f64, processor: &str, offloaded: bool, unload_in: i64| Model {
+        name: name.into(),
+        size_vram: Some(gib * GIB),
+        processor: Some(processor.into()),
+        offloaded,
+        unload_in: Some(unload_in),
+    };
+    data.models = vec![
+        model("qwen3:32b", 20.1, "100% GPU", false, 240),
+        model("llama3.3:70b-instruct-q4_K_M", 38.4, "22%/78% CPU/GPU", true, -90),
+        model("gemma3:27b", 17.2, "100% GPU", false, 1500),
+        model("nomic-embed-text:latest", 0.6, "100% GPU", false, 10_000_000_000),
+    ];
+    if let Some(gpu) = data.gpu.as_mut() {
+        gpu.procs = (0..7)
+            .map(|i| Proc { pid: Some(41_200 + i * 37), name: "python3.13".into(), vram: Some((0.8 + i as f64 * 1.3) * GIB) })
+            .collect();
     }
 }
