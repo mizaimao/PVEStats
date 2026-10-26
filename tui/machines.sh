@@ -53,5 +53,6 @@ pack() {
         --exclude ./tui/shot/target --exclude ./tui/deploy.conf \
         --exclude ./router/agent/target --exclude ./router/agent/.cargo-home --exclude ./router/bin \
         --exclude ./agent/rust/target --exclude ./agent/rust/.cargo-home --exclude ./agent/bin \
+        --exclude ./server/target --exclude ./server/.cargo-home --exclude ./server/bin \
         --exclude __pycache__ --exclude .DS_Store --exclude '*.jpg' "$@")
 }

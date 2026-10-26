@@ -46,3 +46,8 @@ router/bin/
 agent/rust/target/
 agent/rust/.cargo-home/
 agent/bin/
+
+# The Rust server's build output, its cargo cache and the built program
+server/target/
+server/.cargo-home/
+server/bin/

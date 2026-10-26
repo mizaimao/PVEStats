@@ -1247,19 +1247,40 @@ table.data caption {
 
 /* ---------- live indicator ----------
    A source that is currently collecting pulses; one that is stale or down
-   holds steady, so movement means "fresh" rather than being decoration. */
+   holds steady, so movement means "fresh" rather than being decoration.
+   Only opacity and transform move: the compositor animates those by
+   itself. The glow used to be an animated box-shadow, which WebKit can only
+   repaint, frame after frame for as long as the page was open: about 15% of
+   a core on the Mac, for three dots. Now it is a circle behind the dot that
+   grows and fades. */
 @keyframes pvestats-pulse {
-  0%, 100% { opacity: 1;    box-shadow: 0 0 0 0 currentColor; }
-  50%      { opacity: 0.55; box-shadow: 0 0 0 3px transparent; }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
 }
-.src .dot { color: var(--good); }
+@keyframes pvestats-ring {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%      { transform: scale(1.86); opacity: 0; }
+}
+.src .dot { color: var(--good); position: relative; }
 .src:not(.is-stale):not(.is-down):not(.is-waiting) .dot {
   animation: pvestats-pulse 2s ease-in-out infinite;
+  will-change: opacity;
+}
+/* 7px grown to 13px: the old glow's 3px spread on each side. */
+.src:not(.is-stale):not(.is-down):not(.is-waiting) .dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pvestats-ring 2s ease-in-out infinite;
+  will-change: transform, opacity;
 }
 
 /* Motion is decoration here; every value is also printed as text. */
 @media (prefers-reduced-motion: reduce) {
   .src .dot { animation: none; }
+  .src .dot::after { animation: none; display: none; }
   .meter > span { transition: none; }
 }
 
