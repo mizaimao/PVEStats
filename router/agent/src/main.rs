@@ -10,8 +10,10 @@
 //! seconds, and one that will not die stops any more from starting, so a
 //! hung driver cannot pile processes up; the counts then just grow old.
 //!
-//! Requests are answered one at a time, each given at most 3 seconds, and
-//! what they ask is never looked at. Nothing is logged and nothing written.
+//! Requests are answered one at a time, at least 100 ms apart, each given at
+//! most 3 seconds, and what they ask is never looked at. Nothing is logged
+//! and nothing written. Should the LAN address change, it exits, for its
+//! keeper to start it again on the new one.
 //!
 //!     pvestats-router --listen 10.10.10.1:9837
 //!     pvestats-router --once      the JSON once, for trying it by hand
@@ -35,6 +37,9 @@ const RUN_LIMIT: Duration = Duration::from_secs(5);
 const REQUEST_LIMIT: Duration = Duration::from_secs(3);
 /// Most of a request's head that is read.
 const HEAD_LIMIT: usize = 8192;
+/// Answers are at least this far apart, so a client asking in a tight loop
+/// gets ten a second, not as many as a core can make.
+const MIN_GAP: Duration = Duration::from_millis(100);
 
 /// One radio and the networks it carries (wl0 with wl0.1 and so on).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -61,9 +66,14 @@ struct Slow {
     layout: Layout,
     wan_up: bool,
     wan_ip: String,
-    /// Devices per radio, in `layout.radios` order, and when counted.
-    devices: Vec<u32>,
-    counted: Option<Instant>,
+    /// Devices per radio, in `layout.radios` order, each with when it was
+    /// counted; None until it first is. Each radio keeps its own, so one
+    /// that will not answer does not hold back the others.
+    devices: Vec<Option<(u32, Instant)>>,
+    /// Each wired port's link speed in Mbit/s, in `layout.ports` order.
+    /// Read here, not per request: the kernel takes its network-wide lock
+    /// to read it, and it changes only when a link renegotiates.
+    speeds: Vec<u32>,
 }
 
 /// A poisoned lock still holds good data.
@@ -77,14 +87,14 @@ fn main() {
         [flag] if flag == "--once" => {
             let slow = Mutex::new(Slow::default());
             refresh(&mut Runner::default(), &slow, true);
-            println!("{}", json(&lock(&slow).clone()));
+            print!("{}", json(&lock(&slow).clone()));
         }
         [flag, addr] if flag == "--listen" => {
             let Ok(addr) = addr.parse::<SocketAddr>() else { exit(2) };
             let Ok(listener) = TcpListener::bind(addr) else { exit(1) };
             let slow = Arc::new(Mutex::new(Slow::default()));
             let theirs = Arc::clone(&slow);
-            thread::spawn(move || refresh_forever(&theirs));
+            thread::spawn(move || refresh_forever(&theirs, addr));
             serve(&listener, &slow);
         }
         _ => {
@@ -97,10 +107,15 @@ fn main() {
 // ------------------------------------------------------------------ serving
 
 fn serve(listener: &TcpListener, slow: &Mutex<Slow>) -> ! {
+    let mut last: Option<Instant> = None;
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
+                if let Some(last) = last {
+                    thread::sleep(MIN_GAP.saturating_sub(last.elapsed()));
+                }
                 let _ = answer(stream, slow);
+                last = Some(Instant::now());
             }
             // Out of file descriptors, say: wait rather than spin.
             Err(_) => thread::sleep(Duration::from_millis(100)),
@@ -114,7 +129,7 @@ fn answer(mut stream: TcpStream, slow: &Mutex<Slow>) -> std::io::Result<()> {
     let deadline = Instant::now() + REQUEST_LIMIT;
     let mut head = [0u8; HEAD_LIMIT];
     let mut len = 0;
-    while len < HEAD_LIMIT && !ended(&head[..len]) {
+    while len < HEAD_LIMIT {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             break;
@@ -122,7 +137,16 @@ fn answer(mut stream: TcpStream, slow: &Mutex<Slow>) -> std::io::Result<()> {
         stream.set_read_timeout(Some(left))?;
         match stream.read(&mut head[len..]) {
             Ok(0) | Err(_) => break,
-            Ok(n) => len += n,
+            Ok(n) => {
+                // Only the new bytes and the three before them can complete
+                // the blank line: a client sending a byte at a time does not
+                // make every read rescan the whole head.
+                let from = len.saturating_sub(3);
+                len += n;
+                if ended(&head[from..len]) {
+                    break;
+                }
+            }
         }
     }
     let snapshot = lock(slow).clone();
@@ -223,12 +247,11 @@ fn json(slow: &Slow) -> String {
     let ports: Vec<String> = l
         .ports
         .iter()
-        .map(|p| {
+        .enumerate()
+        .map(|(i, p)| {
+            // operstate is a plain read; the speed comes from the slow thread.
             let up = read(&format!("/sys/class/net/{p}/operstate")).is_some_and(|s| s.trim() == "up");
-            let mbps = read(&format!("/sys/class/net/{p}/speed"))
-                .and_then(|s| s.trim().parse::<i64>().ok())
-                .filter(|s| *s > 0)
-                .unwrap_or(0);
+            let mbps = if up { slow.speeds.get(i).copied().unwrap_or(0) } else { 0 };
             let (rx, tx) = bytes(std::slice::from_ref(p));
             format!("{{\"name\":{},\"up\":{up},\"mbps\":{mbps},\"rx\":{rx},\"tx\":{tx}}}", quote(p))
         })
@@ -239,7 +262,8 @@ fn json(slow: &Slow) -> String {
         .enumerate()
         .map(|(i, r)| {
             let (rx, tx) = bytes(&r.networks);
-            let devices = slow.devices.get(i).copied().unwrap_or(0);
+            // null for a radio never yet counted: unknown, not none.
+            let devices = slow.devices.get(i).copied().flatten().map_or("null".to_string(), |(n, _)| n.to_string());
             format!(
                 "{{\"name\":{},\"on\":{},\"devices\":{devices},\"rx\":{rx},\"tx\":{tx}}}",
                 quote(&r.name),
@@ -247,7 +271,14 @@ fn json(slow: &Slow) -> String {
             )
         })
         .collect();
-    let age = slow.counted.map_or("null".to_string(), |t| t.elapsed().as_secs().to_string());
+    // The oldest radio's count: how stale the devices can be.
+    let age = slow
+        .devices
+        .iter()
+        .flatten()
+        .map(|(_, at)| at.elapsed().as_secs())
+        .max()
+        .map_or("null".to_string(), |s| s.to_string());
     format!(
         "{{\"model\":{},\"uptime\":{uptime:.2},\"cpu\":{{\"busy\":{busy},\"total\":{total}}},\
          \"mem\":{{\"total\":{mem_total},\"available\":{mem_available}}},\"temp\":{{\"cpu\":{temp}}},\
@@ -364,48 +395,72 @@ fn layout(r: &mut Runner) -> Option<Layout> {
     Some(Layout { model, wan_if, ports, radios })
 }
 
-fn refresh_forever(slow: &Mutex<Slow>) -> ! {
+fn refresh_forever(slow: &Mutex<Slow>, bound: SocketAddr) -> ! {
     let mut runner = Runner::default();
     let mut round: u32 = 0;
     loop {
-        let stale_layout = lock(slow).layout.model.is_empty();
-        refresh(&mut runner, slow, round % LAYOUT_EVERY == 0 || stale_layout);
+        let layout_round = round % LAYOUT_EVERY == 0 || lock(slow).layout.model.is_empty();
+        // The LAN address changed without a reboot: exit, and the keeper
+        // starts the agent again on the new one.
+        if layout_round {
+            if let Some(ip) = runner.nvram("lan_ipaddr").and_then(|ip| ip.parse::<std::net::IpAddr>().ok()) {
+                if ip != bound.ip() {
+                    exit(0);
+                }
+            }
+        }
+        refresh(&mut runner, slow, layout_round);
         round = round.wrapping_add(1);
         thread::sleep(SLOW_EVERY);
     }
 }
 
-/// One round: the WAN's state and address and the devices on each band, and
-/// the layout too when asked. What a tool would not tell keeps its last
-/// value. The tools run without the lock held.
+/// A port's link speed in Mbit/s, 0 when down or unknown.
+fn speed(port: &str) -> u32 {
+    read(&format!("/sys/class/net/{port}/speed"))
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|s| *s > 0)
+        .map_or(0, |s| s.min(u32::MAX as i64) as u32)
+}
+
+/// One round: the WAN's state and address, the ports' speeds and the
+/// devices on each band, and the layout too when asked. What a tool would
+/// not tell keeps its last value. The tools run without the lock held.
 fn refresh(r: &mut Runner, slow: &Mutex<Slow>, with_layout: bool) {
     let layout = if with_layout { layout(r) } else { None };
     let current = layout.clone().unwrap_or_else(|| lock(slow).layout.clone());
     let wan_up = r.nvram("wan0_state_t").map(|s| s == "2");
     let wan_ip = r.nvram("wan0_ipaddr");
-    let devices: Option<Vec<u32>> = current
+    let speeds: Vec<u32> = current.ports.iter().map(|p| speed(p)).collect();
+    // Each radio on its own: a radio that is off has no devices and is not
+    // asked; one whose `wl` fails keeps its last count.
+    let counts: Vec<Option<u32>> = current
         .radios
         .iter()
-        .map(|radio| radio.networks.iter().map(|n| r.devices(n)).sum::<Option<u32>>())
+        .map(|radio| if radio.on { radio.networks.iter().map(|n| r.devices(n)).sum() } else { Some(0) })
         .collect();
 
     let mut s = lock(slow);
     if let Some(layout) = layout {
         if layout != s.layout {
             s.devices.clear();
-            s.counted = None;
         }
         s.layout = layout;
     }
+    let radios = s.layout.radios.len();
+    s.devices.resize(radios, None);
+    let now = Instant::now();
+    for (slot, count) in s.devices.iter_mut().zip(counts) {
+        if let Some(n) = count {
+            *slot = Some((n, now));
+        }
+    }
+    s.speeds = speeds;
     if let Some(up) = wan_up {
         s.wan_up = up;
     }
     if let Some(ip) = wan_ip {
         s.wan_ip = ip;
-    }
-    if let Some(devices) = devices {
-        s.devices = devices;
-        s.counted = Some(Instant::now());
     }
 }
 
@@ -477,8 +532,8 @@ mod tests {
             },
             wan_up: true,
             wan_ip: "192.0.2.1".into(),
-            devices: vec![3],
-            counted: Some(Instant::now()),
+            devices: vec![Some((3, Instant::now()))],
+            speeds: vec![10_000],
         };
         let text = json(&slow);
         assert!(text.starts_with("{\"model\":\"GT-BE98_PRO\","));
