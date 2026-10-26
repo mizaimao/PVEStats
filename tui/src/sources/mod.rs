@@ -6,6 +6,7 @@
 //! written against captured responses.
 
 pub mod agent;
+pub mod host;
 pub mod pve;
 pub mod router;
 pub mod truenas;
@@ -22,6 +23,13 @@ use crate::state::Source;
 /// pvestatd's own recompute cycle (§3.1); the agent's NVML reads take
 /// microseconds, so 1s is genuinely real time.
 pub const PVE_INTERVAL: f64 = 10.0;
+/// With the host agent answering, PVE is asked only for what the agent
+/// cannot tell (names, memory limits, vCPUs, balloon memory), every 30 s.
+/// Measured on the host: the agent every 2 s and the API every 30 s cost
+/// 0.041% of a core, the API alone every 10 s 0.044% (pve/README.md).
+pub const PVE_INTERVAL_WITH_AGENT: f64 = 30.0;
+/// The host agent (pve/agent) reads the kernel's counters as it is asked.
+pub const HOST_INTERVAL: f64 = 2.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
 pub const TRUENAS_INTERVAL: f64 = 5.0;
 /// The router's agent answers from kernel counters: measured on the router,
@@ -31,6 +39,7 @@ pub const ROUTER_INTERVAL: f64 = 1.0;
 pub const WEATHER_INTERVAL: f64 = 900.0;
 
 pub const PVE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const HOST_TIMEOUT: Duration = Duration::from_secs(2);
 pub const AGENT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const TRUENAS_TIMEOUT: Duration = Duration::from_secs(5);
 pub const ROUTER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -38,6 +47,8 @@ pub const WEATHER_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Shared {
     pub pve: Mutex<Source<PveData>>,
+    /// The host agent's live figures, over PVE's while fresh.
+    pub host: Mutex<Source<HostData>>,
     pub agent: Mutex<Source<AgentData>>,
     pub nas: Mutex<Source<NasData>>,
     pub router: Mutex<Source<RouterData>>,
@@ -45,11 +56,12 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn new(window: f64) -> Self {
+    pub fn new(window: f64, pve_interval: f64) -> Self {
         Shared {
             // Ten minutes at least: PVE's chart gives each 10s sample a cell,
             // so a wide one reaches back further than the window.
-            pve: Mutex::new(Source::new(PVE_INTERVAL, window.max(600.0))),
+            pve: Mutex::new(Source::new(pve_interval, window.max(600.0))),
+            host: Mutex::new(Source::new(HOST_INTERVAL, window.max(600.0))),
             agent: Mutex::new(Source::new(AGENT_INTERVAL, window)),
             nas: Mutex::new(Source::new(TRUENAS_INTERVAL, window)),
             router: Mutex::new(Source::new(ROUTER_INTERVAL, window)),
@@ -114,11 +126,36 @@ pub struct Fs {
     pub total: f64,
 }
 
+/// The host agent's figures (pve/agent), rates made here: the host's, and
+/// each running VM's by vmid.
+#[derive(Clone, Debug, Default)]
+pub struct HostData {
+    pub cpu_pct: Option<f64>,
+    pub mem: Option<f64>,
+    pub maxmem: Option<f64>,
+    pub loadavg: Vec<f64>,
+    pub uptime: Option<f64>,
+    pub cpus: Option<u64>,
+    pub guests: BTreeMap<u64, HostGuest>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HostGuest {
+    /// Of the VM's vCPUs, as PVE counts it; None until there is a rate, or
+    /// while PVE has not given the VM's vCPUs.
+    pub cpu_pct: Option<f64>,
+    pub net_in_bps: Option<f64>,
+    pub net_out_bps: Option<f64>,
+    pub uptime: Option<f64>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Guest {
     pub name: Option<String>,
     pub uptime: Option<f64>,
     pub cpu_pct: Option<f64>,
+    /// Its vCPUs, which the host agent's CPU time is divided by.
+    pub maxcpu: Option<f64>,
     pub mem: Option<f64>,
     pub maxmem: Option<f64>,
     pub addresses: Vec<String>,

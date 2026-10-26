@@ -17,15 +17,24 @@ use crate::state::{RateTracker, Source};
 /// guest. So they are fetched once at startup and then only when a guest
 /// needs it: newly seen, or rebooted (uptime went backwards). The backstop
 /// catches a DHCP lease change on a guest that never restarts.
-const IP_BACKSTOP_EVERY: i64 = 90; // x PVE_INTERVAL = every 15 minutes
+const IP_BACKSTOP_SECONDS: f64 = 900.0;
 
 /// Filesystem usage also comes from the guest agent, one call per guest. It
 /// moves slowly, so it refreshes on its own slow cycle.
-const FS_REFRESH_EVERY: i64 = 30; // x PVE_INTERVAL = every 5 minutes
+const FS_REFRESH_SECONDS: f64 = 300.0;
 
 /// A guest whose agent has not answered yet (still booting, or none at all)
 /// is asked again at this pace rather than on every poll.
-const MISSING_RETRY_EVERY: u64 = 6; // x PVE_INTERVAL = every minute
+const MISSING_RETRY_SECONDS: f64 = 60.0;
+
+/// While the host agent answers, the host's live figures are its, and PVE's
+/// node status is wanted only for its version and thread count.
+const STATUS_WITH_HOST_SECONDS: f64 = 600.0;
+
+/// Polls in `seconds` at `interval`, one at least.
+fn polls_in(seconds: f64, interval: f64) -> u64 {
+    (seconds / interval).round().max(1.0) as u64
+}
 
 /// Pseudo-filesystems that would otherwise crowd out the real ones.
 const SKIP_FS: [&str; 6] = ["tmpfs", "devtmpfs", "overlay", "squashfs", "efivarfs", "ramfs"];
@@ -64,13 +73,22 @@ pub struct Pve {
     fs_countdown: i64,
     polls: u64,
     /// vmid -> poll number before which a guest with no answer yet is not
-    /// asked again (MISSING_RETRY_EVERY).
+    /// asked again (MISSING_RETRY_SECONDS).
     ip_retry: HashMap<u64, u64>,
     fs_retry: HashMap<u64, u64>,
+    /// The seconds above as polls at this source's interval.
+    ip_every: i64,
+    fs_every: i64,
+    retry_every: u64,
+    status_every: u64,
+    /// Whether the host agent is answering now.
+    host_live: Box<dyn Fn() -> bool + Send + Sync>,
+    /// The last node status, reused while the host agent answers.
+    last_status: Option<Value>,
 }
 
 impl Pve {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>, interval: f64, host_live: Box<dyn Fn() -> bool + Send + Sync>) -> Self {
         // Verification off: the PVE certificate is self-signed (§3.1).
         let http = net::http(net::self_signed_tls(), PVE_TIMEOUT);
         Pve {
@@ -86,6 +104,12 @@ impl Pve {
             polls: 0,
             ip_retry: HashMap::new(),
             fs_retry: HashMap::new(),
+            ip_every: polls_in(IP_BACKSTOP_SECONDS, interval) as i64,
+            fs_every: polls_in(FS_REFRESH_SECONDS, interval) as i64,
+            retry_every: polls_in(MISSING_RETRY_SECONDS, interval),
+            status_every: polls_in(STATUS_WITH_HOST_SECONDS, interval),
+            host_live,
+            last_status: None,
         }
     }
 
@@ -193,7 +217,18 @@ impl Pve {
         }
         let node = self.node.clone().unwrap_or_default();
         let resources = self.get("/cluster/resources?type=vm", started)?;
-        let status = self.get(&format!("/nodes/{node}/status"), started)?;
+        // While the host agent answers, its live figures stand in for the
+        // status's, which is then asked for only every STATUS_WITH_HOST_SECONDS
+        // (for the version and thread count): one request a poll, not two.
+        let reuse = (self.host_live)() && self.polls % self.status_every != 0;
+        let status = match self.last_status.clone().filter(|_| reuse) {
+            Some(status) => status,
+            None => {
+                let status = self.get(&format!("/nodes/{node}/status"), started)?;
+                self.last_status = Some(status.clone());
+                status
+            }
+        };
         let resources = resources.as_array().map_or(&[][..], Vec::as_slice);
 
         // Running guests only. Stopped ones report nothing worth a card, and
@@ -219,7 +254,7 @@ impl Pve {
         self.backstop -= 1;
         let due = self.backstop <= 0;
         if due {
-            self.backstop = IP_BACKSTOP_EVERY;
+            self.backstop = self.ip_every;
         }
         let mut ask_ips = Vec::new();
         for guest in &running {
@@ -249,7 +284,7 @@ impl Pve {
             self.refresh_ips(&qemu);
             for (vmid, _) in ask_ips {
                 if !self.ips.contains_key(&vmid) {
-                    self.ip_retry.insert(vmid, polls + MISSING_RETRY_EVERY);
+                    self.ip_retry.insert(vmid, polls + self.retry_every);
                 }
             }
         }
@@ -258,7 +293,7 @@ impl Pve {
         // usage yet (newly started or rebooted), at the retry pace.
         self.fs_countdown -= 1;
         let ask_fs: Vec<(u64, bool)> = if self.fs_countdown <= 0 {
-            self.fs_countdown = FS_REFRESH_EVERY;
+            self.fs_countdown = self.fs_every;
             running.iter().filter_map(|g| Some((int(g, "vmid")?, is_qemu(g)))).collect()
         } else {
             running
@@ -277,7 +312,7 @@ impl Pve {
             self.refresh_filesystems(&qemu);
             for (vmid, _) in ask_fs {
                 if !self.filesystems.contains_key(&vmid) {
-                    self.fs_retry.insert(vmid, polls + MISSING_RETRY_EVERY);
+                    self.fs_retry.insert(vmid, polls + self.retry_every);
                 }
             }
         }
@@ -317,6 +352,7 @@ impl Pve {
                     name: text(guest, "name").map(str::to_string),
                     uptime: num(guest, "uptime"),
                     cpu_pct,
+                    maxcpu: num(guest, "maxcpu"),
                     mem: num(guest, "mem"),
                     maxmem: num(guest, "maxmem"),
                     addresses: self.ips.get(&vmid).cloned().unwrap_or_default(),

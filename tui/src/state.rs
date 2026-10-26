@@ -35,6 +35,30 @@ pub struct Status {
     pub stale: bool,
 }
 
+/// What a chart reads from a source, whatever its data: a series by name,
+/// how many samples a series holds, and the seconds between them. The host
+/// card and the guest cards draw from PVE's history or from its host
+/// agent's, whichever is live.
+pub trait History {
+    fn series(&self, key: &str) -> Option<&Series>;
+    fn capacity(&self) -> usize;
+    fn interval(&self) -> f64;
+}
+
+impl<T> History for Source<T> {
+    fn series(&self, key: &str) -> Option<&Series> {
+        Source::series(self, key)
+    }
+
+    fn capacity(&self) -> usize {
+        Source::capacity(self)
+    }
+
+    fn interval(&self) -> f64 {
+        self.interval
+    }
+}
+
 /// Latest values plus bounded history for one data source.
 pub struct Source<T> {
     pub interval: f64,

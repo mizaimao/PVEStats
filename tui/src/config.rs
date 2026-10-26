@@ -32,6 +32,8 @@ pub struct Config {
     pub agent_url: String,
     /// The router's own agent (router/), plain HTTP on its LAN address.
     pub router_url: String,
+    /// The Proxmox host's own agent (pve/), plain HTTP on its LAN address.
+    pub pve_agent_url: String,
     /// Where the forecast is for, from .env so it stays off GitHub: a place
     /// name to look up (WEATHER_PLACE), or coordinates (WEATHER_LATITUDE and
     /// WEATHER_LONGITUDE), which win. WEATHER_UNITS=imperial for °F, mph, in.
@@ -103,6 +105,7 @@ impl Config {
             truenas_api_key: var("TRUENAS_API_KEY"),
             agent_url: var("ML60_AGENT_URL"),
             router_url: var("ROUTER_AGENT_URL"),
+            pve_agent_url: var("PVE_AGENT_URL"),
             weather_place: var("WEATHER_PLACE"),
             weather_at: var("WEATHER_LATITUDE").parse().ok().zip(var("WEATHER_LONGITUDE").parse().ok()),
             weather_imperial: var("WEATHER_UNITS").eq_ignore_ascii_case("imperial"),
@@ -134,6 +137,21 @@ impl Config {
 
     pub fn agent_configured(&self) -> bool {
         !self.agent_url.is_empty()
+    }
+
+    /// The Proxmox host agent is used alongside PVE's API, never alone: PVE
+    /// still names the guests and gives their limits.
+    pub fn host_configured(&self) -> bool {
+        self.pve_configured() && !self.pve_agent_url.is_empty()
+    }
+
+    /// PVE's poll: every 10 s alone, every 30 s beside the host agent.
+    pub fn pve_interval(&self) -> f64 {
+        if self.host_configured() {
+            crate::sources::PVE_INTERVAL_WITH_AGENT
+        } else {
+            crate::sources::PVE_INTERVAL
+        }
     }
 
     /// The router card shows when its agent is configured, or made up in

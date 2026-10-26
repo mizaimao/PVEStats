@@ -22,7 +22,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers
 use ratatui::Terminal;
 
 use config::Config;
-use sources::{agent::Agent, lock, pve::Pve, router::Router, run_poller, truenas::TrueNas, weather::Weather, Shared};
+use sources::{agent::Agent, host::Host, lock, pve::Pve, router::Router, run_poller, truenas::TrueNas, weather::Weather, Shared};
 use ui::theme::{Colors, Look};
 use ui::{Screen, Tour};
 
@@ -105,7 +105,7 @@ fn main() {
     });
     config.demo |= args.demo;
     let config = Arc::new(config);
-    let shared = Arc::new(Shared::new(config.window));
+    let shared = Arc::new(Shared::new(config.window, config.pve_interval()));
     start(&config, &shared);
 
     let term = std::env::var("TERM").unwrap_or_default();
@@ -165,10 +165,22 @@ fn main() {
 fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
     let missing = || "not configured — see .env".to_string();
     if config.pve_configured() {
-        let (mut pve, s) = (Pve::new(config.clone()), shared.clone());
-        thread::spawn(move || run_poller(&s.pve, sources::PVE_INTERVAL, || pve.poll(&s.pve)));
+        // Whether the host agent answers now: PVE then skips the node
+        // status it would only repeat.
+        let s = shared.clone();
+        let host_live = Box::new(move || {
+            let status = lock(&s.host).status();
+            status.ok && !status.stale
+        });
+        let interval = config.pve_interval();
+        let (mut pve, s) = (Pve::new(config.clone(), interval, host_live), shared.clone());
+        thread::spawn(move || run_poller(&s.pve, interval, || pve.poll(&s.pve)));
     } else {
         lock(&shared.pve).fail(missing());
+    }
+    if config.host_configured() {
+        let (mut host, s) = (Host::new(config.pve_agent_url.clone()), shared.clone());
+        thread::spawn(move || run_poller(&s.host, sources::HOST_INTERVAL, || host.poll(&s.host, &s.pve)));
     }
     if config.agent_configured() {
         let (mut agent, s) = (Agent::new(config.agent_url.clone(), config.demo), shared.clone());
