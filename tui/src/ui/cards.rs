@@ -4,7 +4,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{bar, Big, Card, Chart, Col, Meter, Part, Spark, Table, Trace};
+use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Table, Trace};
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
@@ -406,9 +406,9 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
     }
 
     // Interface throughput is read from inside TrueNAS, never from PVE's
-    // counters (spec §3.3). Each interface gets btop's network rows: receive
-    // and send, each a short graph scaled to its own peak, with the speed
-    // now and the peak beside it.
+    // counters (spec §3.3). Each interface gets btop's network graph:
+    // receive rising from a shared axis and send hanging below it, each
+    // scaled to its own peak, with the speed now and the peak beside it.
     let mut network = Vec::new();
     for (i, (name, nic)) in interfaces.iter().enumerate() {
         if i > 0 {
@@ -419,22 +419,26 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             Span::styled(" · ", style(p.muted)),
             Span::styled(nic_role(name, nic, host), style(p.ink2)),
         ])));
-        for (series, arrow, word, key, now) in [(0, "↓", "receive", "rx", nic.rx_bps), (1, "↑", "send", "tx", nic.tx_bps)] {
-            network.push(Part::Spark(Spark {
-                label: Line::from(vec![
-                    Span::styled(format!("{arrow} "), style(look.flat(series))),
-                    Span::styled(word, style(p.muted)),
-                ]),
-                label_w: 10,
-                trace: Trace::from(nas.series(&format!("if.{name}.{key}")), series, ""),
-                capacity: nas.capacity(),
-                floor: MIB,
-                value: fmt::rate_auto(now),
-                peak: fmt::rate_auto,
-                value_w: 15,
-                rows: 2,
-            }));
-        }
+        let label = |series: usize, arrow: &str, word: &'static str| {
+            Line::from(vec![
+                Span::styled(format!("{arrow} "), style(look.flat(series))),
+                Span::styled(word, style(p.muted)),
+            ])
+        };
+        network.push(Part::Mirror(Mirror {
+            up: Trace::from(nas.series(&format!("if.{name}.rx")), 0, ""),
+            down: Trace::from(nas.series(&format!("if.{name}.tx")), 1, ""),
+            up_label: label(0, "↓", "receive"),
+            down_label: label(1, "↑", "send"),
+            up_value: fmt::rate_auto(nic.rx_bps),
+            down_value: fmt::rate_auto(nic.tx_bps),
+            label_w: 10,
+            value_w: 15,
+            capacity: nas.capacity(),
+            floor: MIB,
+            format: fmt::rate_auto,
+            rows: 4,
+        }));
     }
     if network.is_empty() {
         network.push(Part::Text(Line::styled("no interfaces yet", style(p.muted))));
