@@ -689,19 +689,6 @@ pub fn guest_list(look: &Look, slots: &[&Slot], status: &Status) -> Card {
     }
 }
 
-// --------------------------------------------------------------- weather
-
-/// Holds the right-hand column for a forecast that is not built yet.
-pub fn weather_placeholder(look: &Look) -> Card {
-    Card {
-        title: "Weather".into(),
-        right: String::new(),
-        stale: false,
-        error: None,
-        body: vec![Part::Text(Line::styled("Kept free for a forecast.", style(look.p.muted)))],
-    }
-}
-
 // ----------------------------------------------------------- theme tour
 
 /// While touring the themes: the one on now, among all of them, so the one

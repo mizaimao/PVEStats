@@ -8,6 +8,7 @@
 pub mod agent;
 pub mod pve;
 pub mod truenas;
+pub mod weather;
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
@@ -22,15 +23,19 @@ use crate::state::Source;
 pub const PVE_INTERVAL: f64 = 10.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
 pub const TRUENAS_INTERVAL: f64 = 5.0;
+/// Open-Meteo refreshes its forecast hourly; every 15 minutes is plenty.
+pub const WEATHER_INTERVAL: f64 = 900.0;
 
 pub const PVE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const AGENT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const TRUENAS_TIMEOUT: Duration = Duration::from_secs(5);
+pub const WEATHER_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Shared {
     pub pve: Mutex<Source<PveData>>,
     pub agent: Mutex<Source<AgentData>>,
     pub nas: Mutex<Source<NasData>>,
+    pub weather: Mutex<Source<WeatherData>>,
 }
 
 impl Shared {
@@ -41,6 +46,7 @@ impl Shared {
             pve: Mutex::new(Source::new(PVE_INTERVAL, window.max(600.0))),
             agent: Mutex::new(Source::new(AGENT_INTERVAL, window)),
             nas: Mutex::new(Source::new(TRUENAS_INTERVAL, window)),
+            weather: Mutex::new(Source::new(WEATHER_INTERVAL, window)),
         }
     }
 }
@@ -208,4 +214,60 @@ pub struct Pool {
     /// TrueNAS did not say, and the card falls back to raw zpool figures.
     pub used_bytes: Option<f64>,
     pub usable: Option<f64>,
+}
+
+// ------------------------------------------------------------ weather data
+
+#[derive(Clone, Debug, Default)]
+pub struct WeatherData {
+    /// The place's name, as looked up or as given.
+    pub place: String,
+    /// °F, mph and inches rather than °C, km/h and mm.
+    pub imperial: bool,
+    pub now: Now,
+    /// From the hour now is in, hourly, a few days ahead.
+    pub hours: Vec<Hour>,
+    /// Today first.
+    pub days: Vec<Day>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Now {
+    /// Local, "2026-10-25T21:30": the forecast's own clock.
+    pub time: String,
+    pub temp: Option<f64>,
+    pub feels: Option<f64>,
+    pub humidity: Option<f64>,
+    pub wind: Option<f64>,
+    pub gusts: Option<f64>,
+    /// Degrees the wind blows from.
+    pub wind_from: Option<f64>,
+    /// WMO weather code.
+    pub code: Option<u64>,
+    pub day: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Hour {
+    /// Local, "2026-10-25T22:00".
+    pub time: String,
+    pub temp: Option<f64>,
+    pub rain_chance: Option<f64>,
+    pub code: Option<u64>,
+    pub day: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Day {
+    /// "2026-10-25".
+    pub date: String,
+    pub code: Option<u64>,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    pub rain_chance: Option<f64>,
+    /// Rain and snow, mm or inches.
+    pub rain: Option<f64>,
+    /// Local, "2026-10-25T07:21".
+    pub sunrise: String,
+    pub sunset: String,
 }

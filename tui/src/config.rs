@@ -30,6 +30,12 @@ pub struct Config {
     pub truenas_host: String,
     pub truenas_api_key: String,
     pub agent_url: String,
+    /// Where the forecast is for, from .env so it stays off GitHub: a place
+    /// name to look up (WEATHER_PLACE), or coordinates (WEATHER_LATITUDE and
+    /// WEATHER_LONGITUDE), which win. WEATHER_UNITS=imperial for °F, mph, in.
+    pub weather_place: String,
+    pub weather_at: Option<(f64, f64)>,
+    pub weather_imperial: bool,
     pub hosts: BTreeMap<u64, Host>,
     pub theme: String,
     /// Seconds of history kept per source, and so the span of every chart.
@@ -94,6 +100,9 @@ impl Config {
             truenas_host: var("TRUENAS_HOST"),
             truenas_api_key: var("TRUENAS_API_KEY"),
             agent_url: var("ML60_AGENT_URL"),
+            weather_place: var("WEATHER_PLACE"),
+            weather_at: var("WEATHER_LATITUDE").parse().ok().zip(var("WEATHER_LONGITUDE").parse().ok()),
+            weather_imperial: var("WEATHER_UNITS").eq_ignore_ascii_case("imperial"),
             hosts: hosts(&raw),
             theme,
             window,
@@ -122,6 +131,10 @@ impl Config {
 
     pub fn agent_configured(&self) -> bool {
         !self.agent_url.is_empty()
+    }
+
+    pub fn weather_configured(&self) -> bool {
+        !self.weather_place.is_empty() || self.weather_at.is_some()
     }
 
     pub fn pve_base(&self) -> String {
