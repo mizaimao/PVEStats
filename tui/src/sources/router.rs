@@ -124,6 +124,7 @@ impl Router {
             wan_down_bps,
             wan_up_bps,
             ports,
+            wired_devices: int(payload, "wired_devices"),
             bands,
         };
         self.last = Some((now, counters));
@@ -156,6 +157,7 @@ fn demo(t: f64) -> RouterData {
         wan_down_bps: Some(down),
         wan_up_bps: Some(up),
         ports: vec![port(true, 0.55), port(true, 0.25), port(false, 0.0), port(true, 0.01)],
+        wired_devices: Some(11),
         bands: vec![band("5 GHz", 1, 0.04), band("6 GHz-1", 1, 0.12), band("6 GHz-2", 3, 0.03), band("2.4 GHz", 0, 0.0)],
     }
 }

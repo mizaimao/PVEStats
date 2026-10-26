@@ -243,6 +243,9 @@ pub struct RouterData {
     pub wan_down_bps: Option<f64>,
     pub wan_up_bps: Option<f64>,
     pub ports: Vec<Port>,
+    /// Devices on the wired side (VMs behind one port each count); None
+    /// until the router has counted them.
+    pub wired_devices: Option<u64>,
     pub bands: Vec<Band>,
 }
 
