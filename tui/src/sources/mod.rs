@@ -160,6 +160,19 @@ pub struct Ram {
     pub at: f64,
 }
 
+impl Ram {
+    /// What programs use, in % of the total: all but what is available.
+    pub fn used_pct(&self) -> f64 {
+        (self.total - self.available).max(0.0) / self.total * 100.0
+    }
+
+    /// Programs and the cache together, in % of the total, at most 100:
+    /// about what PVE counts as used for the VM.
+    pub fn cached_pct(&self) -> f64 {
+        ((self.total - self.available).max(0.0) + self.cache).min(self.total) / self.total * 100.0
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Gpu {
     pub util: Option<f64>,

@@ -9,7 +9,7 @@ use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
 use crate::sources::{AgentData, Guest, NasData, Nic, Node, PveData, RouterData};
-use crate::state::{clock, Series, Source, Status};
+use crate::state::{clock, Source, Status};
 
 /// One guest's place on screen. `guest` is None for the GPU and NAS cards
 /// until PVE first answers: they have sources of their own and must not
@@ -366,7 +366,12 @@ pub fn gpu(
         Line::from(vec![Span::styled("disk ", style(p.muted)), Span::styled(disk, pve_ink)]),
     ];
     if let Some(r) = ram {
-        chips.push(chip(look, "cache", format!("{} GiB", pad(fmt::gib(Some(r.cache)), 4))));
+        // The memory chart's dashed line, which adds the cache to what
+        // programs use, carries this mark: the chart's legend has no room.
+        let mut cache = chip(look, "cache", format!("{} GiB", pad(fmt::gib(Some(r.cache)), 4)));
+        let dash = if look.console_glyphs { "- " } else { "┄ " };
+        cache.spans.insert(0, Span::styled(dash, bold(look.flat(1))));
+        chips.push(cache);
     }
     let chips = Part::Chips(chips);
 
@@ -377,10 +382,16 @@ pub fn gpu(
     let cpu_chart = pve_dim(small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu))));
     let mem_chart = match ram {
         Some(r) => {
-            let used = (r.total - r.available).max(0.0) / r.total * 100.0;
-            // One dot a second, as the agent reads it.
+            let used = r.used_pct();
+            // One dot a second, as the agent reads it. Programs' use filled;
+            // with the cache added, dashed (about what Proxmox counts as
+            // used), its mark on the cache figure above.
             let caption = format!("Mem {}", fmt::pct(Some(used)));
-            pct_chart(agent.series("ram.used"), agent.capacity(), agent.interval, 1, caption, Some(0.5))
+            let traces = vec![
+                Trace::from(agent.series("ram.used"), 1, ""),
+                Trace::from(agent.series("ram.cached"), 1, "").dashed(),
+            ];
+            pct_chart(traces, agent.capacity(), agent.interval, caption, Some(0.5))
         }
         None => {
             let mem = guest.and_then(|g| ratio(g.mem, g.maxmem)).map(|r| r * 100.0);
@@ -909,13 +920,14 @@ pub fn tour(look: &Look, names: &[&str], index: usize, next_in: u64) -> Card {
 /// One PVE series on its own small 0-100 chart, its figure in the caption:
 /// a cell per 10s sample, like the host's.
 fn small_chart(pve: &Source<PveData>, key: &str, series: usize, caption: String) -> Part {
-    pct_chart(pve.series(key), pve.capacity(), pve.interval, series, caption, Some(1.0))
+    pct_chart(vec![Trace::from(pve.series(key), series, "")], pve.capacity(), pve.interval, caption, Some(1.0))
 }
 
-/// A small 0-100 chart of one series, its figure in the caption.
-fn pct_chart(data: Option<&Series>, capacity: usize, interval: f64, series: usize, caption: String, sample_width: Option<f64>) -> Part {
+/// A small 0-100 chart, its figure in the caption: the first trace filled,
+/// any others as lines over it.
+fn pct_chart(traces: Vec<Trace>, capacity: usize, interval: f64, caption: String, sample_width: Option<f64>) -> Part {
     Part::Chart(Chart {
-        traces: vec![Trace::from(data, series, "")],
+        traces,
         capacity,
         top: Some(100.0),
         floor: 0.0,
