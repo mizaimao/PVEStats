@@ -129,7 +129,6 @@ impl Screen {
             None => cards::pve_note(look, &sp),
         };
         let top = with_status(look, &[("pve", &sp), ("agent", &sa), ("truenas", &sn)], theme_now, host_card);
-        let util = agent.data.as_ref().and_then(|d| d.gpu.as_ref()).and_then(|g| g.util);
         let of = |view: View| slots.values().filter(move |s| s.view == view);
         let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &sp)).collect();
         let nas_cards: Vec<Card> =
@@ -153,7 +152,7 @@ impl Screen {
             left_cards.extend(nas_cards);
             column(&mut pen, Rect { width: left, ..body }, &left_cards, Some(&guests), None);
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None, None);
-            let mut right_cards = vec![cards::weather_placeholder(look), cards::digits_preview(look, util)];
+            let mut right_cards = vec![cards::weather_placeholder(look)];
             right_cards.extend(tour);
             column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, None, None);
         } else if w >= TWO_COLUMNS {
@@ -214,7 +213,7 @@ enum Plan {
 impl Guests<'_> {
     fn plan(&self, width: u16, height: u16) -> Plan {
         let n = self.slots.len();
-        for (size, narrowest) in [(Size::Full, 38), (Size::Compact, 26), (Size::Tiny, 18)] {
+        for (size, narrowest) in [(Size::Full, 38), (Size::Compact, 26), (Size::Small, 18), (Size::Tiny, 18)] {
             let most = ((width + 1) / (narrowest + 1)).clamp(1, GUESTS_ACROSS).min(n.max(1) as u16);
             for cols in 1..=most {
                 let card_w = (width + 1) / cols - 1;
@@ -233,6 +232,17 @@ impl Guests<'_> {
             }
         }
         Plan::List
+    }
+
+    /// Rows it takes in `height` rows, or None with no guests to show.
+    fn used(&self, width: u16, height: u16) -> Option<u16> {
+        if self.slots.is_empty() {
+            return None;
+        }
+        Some(match self.plan(width, height) {
+            Plan::Cards { cols, card_h, .. } => self.slots.len().div_ceil(cols as usize) as u16 * card_h,
+            Plan::List => (self.slots.len() as u16 + 3).min(height),
+        })
     }
 
     /// Rows it takes with no limit on them: full cards.
@@ -297,7 +307,17 @@ fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
 fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>, tail: Option<&Card>) {
     let w = area.width;
     let dividers = cards.len().saturating_sub(1) as u16;
-    let rows = card_rows(cards, w, area.height.saturating_sub(dividers));
+    // The guests come first: they take what they need of the rows the
+    // cards leave at their smallest, and charts grow only into the rest.
+    let smallest: u16 = cards.iter().map(|c| c.height(w)).sum::<u16>() + dividers;
+    let for_guests = match guests {
+        Some(g) if !cards.is_empty() => {
+            let room = area.height.saturating_sub(smallest + 1);
+            g.used(w, room).map_or(0, |rows| rows + 1)
+        }
+        _ => 0,
+    };
+    let rows = card_rows(cards, w, area.height.saturating_sub(dividers + for_guests));
     let mut y = area.y;
     for (card, h) in cards.iter().zip(rows) {
         card.render(pen, Rect { y, height: h, ..area });

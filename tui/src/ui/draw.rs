@@ -855,10 +855,15 @@ impl Card {
         let title_style = Style::default()
             .fg(if self.stale { p.muted } else { p.ink })
             .add_modifier(Modifier::BOLD);
+        // A title too long for the border beside the right-hand one is cut
+        // with an ellipsis, rather than run under it.
+        let right_w = if self.right.is_empty() { 0 } else { self.right.chars().count() + 2 };
+        let room = (area.width as usize).saturating_sub(5 + right_w);
+        let title = crate::format::fit(&self.title, room);
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(border)
-            .title(Line::styled(format!(" {} ", self.title), title_style));
+            .title(Line::styled(format!(" {title} "), title_style));
         if !self.right.is_empty() {
             let right = Line::styled(format!(" {} ", self.right), Style::default().fg(p.muted));
             block = block.title_top(right.right_aligned());
