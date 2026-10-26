@@ -76,6 +76,10 @@ pub enum Part {
     Chart(Chart),
     /// Two graphs on one axis, one up and one down, btop's network style.
     Mirror(Mirror),
+    /// The coming hours, a column each: time, sky, temperature, rain chance.
+    Hours(super::weather::HourStrip),
+    /// Temperature over the coming hours, the chance of rain under it.
+    Outlook(super::weather::Outlook),
     /// A value in big digits.
     Big(Big),
     /// A muted label over its value.
@@ -105,6 +109,8 @@ impl Part {
             Part::Gap | Part::Text(_) | Part::Meter(_) | Part::Spread(_) => 1,
             Part::Chart(c) => c.min_rows,
             Part::Mirror(m) => m.rows,
+            Part::Hours(_) => 4,
+            Part::Outlook(o) => o.min_rows,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
@@ -127,6 +133,7 @@ impl Part {
     pub fn room(&self) -> u16 {
         match self {
             Part::Chart(c) => c.max_rows.saturating_sub(c.min_rows),
+            Part::Outlook(o) => o.max_rows.saturating_sub(o.min_rows),
             Part::Row(children) => children.iter().map(|(_, p)| p.room()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::room).sum(),
             Part::Dim(inner) => inner.room(),
@@ -138,6 +145,7 @@ impl Part {
     pub fn flex(&self) -> u16 {
         match self {
             Part::Chart(c) => c.weight,
+            Part::Outlook(_) => 1,
             Part::Row(children) => children.iter().map(|(_, p)| p.flex()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::flex).sum(),
             Part::Dim(inner) => inner.flex(),
@@ -158,6 +166,8 @@ impl Part {
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
             Part::Mirror(m) => m.render(pen, area),
+            Part::Hours(h) => h.render(pen, area),
+            Part::Outlook(o) => o.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
@@ -517,7 +527,7 @@ impl Mirror {
 /// over it, rising from the foot, or with `down` hanging from the top.
 /// Braille dots, two samples across and four levels per cell, shaded from
 /// the axis out; on the console, whole cells and shades.
-fn plot(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool, width: Option<f64>) {
+pub(super) fn plot(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool, width: Option<f64>) {
     let area = area.intersection(pen.buf.area);
     if area.width == 0 || area.height == 0 || top <= 0.0 {
         return;

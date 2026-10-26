@@ -6,6 +6,7 @@
 pub mod cards;
 pub mod draw;
 pub mod theme;
+pub mod weather;
 
 use std::collections::BTreeMap;
 
@@ -62,6 +63,7 @@ impl Screen {
         let pve = lock(&shared.pve);
         let agent = lock(&shared.agent);
         let nas = lock(&shared.nas);
+        let forecast = lock(&shared.weather);
         let (sp, sa, sn) = (pve.status(), agent.status(), nas.status());
         let mut pen = Pen { buf, look };
         pen.fill_bg(area, look.p.plane);
@@ -150,7 +152,7 @@ impl Screen {
             left_cards.extend(nas_cards);
             column(&mut pen, Rect { width: left, ..body }, &left_cards, Some(&guests));
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None);
-            let mut right_cards = vec![cards::weather_placeholder(look)];
+            let mut right_cards = vec![weather::card(look, &forecast, &forecast.status(), config.weather_configured())];
             right_cards.extend(tour);
             column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, None);
         } else if w >= TWO_COLUMNS {

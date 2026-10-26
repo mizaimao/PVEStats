@@ -37,6 +37,13 @@ and turns off console blanking. `--console`, `--unicode` and `--colors`
 override.
 
 A `name` in config.yaml titles a card in place of the VM's name in Proxmox.
+
+The right-hand column is a weather forecast from Open-Meteo (free, no key):
+the weather now, the next day hour by hour, temperature and the chance of
+rain over the coming days, and the week. Where it is for goes in .env, so it
+stays off GitHub: `WEATHER_PLACE` (a place name, looked up once) or
+`WEATHER_LATITUDE` and `WEATHER_LONGITUDE`; `WEATHER_UNITS=imperial` for
+°F, mph and inches. It refreshes every 15 minutes.
 `tui: theme_tour: <seconds>` in config.yaml tours all twelve themes, naming
 each on screen, for picking one. `tui: screen_off: "03:00-05:00"` switches the
 display off for those hours every day, through `wlr-randr`, when it runs in
