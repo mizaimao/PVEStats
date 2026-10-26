@@ -41,3 +41,9 @@ tui:
   # Daily hours with the display switched off, against burn-in. Applies in
   # the full-screen kiosk (through wlr-randr); remove the line to keep it on.
   screen_off: "03:00-05:00"
+  # Seconds between polls of the Proxmox host agent (PVE_AGENT_URL in .env),
+  # 1 to 10. It reads the kernel each time it is asked, so this sets how
+  # often the host's and guests' figures change. Each poll costs the host
+  # 0.67 ms of CPU: every 1 s is 0.07% of a core, every 2 s 0.034%, every
+  # 5 s 0.013%.
+  pve_agent_every: 2

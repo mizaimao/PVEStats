@@ -50,6 +50,11 @@ pub struct Config {
     /// Minutes past midnight between which the display is switched off,
     /// against burn-in: config.yaml, `tui: screen_off: "03:00-05:00"`.
     pub screen_off: Option<(u32, u32)>,
+    /// Seconds between polls of the Proxmox host agent: config.yaml,
+    /// `tui: pve_agent_every`, 1 to 10, 2 when unset. The agent reads the
+    /// kernel each time it is asked, so this alone sets how often its
+    /// figures change.
+    pub pve_agent_every: f64,
     /// Made-up Ollama models and GPU processes on ml60's card, to see how
     /// a busy GPU lays out: config.yaml, `tui: demo: true`, or --demo.
     pub demo: bool,
@@ -118,6 +123,13 @@ impl Config {
                 .and_then(|t| t.get("screen_off"))
                 .and_then(|v| v.as_str())
                 .and_then(hours),
+            pve_agent_every: raw
+                .get("tui")
+                .and_then(|t| t.get("pve_agent_every"))
+                .and_then(|v| v.as_f64())
+                .filter(|v| v.is_finite())
+                .unwrap_or(crate::sources::HOST_INTERVAL)
+                .clamp(1.0, 10.0),
             tour: raw
                 .get("tui")
                 .and_then(|t| t.get("theme_tour"))
