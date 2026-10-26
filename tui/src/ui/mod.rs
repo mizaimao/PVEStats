@@ -152,7 +152,13 @@ impl Screen {
             left_cards.extend(nas_cards);
             column(&mut pen, Rect { width: left, ..body }, &left_cards, Some(&guests));
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None);
-            let mut right_cards = vec![weather::card(look, &forecast, &forecast.status(), config.weather_configured())];
+            // "tour" shows each layout for 20 seconds in turn, for choosing.
+            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let (layout, touring) = match config.weather_layout.as_str() {
+                "tour" => (['a', 'b', 'c'][(secs / 20 % 3) as usize], true),
+                other => (other.chars().next().unwrap_or('a'), false),
+            };
+            let mut right_cards = vec![weather::card(look, &forecast, &forecast.status(), config.weather_configured(), layout, touring)];
             right_cards.extend(tour);
             column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, None);
         } else if w >= TWO_COLUMNS {

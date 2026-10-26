@@ -80,6 +80,10 @@ pub enum Part {
     Hours(super::weather::HourStrip),
     /// Temperature over the coming hours, the chance of rain under it.
     Outlook(super::weather::Outlook),
+    /// The coming hours a line each, as many as there are rows for.
+    HourList(super::weather::HourList),
+    /// The week as tiles side by side, each with its icon.
+    Week(super::weather::WeekTiles),
     /// A value in big digits.
     Big(Big),
     /// A muted label over its value.
@@ -111,6 +115,8 @@ impl Part {
             Part::Mirror(m) => m.rows,
             Part::Hours(_) => 4,
             Part::Outlook(o) => o.min_rows,
+            Part::HourList(_) => super::weather::HourList::MIN_ROWS,
+            Part::Week(_) => super::weather::WeekTiles::ROWS,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
@@ -134,6 +140,7 @@ impl Part {
         match self {
             Part::Chart(c) => c.max_rows.saturating_sub(c.min_rows),
             Part::Outlook(o) => o.max_rows.saturating_sub(o.min_rows),
+            Part::HourList(_) => super::weather::HourList::MAX_ROWS - super::weather::HourList::MIN_ROWS,
             Part::Row(children) => children.iter().map(|(_, p)| p.room()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::room).sum(),
             Part::Dim(inner) => inner.room(),
@@ -145,7 +152,7 @@ impl Part {
     pub fn flex(&self) -> u16 {
         match self {
             Part::Chart(c) => c.weight,
-            Part::Outlook(_) => 1,
+            Part::Outlook(_) | Part::HourList(_) => 1,
             Part::Row(children) => children.iter().map(|(_, p)| p.flex()).max().unwrap_or(0),
             Part::Flow(_, children) | Part::Stack(children) => children.iter().map(Part::flex).sum(),
             Part::Dim(inner) => inner.flex(),
@@ -168,6 +175,8 @@ impl Part {
             Part::Mirror(m) => m.render(pen, area),
             Part::Hours(h) => h.render(pen, area),
             Part::Outlook(o) => o.render(pen, area),
+            Part::HourList(l) => l.render(pen, area),
+            Part::Week(w) => w.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));

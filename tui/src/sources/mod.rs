@@ -224,6 +224,8 @@ pub struct WeatherData {
     pub place: String,
     /// °F, mph and inches rather than °C, km/h and mm.
     pub imperial: bool,
+    /// Who made the forecast: "NWS" or "Open-Meteo".
+    pub source: &'static str,
     pub now: Now,
     /// From the hour now is in, hourly, a few days ahead.
     pub hours: Vec<Hour>,
@@ -233,17 +235,19 @@ pub struct WeatherData {
 
 #[derive(Clone, Debug, Default)]
 pub struct Now {
-    /// Local, "2026-10-25T21:30": the forecast's own clock.
+    /// Local, "2026-10-25T21:30".
     pub time: String,
     pub temp: Option<f64>,
     pub feels: Option<f64>,
     pub humidity: Option<f64>,
     pub wind: Option<f64>,
     pub gusts: Option<f64>,
-    /// Degrees the wind blows from.
-    pub wind_from: Option<f64>,
-    /// WMO weather code.
+    /// Where the wind blows from, as a compass point: "SW".
+    pub wind_from: String,
+    /// WMO weather code, or the nearest one to the forecaster's words.
     pub code: Option<u64>,
+    /// The forecaster's words, where the source has them.
+    pub text: Option<String>,
     pub day: bool,
 }
 
@@ -254,6 +258,10 @@ pub struct Hour {
     pub temp: Option<f64>,
     pub rain_chance: Option<f64>,
     pub code: Option<u64>,
+    pub text: Option<String>,
+    pub humidity: Option<f64>,
+    pub wind: Option<f64>,
+    pub wind_from: String,
     pub day: bool,
 }
 
@@ -262,10 +270,11 @@ pub struct Day {
     /// "2026-10-25".
     pub date: String,
     pub code: Option<u64>,
+    pub text: Option<String>,
     pub high: Option<f64>,
     pub low: Option<f64>,
     pub rain_chance: Option<f64>,
-    /// Rain and snow, mm or inches.
+    /// Rain and snow, mm or inches; None where the source does not say.
     pub rain: Option<f64>,
     /// Local, "2026-10-25T07:21".
     pub sunrise: String,
