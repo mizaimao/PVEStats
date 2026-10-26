@@ -145,14 +145,19 @@ impl TrueNas {
         };
         let started = self.started;
         let link = |e: std::io::Error| Fail::Link(if net::is_timeout(&e) { net::timed_out(started) } else { e.to_string() });
-        let address = (name.as_str(), port)
-            .to_socket_addrs()
-            .map_err(|e| Fail::Link(format!("cannot resolve {name}: {e}")))?
-            .next()
-            .ok_or_else(|| Fail::Link(format!("cannot resolve {name}")))?;
-        // Bounded like every other call (spec §7): connect, then each read and
-        // write.
-        let tcp = TcpStream::connect_timeout(&address, TRUENAS_TIMEOUT).map_err(link)?;
+        let addresses: Vec<_> =
+            (name.as_str(), port).to_socket_addrs().map_err(|e| Fail::Link(format!("cannot resolve {name}: {e}")))?.collect();
+        // Each address in turn, as aiohttp tried them: an IPv6 one that does
+        // not answer must not stop the IPv4 one being tried. Bounded like
+        // every other call (spec §7): connect, then each read and write.
+        let mut tcp = Err(Fail::Link(format!("cannot resolve {name}")));
+        for address in &addresses {
+            tcp = TcpStream::connect_timeout(address, TRUENAS_TIMEOUT).map_err(link);
+            if tcp.is_ok() {
+                break;
+            }
+        }
+        let tcp = tcp?;
         tcp.set_read_timeout(Some(TRUENAS_TIMEOUT)).map_err(link)?;
         tcp.set_write_timeout(Some(TRUENAS_TIMEOUT)).map_err(link)?;
         let _ = tcp.set_nodelay(true);

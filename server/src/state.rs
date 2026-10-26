@@ -71,7 +71,8 @@ impl Source {
     }
 
     fn length(history_seconds: f64, interval: f64) -> usize {
-        ((history_seconds / interval).round() as usize).max(2)
+        // Halves to the even neighbour, as Python's round().
+        ((history_seconds / interval).round_ties_even() as usize).max(2)
     }
 
     /// Change how much history is kept, keeping the newest samples.

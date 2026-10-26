@@ -101,9 +101,13 @@ impl Pve {
         thread::scope(|scope| {
             let calls: Vec<_> = vmids
                 .iter()
-                .map(|&vmid| {
+                .filter_map(|&vmid| {
                     let path = format!("/nodes/{node}/qemu/{vmid}/agent/{command}");
-                    scope.spawn(move || (vmid, self.get(&path, Instant::now()).ok().map(data)))
+                    // A thread the system will not give is that guest's
+                    // answer missing this time, not a crash.
+                    thread::Builder::new()
+                        .spawn_scoped(scope, move || (vmid, self.get(&path, Instant::now()).ok().map(data)))
+                        .ok()
                 })
                 .collect();
             calls.into_iter().filter_map(|c| c.join().ok()).filter_map(|(v, d)| d.map(|d| (v, d))).collect()
