@@ -9,7 +9,7 @@ use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
 use crate::sources::{AgentData, Guest, NasData, Nic, Node, PveData, RouterData};
-use crate::state::{Source, Status};
+use crate::state::{Series, Source, Status};
 
 /// One guest's place on screen. `guest` is None for the GPU and NAS cards
 /// until PVE first answers: they have sources of their own and must not
@@ -321,8 +321,12 @@ pub fn gpu(
     let disk = guest
         .and_then(|g| g.filesystem.as_ref())
         .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
+    // ml60's memory as ml60 sees it, where its agent says: PVE counts the
+    // disk cache as used, and on ml60, with model files read into cache,
+    // that read 95% while its programs used 12%.
+    let ram = data.and_then(|d| d.ram.as_ref()).filter(|r| status.ok && r.total > 0.0);
     // Network and disk ride beside the PCIe link, on the GPU's own lines.
-    let chips = Part::Chips(vec![
+    let mut chips = vec![
         chip(look, "Temp", round(get(|g| g.temp), "°C")),
         chip(look, "Power", power),
         chip(look, "Fan", fmt::pct(get(|g| g.fan))),
@@ -330,14 +334,29 @@ pub fn gpu(
         chip(look, "PCIe", link.unwrap_or_else(|| fmt::DASH.into())),
         net,
         Line::from(vec![Span::styled("disk ", style(p.muted)), Span::styled(disk, pve_ink)]),
-    ]);
+    ];
+    if let Some(r) = ram {
+        chips.push(chip(look, "cache", format!("{} GiB", fmt::gib(Some(r.cache)))));
+    }
+    let chips = Part::Chips(chips);
 
     let cpu = guest.and_then(|g| g.cpu_pct);
-    let mem = guest.and_then(|g| ratio(g.mem, g.maxmem)).map(|r| r * 100.0);
+    let mem_chart = match ram {
+        Some(r) => {
+            let used = (r.total - r.available).max(0.0) / r.total * 100.0;
+            // One dot a second, as the agent reads it.
+            let caption = format!("Mem {}", fmt::pct(Some(used)));
+            pct_chart(agent.series("ram.used"), agent.capacity(), agent.interval, 1, caption, Some(0.5))
+        }
+        None => {
+            let mem = guest.and_then(|g| ratio(g.mem, g.maxmem)).map(|r| r * 100.0);
+            small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem)))
+        }
+    };
     // Two small charts side by side, CPU and memory, a figure under each.
     let mut pve_parts = Part::Row(vec![
         (0, small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu)))),
-        (0, small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem)))),
+        (0, mem_chart),
     ]);
     if !pve.ok {
         pve_parts = Part::Dim(Box::new(pve_parts));
@@ -857,17 +876,22 @@ pub fn tour(look: &Look, names: &[&str], index: usize, next_in: u64) -> Card {
 /// One PVE series on its own small 0-100 chart, its figure in the caption:
 /// a cell per 10s sample, like the host's.
 fn small_chart(pve: &Source<PveData>, key: &str, series: usize, caption: String) -> Part {
+    pct_chart(pve.series(key), pve.capacity(), pve.interval, series, caption, Some(1.0))
+}
+
+/// A small 0-100 chart of one series, its figure in the caption.
+fn pct_chart(data: Option<&Series>, capacity: usize, interval: f64, series: usize, caption: String, sample_width: Option<f64>) -> Part {
     Part::Chart(Chart {
-        traces: vec![Trace::from(pve.series(key), series, "")],
-        capacity: pve.capacity(),
+        traces: vec![Trace::from(data, series, "")],
+        capacity,
         top: Some(100.0),
         floor: 0.0,
         axis: axis_pct,
-        seconds_per_sample: pve.interval,
+        seconds_per_sample: interval,
         caption,
         min_rows: 5,
         max_rows: 5,
         weight: 1,
-        sample_width: Some(1.0),
+        sample_width,
     })
 }

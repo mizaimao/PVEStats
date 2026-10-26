@@ -140,6 +140,21 @@ pub struct AgentData {
     /// None while NVML is failing on ml60; the models still come through.
     pub gpu: Option<Gpu>,
     pub models: Vec<Model>,
+    /// ml60's memory as ml60 itself sees it; None from an agent that does
+    /// not report it.
+    pub ram: Option<Ram>,
+}
+
+/// Memory from inside a guest, in bytes. PVE's figure for a VM counts the
+/// guest's disk cache as used; this tells the two apart.
+#[derive(Clone, Debug, Default)]
+pub struct Ram {
+    pub total: f64,
+    /// What programs can have without swapping: free memory plus cache the
+    /// kernel can drop.
+    pub available: f64,
+    /// Buffers, page cache and reclaimable slab, as `free` counts it.
+    pub cache: f64,
 }
 
 #[derive(Clone, Debug, Default)]

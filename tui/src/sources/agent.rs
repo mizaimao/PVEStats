@@ -5,7 +5,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use super::{lock, AgentData, Gpu, Model, Pcie, Proc, AGENT_TIMEOUT};
+use super::{lock, AgentData, Gpu, Model, Pcie, Proc, Ram, AGENT_TIMEOUT};
 use crate::json::{int, list, num, text};
 use crate::net;
 use crate::state::Source;
@@ -53,13 +53,21 @@ impl Agent {
             })
             .collect();
 
+        // ml60's own memory, from inside it: an agent from before it was
+        // added sends none, and the card falls back to PVE's figure.
+        let ram = payload.get("ram").filter(|r| r.is_object()).and_then(|r| {
+            Some(Ram { total: num(r, "total")?, available: num(r, "available")?, cache: num(r, "cache").unwrap_or(0.0) })
+        });
+        let ram_used = ram.as_ref().filter(|r| r.total > 0.0).map(|r| (r.total - r.available).max(0.0) / r.total * 100.0);
+
         let Some(gpu) = payload.get("gpu").filter(|g| g.is_object()) else {
             // NVML failed on ml60, but the agent still serves Ollama's models
             // for exactly this case. Keep them current, and still fail, so
             // the card says why its GPU readings are old.
             let mut source = lock(source);
             let previous = source.data.as_ref().and_then(|d| d.gpu.clone());
-            source.data = Some(AgentData { gpu: previous, models });
+            source.push("ram.used", ram_used);
+            source.data = Some(AgentData { gpu: previous, models, ram });
             return Err(text(&payload, "error").unwrap_or("agent reported no GPU").to_string());
         };
 
@@ -107,7 +115,8 @@ impl Agent {
         source.push("gpu.vram_pct", vram_pct);
         source.push("gpu.power", gpu.power);
         source.push("gpu.temp", gpu.temp);
-        source.succeed(AgentData { gpu: Some(gpu), models });
+        source.push("ram.used", ram_used);
+        source.succeed(AgentData { gpu: Some(gpu), models, ram });
         Ok(())
     }
 }
