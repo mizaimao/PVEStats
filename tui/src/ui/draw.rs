@@ -454,8 +454,21 @@ impl Chart {
         // Axis: labels at the top and bottom, and on the row holding the
         // halfway mark when the chart is tall enough to spare one. A dotted
         // line runs along the top and the halfway mark, so a value near the
-        // top reads against the line.
+        // top reads against the line. Each is drawn on its own dot row of
+        // the braille cells, the top one for the top and the one at exactly
+        // half the plot's height for the half: a "·" sits mid-cell, which on
+        // a six-row chart put "100" at 92% and "50" at 58%, so a value of
+        // 94% showed above the 100 line. The console has no dots: "·" there.
         let mid = (rows >= 6).then(|| rows - 1 - rows / 2);
+        let dot_row = |within: usize| {
+            let bits = DOTS[0][within] | DOTS[1][within];
+            char::from_u32(0x2800 + u32::from(bits)).unwrap_or('·').to_string()
+        };
+        let (top_line, mid_line) = if pen.look.console_glyphs {
+            ("·".to_string(), "·".to_string())
+        } else {
+            (dot_row(3), dot_row(rows as usize * 4 / 2 % 4))
+        };
         for r in 0..rows {
             let y = area.y + r;
             let label = if r == 0 {
@@ -470,8 +483,9 @@ impl Chart {
             if let Some(label) = &label {
                 pen.text(area, area.x, y, &crate::format::right(label, label_w as usize), muted);
                 if r != rows - 1 {
+                    let line = if r == 0 { &top_line } else { &mid_line };
                     for x in plot_area.left()..plot_area.right() {
-                        pen.cell(area, x, y, "·", grid);
+                        pen.cell(area, x, y, line, grid);
                     }
                 }
             }
@@ -1011,6 +1025,34 @@ mod tests {
         // per sample, so each new sample moves the graph by one.
         assert_eq!(sample_at(&data, 3, 0, 2, 1), Some(2.0));
         assert_eq!(sample_at(&data, 3, 1, 2, 1), Some(3.0));
+    }
+
+    /// The 100 and 50 lines on the dot rows they stand for: the top one, and
+    /// the one at half the height (the foot of the third row of six).
+    #[test]
+    fn grid_lines_on_their_own_dot_rows() {
+        let look = super::super::theme::Look::new("ice", super::super::theme::Colors::Rgb, false);
+        let area = Rect::new(0, 0, 30, 7);
+        let mut buf = Buffer::empty(area);
+        let mut pen = Pen { buf: &mut buf, look: &look };
+        Chart {
+            traces: Vec::new(),
+            capacity: 10,
+            top: Some(100.0),
+            floor: 0.0,
+            axis: |v| format!("{v}"),
+            seconds_per_sample: 1.0,
+            caption: String::new(),
+            min_rows: 7,
+            max_rows: 7,
+            weight: 1,
+            sample_width: None,
+        }
+        .render(&mut pen, area);
+        let at = |x: u16, y: u16| buf.cell((x, y)).map(|c| c.symbol().to_string()).unwrap_or_default();
+        assert_eq!(at(10, 0), "⠉", "100: the top dot row");
+        assert_eq!(at(10, 2), "⣀", "50: the foot of the third row of six");
+        assert_eq!(at(10, 1), " ");
     }
 
     #[test]
