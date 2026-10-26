@@ -1,8 +1,10 @@
-# The two machines tui/deploy and tui/screenshot work with, from
-# tui/deploy.conf (git-ignored; start from deploy.conf.example), and helpers
-# to run commands on them. Sourced, not run.
+# The two machines tui/deploy and tui/screenshot (and router/build) work
+# with, from tui/deploy.conf (git-ignored; start from deploy.conf.example),
+# and helpers to run commands on them. Sourced, not run.
 
-here=$(cd "$(dirname "$0")" && pwd)
+# This file's own folder, whichever script sourced it: bash names it in
+# BASH_SOURCE, zsh in $0.
+here=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 repo=$(dirname "$here")
 conf="$here/deploy.conf"
 
@@ -49,5 +51,6 @@ pack() {
         --exclude ./captures --exclude ./ui.json --exclude ./icons \
         --exclude ./tui/target --exclude ./tui/.cargo-home --exclude ./tui/bin \
         --exclude ./tui/shot/target --exclude ./tui/deploy.conf \
+        --exclude ./router/agent/target --exclude ./router/agent/.cargo-home --exclude ./router/bin \
         --exclude __pycache__ --exclude .DS_Store --exclude '*.jpg' "$@")
 }

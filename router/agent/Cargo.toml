@@ -1,0 +1,16 @@
+[package]
+name = "pvestats-router"
+version = "0.1.0"
+edition = "2021"
+description = "The router's own counters as JSON over HTTP, for PVEStats' router card"
+publish = false
+
+# The standard library only: nothing else to audit or keep up to date.
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

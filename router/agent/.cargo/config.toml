@@ -1,0 +1,4 @@
+# The router is 64-bit ARM. A static musl build runs on its firmware as it
+# is, linked by the lld that ships with Rust, so no cross compiler is needed.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
