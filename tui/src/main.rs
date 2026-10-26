@@ -105,7 +105,7 @@ fn main() {
     });
     config.demo |= args.demo;
     let config = Arc::new(config);
-    let shared = Arc::new(Shared::new(config.window, config.pve_interval()));
+    let shared = Arc::new(Shared::new(config.window, config.pve_interval(), config.pve_agent_every));
     start(&config, &shared);
 
     let term = std::env::var("TERM").unwrap_or_default();
@@ -180,7 +180,8 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
     }
     if config.host_configured() {
         let (mut host, s) = (Host::new(config.pve_agent_url.clone()), shared.clone());
-        thread::spawn(move || run_poller(&s.host, sources::HOST_INTERVAL, || host.poll(&s.host, &s.pve)));
+        let every = config.pve_agent_every;
+        thread::spawn(move || run_poller(&s.host, every, || host.poll(&s.host, &s.pve)));
     }
     if config.agent_configured() {
         let (mut agent, s) = (Agent::new(config.agent_url.clone(), config.demo), shared.clone());

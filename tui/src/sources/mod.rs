@@ -28,7 +28,9 @@ pub const PVE_INTERVAL: f64 = 10.0;
 /// Measured on the host: the agent every 2 s and the API every 30 s cost
 /// 0.041% of a core, the API alone every 10 s 0.044% (pve/README.md).
 pub const PVE_INTERVAL_WITH_AGENT: f64 = 30.0;
-/// The host agent (pve/agent) reads the kernel's counters as it is asked.
+/// The host agent (pve/agent) reads the kernel's counters as it is asked:
+/// the default seconds between polls, `tui: pve_agent_every` in config.yaml
+/// to change it (0.67 ms of the host's CPU a poll, measured).
 pub const HOST_INTERVAL: f64 = 2.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
 pub const TRUENAS_INTERVAL: f64 = 5.0;
@@ -56,12 +58,12 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn new(window: f64, pve_interval: f64) -> Self {
+    pub fn new(window: f64, pve_interval: f64, host_interval: f64) -> Self {
         Shared {
             // Ten minutes at least: PVE's chart gives each 10s sample a cell,
             // so a wide one reaches back further than the window.
             pve: Mutex::new(Source::new(pve_interval, window.max(600.0))),
-            host: Mutex::new(Source::new(HOST_INTERVAL, window.max(600.0))),
+            host: Mutex::new(Source::new(host_interval, window.max(600.0))),
             agent: Mutex::new(Source::new(AGENT_INTERVAL, window)),
             nas: Mutex::new(Source::new(TRUENAS_INTERVAL, window)),
             router: Mutex::new(Source::new(ROUTER_INTERVAL, window)),
