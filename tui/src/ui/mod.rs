@@ -341,7 +341,9 @@ fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>) {
         y += h + 1;
     }
     if let Some(g) = guests {
-        let top = if cards.is_empty() { area.y } else { y };
+        // Straight under the last card, without the blank row between cards:
+        // the guests need every row they can get.
+        let top = if cards.is_empty() { area.y } else { y - 1 };
         g.render(pen, Rect { y: top, height: area.bottom().saturating_sub(top), ..area });
     }
 }

@@ -181,10 +181,18 @@ impl Part {
             }
             Part::Table(t) => t.render(pen, area),
             Part::Row(children) => {
+                // Columns the shares leave over (an odd one, say) widen the
+                // gaps rather than sit after the last child, so the row
+                // spans its width and equal children look equal.
+                let widths = row_widths(children, area.width);
+                let gaps = children.len().saturating_sub(1) as u16;
+                let used: u16 = widths.iter().sum::<u16>() + GAP * gaps;
+                let spare = area.width.saturating_sub(used);
                 let mut x = area.x;
-                for ((_, child), w) in children.iter().zip(row_widths(children, area.width)) {
+                for (i, ((_, child), w)) in children.iter().zip(widths).enumerate() {
                     child.render(pen, Rect { x, width: w, ..area });
-                    x += w + GAP;
+                    let i = i as u16;
+                    x += w + GAP + if gaps > 0 { spare / gaps + u16::from(i < spare % gaps) } else { 0 };
                 }
             }
             Part::Flow(min, children) => match flow_widths(*min, children.len(), area.width) {
