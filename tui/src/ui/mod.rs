@@ -153,13 +153,16 @@ impl Screen {
             // Status, host, NAS and router on the left, the GPU in the
             // middle, the forecast and the guests on the right. The left
             // keeps its cards to their smallest, but for the router's chart,
-            // which takes any rows left at the foot.
+            // which takes any rows left at the foot. The NAS sits right
+            // under the status card, with no blank row: one more row for
+            // the router's chart, which then splits evenly.
             let left = (w - 2) / 3;
             let mid = (w - left - 2) / 2;
             let right = w - left - mid - 2;
-            let mut left_cards = vec![top];
-            left_cards.extend(nas_cards);
-            column(&mut pen, Rect { width: left, ..body }, &left_cards, None, false);
+            let top_h = top.height(left).min(body.height);
+            top.render(&mut pen, Rect { width: left, height: top_h, ..body });
+            let below = Rect { y: body.y + top_h, width: left, height: body.height - top_h, ..body };
+            column(&mut pen, below, &nas_cards, None, false);
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None, true);
             // "tour" shows each layout for 20 seconds in turn, for choosing.
             let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
