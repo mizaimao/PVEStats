@@ -47,6 +47,11 @@ pve/agent/target/
 pve/agent/.cargo-home/
 pve/bin/
 
+# The TrueNAS agent's build output, its cargo cache and the built program
+nas/agent/target/
+nas/agent/.cargo-home/
+nas/bin/
+
 # The ml60 agent's build output, its cargo cache and the built program
 agent/rust/target/
 agent/rust/.cargo-home/
