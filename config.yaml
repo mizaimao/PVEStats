@@ -47,3 +47,8 @@ tui:
   # 0.67 ms of CPU: every 1 s is 0.07% of a core, every 2 s 0.034%, every
   # 5 s 0.013%.
   pve_agent_every: 2
+  # Seconds between polls of TrueNAS's agent (NAS_AGENT_URL in .env), 1 to
+  # 10. Each poll costs TrueNAS 0.41 ms of CPU: every 1 s is 0.04% of a
+  # core, every 2 s 0.02%, every 5 s 0.008%, on top of 0.017% for its own
+  # pool check every 30 s. TrueNAS's API instead costs 25 ms a poll.
+  nas_agent_every: 2
