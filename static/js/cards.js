@@ -102,10 +102,12 @@ function ioRow({ diskIo = true } = {}) {
       // PVE sends null when the guest agent gave no usage. A card PVE has
       // not reported yet (a placeholder) has no field at all: no data, not
       // no agent.
+      // A used figure the agent left out is unknown, not 0%.
       const fs = g.filesystem;
+      const pct = fs && fs.used != null && fs.total
+        ? `${Math.round((fs.used / fs.total) * 100)}%` : "–";
       usage.set(fs
-        ? `${Math.round((fs.used / fs.total) * 100)}% · `
-          + `${fmt.gib(fs.used)} / ${fmt.gib(fs.total)} GiB`
+        ? `${pct} · ${fmt.gib(fs.used)} / ${fmt.gib(fs.total)} GiB`
         : fs === null ? "no guest agent" : "–");
     },
   };

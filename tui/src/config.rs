@@ -227,9 +227,6 @@ fn read_env(path: &Path) -> HashMap<String, String> {
     out
 }
 
-/// The repo root: where config.yaml and .env live. `--root` wins; then
-/// PVESTATS_ROOT; then the nearest folder above the binary that holds a
-/// config.yaml (the binary sits in tui/target/release); then the current one.
 /// "03:00-05:00" as minutes past midnight, start and end.
 fn hours(text: &str) -> Option<(u32, u32)> {
     let minutes = |t: &str| {
@@ -241,6 +238,9 @@ fn hours(text: &str) -> Option<(u32, u32)> {
     Some((minutes(from)?, minutes(to)?)).filter(|(a, b)| a != b)
 }
 
+/// The repo root: where config.yaml and .env live. `--root` wins; then
+/// PVESTATS_ROOT; then the nearest folder above the binary that holds a
+/// config.yaml (the binary sits in tui/target/release); then the current one.
 pub fn find_root(flag: Option<PathBuf>) -> PathBuf {
     if let Some(root) = flag.or_else(|| std::env::var_os("PVESTATS_ROOT").map(PathBuf::from)) {
         return root;

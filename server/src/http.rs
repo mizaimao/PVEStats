@@ -2,7 +2,7 @@
 //! authentication (spec §5). Serves the page and the collector's state;
 //! credentials stay in the collector and never reach the page.
 //!
-//! One request per connection, then close; at most 32 connections at once,
+//! One request per connection, then close; at most MAX_CONNECTIONS at once,
 //! each read with a deadline and a size cap.
 
 use std::io::{Read, Write};
