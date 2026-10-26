@@ -14,6 +14,10 @@ use crate::json::{list, num, text, truthy};
 use crate::net;
 use crate::state::{RateTracker, Source};
 
+/// A pool's capacity is read every 30 s; figures older than this mean the
+/// agent's last reads of it failed, and the card greys them.
+const OLD_POOL_SECONDS: f64 = 120.0;
+
 pub struct NasAgent {
     url: String,
     http: ureq::Agent,
@@ -121,6 +125,7 @@ impl NasAgent {
                     allocated: None,
                     used_bytes: used,
                     usable: used.zip(num(p, "available")).map(|(u, a)| u + a),
+                    old: num(p, "age").is_some_and(|a| a > OLD_POOL_SECONDS),
                 }
             })
             .collect();
@@ -154,7 +159,7 @@ mod tests {
                          {"name": "sdc", "model": "M", "size": 16, "pool": null, "read": 0, "write": 0}],
                "pools": [{"name": "tank", "state": "ONLINE", "used": 30, "available": 70, "age": 2, "boot": false},
                          {"name": "boot-pool", "state": "ONLINE", "used": 1, "available": 7, "age": 2, "boot": true},
-                         {"name": "old", "state": "DEGRADED", "used": 5, "available": 5, "age": 2, "boot": false}]})
+                         {"name": "old", "state": "DEGRADED", "used": 5, "available": 5, "age": 300, "boot": false}]})
     }
 
     #[test]
@@ -183,6 +188,8 @@ mod tests {
             data.pools.iter().map(|p| (p.name.as_str(), p.healthy, p.used_bytes, p.usable)).collect();
         assert_eq!(pools, [("tank", true, Some(30.0), Some(100.0)), ("old", false, Some(5.0), Some(10.0))]);
         assert_eq!(data.pools[1].status.as_deref(), Some("DEGRADED"));
+        // Its capacity last read five minutes ago.
+        assert_eq!((data.pools[0].old, data.pools[1].old), (false, true));
         let nics: Vec<(&str, Option<&str>, &str)> =
             data.interfaces.iter().map(|(n, nic)| (n.as_str(), nic.role.as_deref(), nic.media.as_str())).collect();
         assert_eq!(nics, [("ens18", Some("virtual"), ""), ("enp1s0", Some("physical"), "ixgbe")]);

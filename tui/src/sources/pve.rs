@@ -8,7 +8,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use super::{lock, Fs, Guest, Node, PveData, PVE_TIMEOUT};
-use crate::config::Config;
+use crate::config::{Config, View};
 use crate::json::{int, list, num, text, truthy};
 use crate::net;
 use crate::state::{clock, RateTracker, Source};
@@ -136,9 +136,13 @@ impl Pve {
     /// without the agent, or with it stopped, simply has no answer.
     fn ask_agents(&self, vmids: &[u64], command: &str) -> Vec<(u64, Value)> {
         let node = self.node.as_deref().unwrap_or_default();
+        // TrueNAS's own agent gives its card everything, address and disks
+        // included, so its guest agent is left alone.
+        let own_agent = |vmid: u64| self.config.nas_agent_configured() && self.config.view_for(vmid) == View::Nas;
         thread::scope(|scope| {
             let calls: Vec<_> = vmids
                 .iter()
+                .filter(|&&vmid| !own_agent(vmid))
                 .filter_map(|&vmid| {
                     let path = format!("/nodes/{node}/qemu/{vmid}/agent/{command}");
                     // A thread the system will not give is that guest's
