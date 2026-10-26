@@ -13,6 +13,10 @@ Explicit design constraints, in priority order:
 4. Read-only credentials only. No root, no write-capable tokens.
 5. One agent is permitted, on `ml60`, because its GPU is PCIe-passthrough and
    therefore invisible to the hypervisor.
+   *Update 2026-10-26:* a second, on the router (`router/`), installed with
+   Frank's go-ahead: Asuswrt-Merlin has only its admin account, so the router
+   serves its own counters rather than the dashboard holding that login. It
+   reads only, logs nothing and writes nothing to flash.
 
 ## 2. Architecture
 

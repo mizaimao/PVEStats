@@ -24,9 +24,9 @@ use crate::state::Source;
 pub const PVE_INTERVAL: f64 = 10.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
 pub const TRUENAS_INTERVAL: f64 = 5.0;
-/// The router's agent answers from kernel counters for well under a
-/// millisecond of its CPU.
-pub const ROUTER_INTERVAL: f64 = 2.0;
+/// The router's agent answers from kernel counters: measured on the router,
+/// polling it every second costs 0.05% of its CPU.
+pub const ROUTER_INTERVAL: f64 = 1.0;
 /// Open-Meteo refreshes its forecast hourly; every 15 minutes is plenty.
 pub const WEATHER_INTERVAL: f64 = 900.0;
 
