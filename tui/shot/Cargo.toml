@@ -1,0 +1,11 @@
+[package]
+name = "pvestats-shot"
+version = "0.1.0"
+edition = "2021"
+description = "Screenshot of a wlroots compositor's first output, as PNG, and its seat's capabilities. For checking the dashboard kiosk's screen."
+publish = false
+
+[dependencies]
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+png = "0.17"
