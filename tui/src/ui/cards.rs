@@ -520,96 +520,66 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
 
 // --------------------------------------------------------------- guests
 
-/// How much a guest's card holds, from most to least.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Size {
-    /// Address and uptime, CPU, memory, traffic, disk: five lines.
-    Full,
-    /// CPU and memory, then a line of whatever fits: traffic, disk, uptime.
-    Compact,
-    /// CPU and memory, then traffic and disk I/O on a line each.
-    Small,
-    /// CPU and memory only.
-    Tiny,
-}
-
-/// One small card per guest, in one of three sizes.
-pub fn basic(look: &Look, slot: &Slot, status: &Status, size: Size) -> Card {
+/// One guest's card, holding as many lines as its box has rows, most
+/// telling first: CPU, memory, network, disk I/O, disk usage, then address
+/// and uptime. A wide card puts network and I/O on one line, with memory in
+/// GiB.
+pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16) -> Card {
     let g = slot.guest;
+    let (muted, ink) = (style(look.p.muted), style(look.p.ink));
     let cpu = g.and_then(|g| g.cpu_pct);
     let used = g.and_then(|g| ratio(g.mem, g.maxmem));
-    let (muted, ink) = (style(look.p.muted), style(look.p.ink));
-    let bars = || {
-        Part::Flow(
-            16,
-            vec![
-                meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
-                meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4),
+    let wide = width.saturating_sub(4) >= 34;
+    let rate = |v: Option<f64>| Span::styled(fmt::rate(v), ink);
+    let mut lines = vec![meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4)];
+    if wide {
+        lines.push(meter(look, "Mem", used, mem_text(g.and_then(|g| g.mem), g.and_then(|g| g.maxmem)), 0));
+        lines.push(io_line(look, g, true));
+        lines.push(disk_line(look, g));
+        lines.push(guest_sub(look, g));
+    } else {
+        lines.push(meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4));
+        lines.push(Part::Text(Line::from(vec![
+            Span::styled("net ↓", muted),
+            rate(g.and_then(|g| g.net_in_bps)),
+            Span::styled(" ↑", muted),
+            rate(g.and_then(|g| g.net_out_bps)),
+        ])));
+        // Passed-through storage reads near zero however busy it is.
+        lines.push(Part::Text(Line::from(match g.filter(|g| g.disk_io_visible) {
+            Some(g) => vec![
+                Span::styled("io  r", muted),
+                rate(g.disk_read_bps),
+                Span::styled(" w", muted),
+                rate(g.disk_write_bps),
             ],
-        )
-    };
-    let body = match size {
-        // Two bars rather than arcs: aligned baselines make the grid
-        // scannable, and the two metrics read the same way.
-        Size::Full => vec![
-            guest_sub(look, g),
-            meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
-            meter(look, "Mem", used, mem_text(g.and_then(|g| g.mem), g.and_then(|g| g.maxmem)), 0),
-            io_line(look, g, true),
-            disk_line(look, g),
-        ],
-        Size::Compact => {
-            let disk = g
-                .and_then(|g| g.filesystem.as_ref())
-                .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
-            let address = g.and_then(|g| g.addresses.first().cloned()).unwrap_or_default();
-            vec![
-                bars(),
-                // Most telling first; what does not fit the line is left off.
-                Part::OneLine(vec![
-                    Line::from(vec![
-                        Span::styled("↓", muted),
-                        Span::styled(fmt::rate(g.and_then(|g| g.net_in_bps)), ink),
-                        Span::styled(" ↑", muted),
-                        Span::styled(fmt::rate(g.and_then(|g| g.net_out_bps)), ink),
-                    ]),
-                    chip(look, "disk", disk),
-                    chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime))),
-                    Line::styled(address, style(look.p.ink2)),
-                ]),
-            ]
+            None => vec![Span::styled("io  –", muted)],
+        })));
+        let disk = g
+            .and_then(|g| g.filesystem.as_ref())
+            .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
+        lines.push(Part::Text(chip(look, "disk", disk)));
+        if let Some(address) = g.and_then(|g| g.addresses.first()) {
+            lines.push(Part::Text(Line::styled(address.clone(), style(look.p.ink2))));
         }
-        Size::Small => {
-            let rate = |v: Option<f64>| Span::styled(fmt::rate(v), ink);
-            // Passed-through storage reads near zero however busy it is.
-            let io = match g.filter(|g| g.disk_io_visible) {
-                Some(g) => vec![
-                    Span::styled("io  r", muted),
-                    rate(g.disk_read_bps),
-                    Span::styled(" w", muted),
-                    rate(g.disk_write_bps),
-                ],
-                None => vec![Span::styled("io  –", muted)],
-            };
-            vec![
-                bars(),
-                Part::Text(Line::from(vec![
-                    Span::styled("net ↓", muted),
-                    rate(g.and_then(|g| g.net_in_bps)),
-                    Span::styled(" ↑", muted),
-                    rate(g.and_then(|g| g.net_out_bps)),
-                ])),
-                Part::Text(Line::from(io)),
-            ]
-        }
-        Size::Tiny => vec![bars()],
-    };
+        lines.push(Part::Text(chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime)))));
+    }
+    lines.truncate(height.saturating_sub(2) as usize);
     Card {
         title: slot.name.clone(),
         right: slot.vmid.to_string(),
         stale: !status.ok,
         error: status.error.clone(),
-        body,
+        body: lines,
+    }
+}
+
+/// Lines a guest card of this width has to show.
+pub fn guest_lines(width: u16, guest: Option<&Guest>) -> u16 {
+    if width.saturating_sub(4) >= 34 {
+        5
+    } else {
+        6 + u16::from(guest.is_some_and(|g| !g.addresses.is_empty()))
     }
 }
 

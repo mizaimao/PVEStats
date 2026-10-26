@@ -82,8 +82,6 @@ pub enum Part {
     Tile(String, Line<'static>),
     /// Short lines set side by side, wrapped onto as many rows as needed.
     Chips(Vec<Line<'static>>),
-    /// The same on one row, keeping only those that fit it.
-    OneLine(Vec<Line<'static>>),
     Table(Table),
     /// Children side by side: (fixed width or 0 for a share of the rest).
     Row(Vec<(u16, Part)>),
@@ -101,7 +99,7 @@ impl Part {
     /// Rows needed at this width, before any share of spare rows.
     pub fn height(&self, width: u16) -> u16 {
         match self {
-            Part::Gap | Part::Text(_) | Part::Meter(_) | Part::OneLine(_) => 1,
+            Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
             Part::Chart(c) => c.min_rows,
             Part::Spark(s) => s.rows,
             Part::Big(b) => b.height(),
@@ -161,11 +159,6 @@ impl Part {
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
                 pen.line(area, area.x, area.y + 1, value);
-            }
-            Part::OneLine(chips) => {
-                if let Some(line) = chip_lines(chips, area.width).into_iter().next() {
-                    pen.line(area, area.x, area.y, &line);
-                }
             }
             Part::Chips(chips) => {
                 for (i, line) in chip_lines(chips, area.width).iter().enumerate() {
