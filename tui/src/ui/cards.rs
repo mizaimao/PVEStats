@@ -643,7 +643,8 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
         rows: 4,
     });
 
-    let rate = |v: Option<f64>| Line::styled(fmt::mbit(v), style(p.ink));
+    // With their units, in the size that suits: 12 kbit/s, 3.2 Mbit/s.
+    let rate = |v: Option<f64>| Line::styled(v.map_or(fmt::DASH.to_string(), fmt::bits_auto), style(p.ink));
     // The LAN ports only: the port the internet comes in on carries every
     // download in and would count it again as wired traffic.
     let lan: Vec<_> = d.ports.iter().filter(|port| !port.wan).collect();
@@ -666,10 +667,10 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
     let links = Part::Table(Table {
         caption: None,
         cols: vec![
-            Col { title: "Link · Mbit/s", width: 0, right: false, tint: None },
+            Col { title: "Link", width: 0, right: false, tint: None },
             Col { title: "Devices", width: 9, right: true, tint: None },
-            Col { title: "download", width: 9, right: true, tint: Some(0) },
-            Col { title: "upload", width: 9, right: true, tint: Some(1) },
+            Col { title: "download", width: 11, right: true, tint: Some(0) },
+            Col { title: "upload", width: 11, right: true, tint: Some(1) },
         ],
         rows,
         empty: "no links",
