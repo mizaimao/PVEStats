@@ -280,7 +280,31 @@ fn payload(s: &Shared) -> Value {
         (None, Some(e)) => Value::String(e),
         (None, None) => Value::String("no GPU reading yet".into()),
     };
-    json!({"gpu": gpu, "models": models, "can_unload": s.config.allow_unload, "error": error})
+    let ram = std::fs::read_to_string("/proc/meminfo").map_or(Value::Null, |t| meminfo(&t));
+    json!({"gpu": gpu, "models": models, "can_unload": s.config.allow_unload, "error": error, "ram": ram})
+}
+
+/// ml60's own memory, from /proc/meminfo, in bytes: the total; what is
+/// available to programs without swapping (free memory plus cache the
+/// kernel can drop); and the cache itself (buffers, page cache and
+/// reclaimable slab, as `free` counts buff/cache). PVE cannot tell cache
+/// from programs and counts both as used: 95% on ml60 when its programs use
+/// 12% and model files fill the rest as cache. Null if unreadable.
+fn meminfo(text: &str) -> Value {
+    let kib = |key: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(key))
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|k| k * 1024)
+    };
+    match (kib("MemTotal:"), kib("MemAvailable:")) {
+        (Some(total), Some(available)) => {
+            let cache: u64 = [kib("Buffers:"), kib("Cached:"), kib("SReclaimable:")].iter().flatten().sum();
+            json!({"total": total, "available": available, "cache": cache})
+        }
+        _ => Value::Null,
+    }
 }
 
 /// POST /unload, its checks in agent.py's order, then three of its own:
@@ -479,6 +503,10 @@ mod tests {
         assert_eq!(body["models"][0]["name"], "qwen3:32b");
         assert_eq!(body["models"][0]["context_length"], 8192);
         assert_eq!((body["can_unload"].as_bool(), body["error"].is_null()), (Some(true), true));
+        // The build machine's own memory, as ml60's will be.
+        let ram = &body["ram"];
+        assert!(ram["total"].as_u64().unwrap() >= ram["available"].as_u64().unwrap(), "{ram}");
+        assert!(ram["cache"].is_u64(), "{ram}");
         // Cached: more requests do not call Ollama again.
         for _ in 0..5 {
             ask(&addr, "GET / HTTP/1.1\r\n\r\n");
@@ -565,5 +593,24 @@ mod tests {
         // Once theirs time out, the agent answers again.
         thread::sleep(Duration::from_millis(2500));
         assert_eq!(ask(&addr, "GET / HTTP/1.1\r\n\r\n").0, 200);
+    }
+}
+
+#[cfg(test)]
+mod meminfo_tests {
+    use super::*;
+
+    #[test]
+    fn memory_as_free_counts_it() {
+        // ml60's own figures on 2026-10-26: 64 GiB, 8 GB used by programs,
+        // 58.5 GB of cache.
+        let text = "MemTotal:       65782392 kB\nMemFree:         1355540 kB\nMemAvailable:   57908632 kB\n\
+                    Buffers:          157140 kB\nCached:         55369100 kB\nSwapCached:       1234 kB\n\
+                    SReclaimable:    1636588 kB\n";
+        let ram = meminfo(text);
+        assert_eq!(ram["total"], 65_782_392u64 * 1024);
+        assert_eq!(ram["available"], 57_908_632u64 * 1024);
+        assert_eq!(ram["cache"], (157_140u64 + 55_369_100 + 1_636_588) * 1024);
+        assert_eq!(meminfo("MemTotal: 1 kB\n"), Value::Null);
     }
 }
