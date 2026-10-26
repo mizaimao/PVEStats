@@ -19,15 +19,15 @@ pub struct Agent {
     last: Option<Counters>,
 }
 
-/// ml60's CPU jiffies (busy, total) and its network bytes (in, out), and
-/// when they were read.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// ml60's counters at one reading: CPU jiffies (busy, total) and its network
+/// interface with bytes in and out, each when it could be read; ml60's own
+/// uptime then, and the dashboard's clock() when the reply came.
+#[derive(Clone, Debug, PartialEq)]
 struct Counters {
     at: f64,
-    busy: f64,
-    total: f64,
-    rx: f64,
-    tx: f64,
+    uptime: Option<f64>,
+    cpu: Option<(f64, f64)>,
+    net: Option<(String, f64, f64)>,
 }
 
 impl Agent {
@@ -145,12 +145,14 @@ impl Agent {
         let net = h.get("net").cloned().unwrap_or_default();
         let disk = h.get("disk").cloned().unwrap_or_default();
         let now = clock();
-        let counters = match (num(&cpu, "busy"), num(&cpu, "total"), num(&net, "rx"), num(&net, "tx")) {
-            (Some(busy), Some(total), Some(rx), Some(tx)) => Some(Counters { at: now, busy, total, rx, tx }),
-            _ => None,
+        let counters = Counters {
+            at: now,
+            uptime: num(h, "uptime"),
+            cpu: num(&cpu, "busy").zip(num(&cpu, "total")),
+            net: text(&net, "iface").zip(num(&net, "rx")).zip(num(&net, "tx")).map(|((i, rx), tx)| (i.to_string(), rx, tx)),
         };
-        let (cpu_pct, net_in_bps, net_out_bps) = rates(self.last, counters);
-        self.last = counters;
+        let (cpu_pct, net_in_bps, net_out_bps) = rates(self.last.as_ref(), &counters);
+        self.last = Some(counters);
         Some(Inside {
             cpu_pct,
             net_in_bps,
@@ -165,14 +167,29 @@ impl Agent {
 }
 
 /// CPU % of all cores, and bytes a second in and out, from one reading to
-/// the next. None for the first, and for a counter that went backwards (ml60
-/// rebooted, or its interface was replaced).
-fn rates(last: Option<Counters>, now: Option<Counters>) -> (Option<f64>, Option<f64>, Option<f64>) {
-    let (Some(a), Some(b)) = (last, now) else { return (None, None, None) };
-    let seconds = b.at - a.at;
-    let cpu = (b.total > a.total && b.busy >= a.busy).then(|| ((b.busy - a.busy) / (b.total - a.total) * 100.0).clamp(0.0, 100.0));
-    let rate = |x: f64, y: f64| (seconds > 0.0 && y >= x).then(|| (y - x) / seconds);
-    (cpu, rate(a.rx, b.rx), rate(a.tx, b.tx))
+/// the next, each on its own: None for the first reading, for one missing
+/// either side, and for a counter that went backwards (ml60 rebooted) or an
+/// interface that changed.
+fn rates(last: Option<&Counters>, now: &Counters) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let Some(a) = last else { return (None, None, None) };
+    let cpu = match (a.cpu, now.cpu) {
+        (Some((b0, t0)), Some((b1, t1))) if t1 > t0 && b1 >= b0 => Some(((b1 - b0) / (t1 - t0) * 100.0).clamp(0.0, 100.0)),
+        _ => None,
+    };
+    // The time between the readings by ml60's own clock where both carry it,
+    // so a slow reply does not skew the rates; else as the replies came.
+    let seconds = match (a.uptime, now.uptime) {
+        (Some(u0), Some(u1)) if u1 > u0 => u1 - u0,
+        _ => now.at - a.at,
+    };
+    let (rx, tx) = match (&a.net, &now.net) {
+        (Some((i0, r0, t0)), Some((i1, r1, t1))) if i0 == i1 && seconds > 0.0 => {
+            let rate = |x: f64, y: f64| (y >= x).then(|| (y - x) / seconds);
+            (rate(*r0, *r1), rate(*t0, *t1))
+        }
+        _ => (None, None),
+    };
+    (cpu, rx, tx)
 }
 
 /// ml60's own memory, from inside it: an agent from before it was added
@@ -321,13 +338,27 @@ mod tests {
 
     #[test]
     fn rates_between_readings() {
-        let a = Counters { at: 10.0, busy: 100.0, total: 1000.0, rx: 5000.0, tx: 100.0 };
-        let b = Counters { at: 11.0, busy: 150.0, total: 1100.0, rx: 7000.0, tx: 100.0 };
-        assert_eq!(rates(Some(a), Some(b)), (Some(50.0), Some(2000.0), Some(0.0)));
-        assert_eq!(rates(None, Some(b)), (None, None, None));
+        let reading = |at: f64, uptime: f64, busy: f64, total: f64, iface: &str, rx: f64| Counters {
+            at,
+            uptime: Some(uptime),
+            cpu: Some((busy, total)),
+            net: Some((iface.to_string(), rx, 100.0)),
+        };
+        let a = reading(10.0, 500.0, 100.0, 1000.0, "ens18", 5000.0);
+        // The reply came 1.8 s later, but ml60 read it 2 s on: its clock wins.
+        let b = reading(11.8, 502.0, 150.0, 1100.0, "ens18", 9000.0);
+        assert_eq!(rates(Some(&a), &b), (Some(50.0), Some(2000.0), Some(0.0)));
+        assert_eq!(rates(None, &b), (None, None, None));
+        // CPU without network, and the other way round.
+        let no_net = Counters { net: None, ..b.clone() };
+        assert_eq!(rates(Some(&a), &no_net), (Some(50.0), None, None));
+        let no_cpu = Counters { cpu: None, ..b.clone() };
+        assert_eq!(rates(Some(&a), &no_cpu), (None, Some(2000.0), Some(0.0)));
+        // Another interface: no rate rather than a spike.
+        assert_eq!(rates(Some(&a), &reading(11.8, 502.0, 150.0, 1100.0, "ens19", 9000.0)).1, None);
         // ml60 rebooted: every counter went back.
-        let c = Counters { at: 12.0, busy: 5.0, total: 50.0, rx: 10.0, tx: 1.0 };
-        assert_eq!(rates(Some(b), Some(c)), (None, None, None));
+        let c = reading(12.0, 3.0, 5.0, 50.0, "ens18", 10.0);
+        assert_eq!(rates(Some(&b), &c), (None, None, Some(0.0)));
     }
 
     #[test]

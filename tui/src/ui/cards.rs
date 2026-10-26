@@ -340,20 +340,19 @@ pub fn gpu(
         .and_then(|d| d.inside.as_ref())
         .filter(|i| clock() - i.at <= agent.interval * 3.0);
     let pve_ink = style(if pve.ok || inside.is_some() { p.ink } else { p.muted });
-    let (net_in, net_out) = match inside {
-        Some(i) => (i.net_in_bps, i.net_out_bps),
-        None => (guest.and_then(|g| g.net_in_bps), guest.and_then(|g| g.net_out_bps)),
-    };
+    // Each figure from inside where the agent has it, else PVE's (the first
+    // second, before there is a rate, or a part the agent could not read).
+    let net_in = inside.and_then(|i| i.net_in_bps).or_else(|| guest.and_then(|g| g.net_in_bps));
+    let net_out = inside.and_then(|i| i.net_out_bps).or_else(|| guest.and_then(|g| g.net_out_bps));
     let net = Line::from(vec![
         Span::styled("net ↓", style(p.muted)),
         Span::styled(fixed_rate(net_in, 5), pve_ink),
         Span::styled(" ↑", style(p.muted)),
         Span::styled(fixed_rate(net_out, 5), pve_ink),
     ]);
-    let disk_ratio = match inside {
-        Some(i) => ratio(i.disk_used, i.disk_total),
-        None => guest.and_then(|g| g.filesystem.as_ref()).and_then(|fs| ratio(fs.used, Some(fs.total))),
-    };
+    let disk_ratio = inside
+        .and_then(|i| ratio(i.disk_used, i.disk_total))
+        .or_else(|| guest.and_then(|g| g.filesystem.as_ref()).and_then(|fs| ratio(fs.used, Some(fs.total))));
     let disk = pad(fmt::pct(disk_ratio.map(|r| r * 100.0)), 4);
     // ml60's memory as ml60 sees it, where its agent says: PVE counts the
     // disk cache as used, and on ml60, with model files read into cache,
@@ -460,7 +459,13 @@ pub fn gpu(
         body: vec![
             // Address and uptime from inside ml60 too, while its agent says.
             match inside {
-                Some(i) => sub(look, vec![i.ip.clone().unwrap_or_default(), format!("up {}", fmt::uptime(i.uptime))]),
+                Some(i) => sub(
+                    look,
+                    vec![
+                        i.ip.clone().or_else(|| guest.and_then(|g| g.addresses.first().cloned())).unwrap_or_default(),
+                        format!("up {}", fmt::uptime(i.uptime.or_else(|| guest.and_then(|g| g.uptime)))),
+                    ],
+                ),
                 None => guest_sub(look, guest),
             },
             Part::Gap,
