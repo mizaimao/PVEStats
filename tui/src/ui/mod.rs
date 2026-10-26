@@ -133,7 +133,18 @@ impl Screen {
         let names: Vec<&str> = theme::names().collect();
         let theme_now = self.tour.as_ref().map(|t| names[t.index % names.len()]);
         let host_card = match data.as_ref() {
-            Some(d) => cards::host(look, &d.node, history, &sp),
+            Some(d) => {
+                // The host's figures are the agent's while it answers. After it
+                // stops, PVE's are greyed while they are older than two of its
+                // polls: the status it reused can be ten minutes old.
+                let old = !live && d.node.status_at.is_some_and(|t| clock() - t > pve.interval * 2.0);
+                let status = match (live, old) {
+                    (true, _) => sh.clone(),
+                    (false, true) => Status { ok: false, error: None, ..sp.clone() },
+                    (false, false) => sp.clone(),
+                };
+                cards::host(look, &d.node, history, &status)
+            }
             None => cards::pve_note(look, &sp),
         };
         let mut sources = vec![("pve", &sp)];
@@ -153,7 +164,13 @@ impl Screen {
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
         nas_cards.extend(config.router_shown().then(|| cards::router(look, &router, &sr)));
         let basic: Vec<&Slot> = of(View::Basic).collect();
-        let guests = Guests { slots: &basic, status: &sp, pve: history };
+        // Guest cards grey with the source their live figures come from.
+        let guests = Guests {
+            slots: &basic,
+            status: if live { &sh } else { &sp },
+            pve: &*pve,
+            host: live.then_some(()).and(host_agent.data.as_ref()).map(|d| (&*host_agent as &dyn History, d)),
+        };
         let tour = self.tour.as_ref().map(|t| cards::tour(look, &names, t.index % names.len(), t.next_in));
 
         if self.focus && !gpu_cards.is_empty() {
@@ -243,8 +260,12 @@ impl Screen {
 struct Guests<'a> {
     slots: &'a [&'a Slot<'a>],
     status: &'a Status,
-    /// For each guest's CPU history: PVE's, or the host agent's while live.
+    /// PVE's history, for each guest's CPU.
     pve: &'a dyn History,
+    /// The host agent's history and figures while it answers: its CPU
+    /// history for the guests it reports (VMs), PVE's for any other
+    /// (containers, which it does not read).
+    host: Option<(&'a dyn History, &'a HostData)>,
 }
 
 /// Narrowest a guest card may be: room for "CPU ■■■ 12%".
@@ -359,7 +380,11 @@ impl Guests<'_> {
             let mut x = area.x;
             for (i, slot) in row.iter().enumerate() {
                 let w = width(i);
-                cards::guest(pen.look, slot, self.status, self.pve, chart, w, h)
+                let history = match self.host {
+                    Some((history, data)) if data.guests.contains_key(&slot.vmid) => history,
+                    _ => self.pve,
+                };
+                cards::guest(pen.look, slot, self.status, history, chart, w, h)
                     .render(pen, Rect { x, y, width: w, height: h });
                 x += w + 1;
             }
@@ -578,7 +603,7 @@ mod tests {
         let refs: Vec<&Slot> = slots.iter().collect();
         let status = Status { ok: true, error: None, age: None, interval: 10.0, stale: false };
         let pve: crate::state::Source<PveData> = crate::state::Source::new(10.0, 600.0);
-        let g = Guests { slots: &refs, status: &status, pve: &pve };
+        let g = Guests { slots: &refs, status: &status, pve: &pve, host: None };
         // 57 x 12: two rows of six, three cards and then two.
         assert_eq!(g.rows(57, 12), Some(2));
         let rows: Vec<Vec<u64>> = g.arrange(2).iter().map(|r| r.iter().map(|s| s.vmid).collect()).collect();

@@ -58,8 +58,16 @@ fn main() {
     match args.as_slice() {
         [flag] if flag == "--once" => print!("{}", json()),
         [flag, addr] if flag == "--listen" => {
-            let Ok(addr) = addr.parse::<SocketAddr>() else { exit(2) };
-            let Ok(listener) = TcpListener::bind(addr) else { exit(1) };
+            // A line each for the journal, which otherwise shows only the
+            // exit status.
+            let Ok(addr) = addr.parse::<SocketAddr>() else {
+                eprintln!("pvestats-pve: not an address and port: {addr}");
+                exit(2);
+            };
+            let listener = TcpListener::bind(addr).unwrap_or_else(|e| {
+                eprintln!("pvestats-pve: cannot listen on {addr}: {e}");
+                exit(1);
+            });
             serve(&listener);
         }
         _ => {

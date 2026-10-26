@@ -11,7 +11,7 @@ use super::{lock, Fs, Guest, Node, PveData, PVE_TIMEOUT};
 use crate::config::Config;
 use crate::json::{int, list, num, text, truthy};
 use crate::net;
-use crate::state::{RateTracker, Source};
+use crate::state::{clock, RateTracker, Source};
 
 /// Guest addresses barely change, and each lookup is a separate API call per
 /// guest. So they are fetched once at startup and then only when a guest
@@ -83,8 +83,9 @@ pub struct Pve {
     status_every: u64,
     /// Whether the host agent is answering now.
     host_live: Box<dyn Fn() -> bool + Send + Sync>,
-    /// The last node status, reused while the host agent answers.
-    last_status: Option<Value>,
+    /// The last node status, reused while the host agent answers, and when
+    /// it was read.
+    last_status: Option<(Value, f64)>,
 }
 
 impl Pve {
@@ -221,12 +222,13 @@ impl Pve {
         // status's, which is then asked for only every STATUS_WITH_HOST_SECONDS
         // (for the version and thread count): one request a poll, not two.
         let reuse = (self.host_live)() && self.polls % self.status_every != 0;
-        let status = match self.last_status.clone().filter(|_| reuse) {
-            Some(status) => status,
+        let (status, status_at, reused) = match self.last_status.clone().filter(|_| reuse) {
+            Some((status, at)) => (status, at, true),
             None => {
                 let status = self.get(&format!("/nodes/{node}/status"), started)?;
-                self.last_status = Some(status.clone());
-                status
+                let at = clock();
+                self.last_status = Some((status.clone(), at));
+                (status, at, false)
             }
         };
         let resources = resources.as_array().map_or(&[][..], Vec::as_slice);
@@ -394,18 +396,21 @@ impl Pve {
             cpus: int(&cpuinfo, "cpus"),
             guests_running: running.len(),
             guests_total: resources.iter().filter(|g| !truthy(g.get("template"))).count(),
+            status_at: Some(status_at),
         };
 
         let mut source = lock(source);
         for (key, value) in samples {
             source.push(&key, value);
         }
-        source.push("node.cpu", node.cpu_pct);
+        // A reused status is no new reading: a gap in PVE's charts, not its
+        // old figures again (the host agent's charts show the host then).
         let mem_pct = match (node.mem, node.maxmem) {
             (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
             _ => None,
         };
-        source.push("node.mem_pct", mem_pct);
+        source.push("node.cpu", node.cpu_pct.filter(|_| !reused));
+        source.push("node.mem_pct", mem_pct.filter(|_| !reused));
         source.succeed(PveData { node, guests });
         Ok(())
     }
