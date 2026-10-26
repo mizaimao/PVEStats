@@ -74,8 +74,8 @@ pub enum Part {
     Text(Line<'static>),
     Meter(Meter),
     Chart(Chart),
-    /// A label, a short graph and the latest value, btop's per-core style.
-    Spark(Spark),
+    /// Two graphs on one axis, one up and one down, btop's network style.
+    Mirror(Mirror),
     /// A value in big digits.
     Big(Big),
     /// A muted label over its value.
@@ -101,7 +101,7 @@ impl Part {
         match self {
             Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
             Part::Chart(c) => c.min_rows,
-            Part::Spark(s) => s.rows,
+            Part::Mirror(m) => m.rows,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
@@ -154,7 +154,7 @@ impl Part {
             }
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
-            Part::Spark(s) => s.render(pen, area),
+            Part::Mirror(m) => m.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
@@ -426,7 +426,7 @@ impl Chart {
             }
             pen.cell(area, area.x + label_w, y, if label.is_some() { "┤" } else { "│" }, grid);
         }
-        plot(pen, plot_area, &self.traces, self.capacity, top);
+        plot(pen, plot_area, &self.traces, self.capacity, top, false);
 
         // Bottom row: the span on the left, the legend, "now" on the right.
         let y = area.bottom() - 1;
@@ -452,72 +452,86 @@ impl Chart {
     }
 }
 
-/// btop's per-core row: a label, a short graph of the recent past scaled to
-/// its own peak, and the latest value. With two rows or more, the peak is
-/// printed under the value, so the graph's height can be read.
-pub struct Spark {
-    pub label: Line<'static>,
+/// btop's network graph: one half rising from a shared axis (receive), the
+/// other hanging below it (send), each scaled to its own peak, with the
+/// speed now and the peak beside each half, outermost first.
+pub struct Mirror {
+    pub up: Trace,
+    pub down: Trace,
+    pub up_label: Line<'static>,
+    pub down_label: Line<'static>,
+    pub up_value: String,
+    pub down_value: String,
     pub label_w: u16,
-    pub trace: Trace,
-    pub capacity: usize,
-    pub floor: f64,
-    pub value: String,
-    /// Formats the peak for the second row.
-    pub peak: fn(f64) -> String,
     pub value_w: u16,
+    pub capacity: usize,
+    /// Neither half's scale goes below this, so an idle link stays flat.
+    pub floor: f64,
+    /// Formats the peaks.
+    pub format: fn(f64) -> String,
+    /// Both halves together.
     pub rows: u16,
 }
 
-impl Spark {
+impl Mirror {
     fn render(&self, pen: &mut Pen, area: Rect) {
         let p = pen.look.p;
-        pen.line(area, area.x, area.y, &self.label);
+        let half = area.height / 2;
+        let (top, bottom) = (area.y, area.bottom().saturating_sub(1));
         let value_x = area.right().saturating_sub(self.value_w);
-        let value = crate::format::right(&self.value, self.value_w as usize);
-        pen.text(area, value_x, area.y, &value, Style::default().fg(p.ink).add_modifier(Modifier::BOLD));
-        let peak = self.trace.peak();
-        if area.height > 1 {
-            let text = format!("peak {}", (self.peak)(peak));
-            let text = crate::format::right(&text, self.value_w as usize);
-            pen.text(area, value_x, area.y + 1, &text, Style::default().fg(p.muted));
+        let bold = Style::default().fg(p.ink).add_modifier(Modifier::BOLD);
+        let muted = Style::default().fg(p.muted);
+        let column = |s: String| crate::format::right(&s, self.value_w as usize);
+        let (up_peak, down_peak) = (self.up.peak(), self.down.peak());
+
+        pen.line(area, area.x, top, &self.up_label);
+        pen.line(area, area.x, bottom, &self.down_label);
+        pen.text(area, value_x, top, &column(self.up_value.clone()), bold);
+        pen.text(area, value_x, bottom, &column(self.down_value.clone()), bold);
+        if half >= 2 {
+            pen.text(area, value_x, top + 1, &column(format!("peak {}", (self.format)(up_peak))), muted);
+            pen.text(area, value_x, bottom - 1, &column(format!("peak {}", (self.format)(down_peak))), muted);
         }
-        let graph = Rect {
-            x: area.x + self.label_w,
-            width: area.width.saturating_sub(self.label_w + self.value_w + 1),
-            ..area
-        };
-        plot(pen, graph, std::slice::from_ref(&self.trace), self.capacity, nice(peak.max(self.floor)));
+
+        let x = area.x + self.label_w;
+        let width = area.width.saturating_sub(self.label_w + self.value_w + 1);
+        let upper = Rect { x, y: top, width, height: half };
+        let lower = Rect { x, y: top + half, width, height: area.height - half };
+        plot(pen, upper, std::slice::from_ref(&self.up), self.capacity, nice(up_peak.max(self.floor)), false);
+        plot(pen, lower, std::slice::from_ref(&self.down), self.capacity, nice(down_peak.max(self.floor)), true);
     }
 }
 
 /// Draws traces into `area`: the first as a filled area, the rest as lines
-/// over it. Braille dots, two samples across and four levels up per cell,
-/// shaded from the foot up; on the console, whole cells and shades.
-fn plot(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64) {
+/// over it, rising from the foot, or with `down` hanging from the top.
+/// Braille dots, two samples across and four levels per cell, shaded from
+/// the axis out; on the console, whole cells and shades.
+fn plot(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool) {
     let area = area.intersection(pen.buf.area);
     if area.width == 0 || area.height == 0 || top <= 0.0 {
         return;
     }
     if pen.look.console_glyphs {
-        plot_cells(pen, area, traces, capacity, top);
+        plot_cells(pen, area, traces, capacity, top, down);
     } else {
-        plot_braille(pen, area, traces, capacity, top);
+        plot_braille(pen, area, traces, capacity, top, down);
     }
 }
 
 /// Braille dot bits, by side of the cell and by level from its foot.
 const DOTS: [[u8; 4]; 2] = [[0x40, 0x04, 0x02, 0x01], [0x80, 0x20, 0x10, 0x08]];
 
-fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64) {
+fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool) {
     let look = pen.look;
     let (w, rows) = (area.width as usize, area.height as usize);
     let (across, levels) = (w * 2, rows * 4);
-    // Per cell, counted from the bottom row: its dots, and the line series
-    // passing through it, if any.
+    // Per cell, counted from the axis: its dots, and the line series passing
+    // through it, if any. Levels count from the axis too.
     let mut dots = vec![0u8; w * rows];
     let mut line = vec![None; w * rows];
     let set = |dots: &mut [u8], sub: usize, level: usize| {
-        dots[(level / 4) * w + sub / 2] |= DOTS[sub % 2][level % 4];
+        let within = if down { 3 - level % 4 } else { level % 4 };
+        dots[(level / 4) * w + sub / 2] |= DOTS[sub % 2][within];
     };
     if let Some(first) = traces.first() {
         for sub in 0..across {
@@ -543,6 +557,7 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     let series = traces.first().map_or(0, |t| t.series);
     for row in 0..rows {
         let shade = look.ramp(series, row as f64 / (rows - 1).max(1) as f64);
+        let y = if down { area.y + row as u16 } else { area.bottom() - 1 - row as u16 };
         for x in 0..w {
             let bits = dots[row * w + x];
             if bits == 0 {
@@ -550,14 +565,15 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
             }
             let color = line[row * w + x].map_or(shade, |s| look.flat(s));
             let symbol = char::from_u32(0x2800 + bits as u32).unwrap_or(' ').to_string();
-            pen.cell(area, area.x + x as u16, area.bottom() - 1 - row as u16, &symbol, Style::default().fg(color));
+            pen.cell(area, area.x + x as u16, y, &symbol, Style::default().fg(color));
         }
     }
 }
 
-fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64) {
+fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool) {
     let look = pen.look;
     let rows = area.height;
+    let y_of = |level: u16| if down { area.y + level } else { area.bottom() - 1 - level };
     for c in 0..area.width {
         let x = area.x + c;
         let column = |t: &Trace| sample_at(&t.data, capacity, c as usize, area.width as usize);
@@ -565,7 +581,7 @@ fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top:
         if let Some(first) = traces.first() {
             if let Some(v) = column(first) {
                 filled = v / top * rows as f64;
-                area_column(pen, area, x, filled, look.flat(first.series));
+                area_column(pen, area, x, filled, look.flat(first.series), down);
             }
         }
         for trace in traces.iter().skip(1) {
@@ -575,7 +591,7 @@ fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top:
             if (level as f64) < filled.floor() {
                 style = style.bg(look.p.s1_under);
             }
-            pen.cell(area, x, area.bottom() - 1 - level, "─", style);
+            pen.cell(area, x, y_of(level), "─", style);
         }
     }
 }
@@ -600,20 +616,21 @@ fn sample_at(data: &[Option<f64>], capacity: usize, c: usize, width: usize) -> O
     data.len().checked_sub(back + 1).and_then(|i| data[i])
 }
 
-fn area_column(pen: &mut Pen, plot: Rect, x: u16, height: f64, color: Color) {
+fn area_column(pen: &mut Pen, plot: Rect, x: u16, height: f64, color: Color, down: bool) {
     const SHADES: [&str; 2] = ["░", "▒"];
     let style = Style::default().fg(color);
     let height = height.clamp(0.0, plot.height as f64);
     let full = height.floor() as u16;
+    let y_of = |level: u16| if down { plot.y + level } else { plot.bottom() - 1 - level };
     for r in 0..full {
-        pen.cell(plot, x, plot.bottom() - 1 - r, "█", style);
+        pen.cell(plot, x, y_of(r), "█", style);
     }
     if full < plot.height {
         let step = ((height - full as f64) * (SHADES.len() + 1) as f64).floor() as usize;
         // Any reading above zero shows, however small.
         let step = if step == 0 && full == 0 && height > 0.0 { 1 } else { step };
         if step > 0 {
-            pen.cell(plot, x, plot.bottom() - 1 - full, SHADES[step - 1], style);
+            pen.cell(plot, x, y_of(full), SHADES[step - 1], style);
         }
     }
 }
