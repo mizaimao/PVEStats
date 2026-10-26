@@ -166,7 +166,7 @@ fn seconds_until(timestamp: &str) -> Option<i64> {
 
 /// Ollama's timestamps carry nanoseconds and a local offset
 /// ("2026-10-25T14:03:12.123456789-07:00"). No offset reads as UTC.
-fn unix_seconds(ts: &str) -> Option<f64> {
+pub(crate) fn unix_seconds(ts: &str) -> Option<f64> {
     let field = |from: usize, to: usize| ts.get(from..to)?.parse::<i64>().ok();
     let b = ts.as_bytes();
     if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') {

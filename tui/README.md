@@ -38,12 +38,16 @@ override.
 
 A `name` in config.yaml titles a card in place of the VM's name in Proxmox.
 
-The right-hand column is a weather forecast from Open-Meteo (free, no key):
-the weather now, the next day hour by hour, temperature and the chance of
-rain over the coming days, and the week. Where it is for goes in .env, so it
-stays off GitHub: `WEATHER_PLACE` (a place name, looked up once) or
-`WEATHER_LATITUDE` and `WEATHER_LONGITUDE`; `WEATHER_UNITS=imperial` for
-°F, mph and inches. It refreshes every 15 minutes.
+The right-hand column is a weather forecast. In the United States it is the
+National Weather Service's own (api.weather.gov), with the latest reading
+from the nearest station for now; elsewhere Open-Meteo's. Both are free, with
+no key. Where it is for goes in .env, so it stays off GitHub: `WEATHER_PLACE`
+(a place name, looked up once) or `WEATHER_LATITUDE` and `WEATHER_LONGITUDE`;
+`WEATHER_UNITS=imperial` for °F, mph and inches. It refreshes every 15
+minutes. `tui: weather_layout` in config.yaml picks its layout: `a` (an
+hourly strip, a chart of the coming days, the week as a table), `b` (the hours
+a line each), `c` (hourly and three-hourly strips, the week as tiles with
+ASCII icons), or `tour` for each in turn.
 `tui: theme_tour: <seconds>` in config.yaml tours all twelve themes, naming
 each on screen, for picking one. `tui: screen_off: "03:00-05:00"` switches the
 display off for those hours every day, through `wlr-randr`, when it runs in
