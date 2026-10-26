@@ -118,6 +118,10 @@ pub struct Node {
     pub cpus: Option<u64>,
     pub guests_running: usize,
     pub guests_total: usize,
+    /// clock() when PVE's node status (CPU, memory, load, uptime) was read:
+    /// while the host agent answers it is read only every 10 minutes, so a
+    /// screen falling back to PVE's figures can tell they are old.
+    pub status_at: Option<f64>,
 }
 
 #[derive(Clone, Debug)]

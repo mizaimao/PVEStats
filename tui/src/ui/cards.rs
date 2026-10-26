@@ -789,8 +789,10 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
 /// uptime only on a wide card, beside the address, where it costs no row.
 /// A wide card puts network and I/O on one line; a roomy one
 /// gives memory and disk in GiB. With `chart` rows to spare, at least two,
-/// the CPU over the last few minutes sits under its meter, newest at the
-/// right: whether the guest has been busy, not only whether it is now.
+/// the CPU lately sits under its meter, newest at the right: whether the
+/// guest has been busy, not only whether it is now. A dot a sample: the
+/// last few minutes from PVE's 10 s, a minute or two from the host agent's
+/// 2 s.
 pub fn guest(
     look: &Look,
     slot: &Slot,
