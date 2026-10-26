@@ -152,7 +152,7 @@ impl Screen {
         if config.host_configured() {
             sources.push(("host", &sh));
         }
-        sources.extend([("agent", &sa), ("truenas", &sn)]);
+        sources.extend([("ml60", &sa), ("truenas", &sn)]);
         if config.router_shown() {
             sources.push(("router", &sr));
         }
@@ -457,11 +457,19 @@ fn with_status(look: &Look, sources: &[(&str, &Status)], theme_now: Option<&str>
     for (i, (name, status)) in sources.iter().enumerate() {
         let (color, age) = source_state(look, status);
         if i > 0 {
-            spans.push(Span::raw("   "));
+            spans.push(Span::raw("  "));
         }
         spans.push(Span::styled("● ", Style::default().fg(color)));
-        spans.push(Span::styled(format!("{name} "), Style::default().fg(p.ink2)));
-        spans.push(Span::styled(age, Style::default().fg(p.muted)));
+        // A source asked every 2 s or faster counts down only "1s" or "2s"
+        // while healthy: its dot says it all, and the line keeps room for
+        // five. When it fails, its age shows as for any other.
+        let healthy = status.ok && !status.stale;
+        if healthy && status.interval <= 2.0 {
+            spans.push(Span::styled(name.to_string(), Style::default().fg(p.ink2)));
+        } else {
+            spans.push(Span::styled(format!("{name} "), Style::default().fg(p.ink2)));
+            spans.push(Span::styled(age, Style::default().fg(p.muted)));
+        }
     }
     let clock = match theme_now {
         Some(theme) => format!("theme {theme} · {}", local_time()),
