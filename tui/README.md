@@ -88,7 +88,12 @@ To give tty1 its login prompt back:
     sudo systemctl disable --now pvestats-kiosk.service
     sudo systemctl enable --now getty@tty1.service
 
-cage draws a mouse pointer whenever the machine has a mouse or touchpad.
+cage draws a mouse pointer whenever the machine has a pointing device,
+and a keyboard with a scroll wheel counts as one. The kiosk service points
+cage and foot at `tui/cursor`, a theme whose every cursor is a single
+transparent pixel, so no pointer shows. The rule below also stops mice and
+touchpads from moving it:
+
 `90-pvestats-no-pointer.rules` makes libinput ignore both, so it never
 does; keyboards and the text consoles are unaffected:
 
