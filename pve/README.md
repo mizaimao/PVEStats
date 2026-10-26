@@ -58,6 +58,26 @@ The server is the router agent's (`router/agent`): one kept connection per
 client, at most 4 clients, answers at least 100 ms apart, idle connections
 closed after 30 s.
 
+## Measured against the API (2026-10-26)
+
+A test run on the host, as above, polled from the build machine over one
+kept connection each, as a dashboard polls:
+
+| | API (`cluster/resources` + `nodes/…/status`) | agent |
+|---|---|---|
+| host CPU per poll | 4.4 ms (2.2 ms a request) | 0.67 ms |
+| at one poll per 10 s, as now | 0.04% of one core | 0.007% |
+| at one poll a second | 0.44% of one core | 0.07% |
+| figures change | every 10 s (pvestatd) | at every poll |
+| memory | (pveproxy, running anyway) | 2.2 MB |
+
+Counted from the CPU time of pveproxy and pvedaemon (with their finished
+workers) less a baseline of the same length, and the agent's own. Both
+agreed on the figures: VM CPU within the noise of their different windows,
+network counters to the megabyte (the API up to 10 s behind), host memory
+exactly. On a 24-thread host both costs are negligible; the agent's gain is
+figures every second, not CPU.
+
 ## The answer
 
 ```
