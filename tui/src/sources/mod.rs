@@ -281,6 +281,9 @@ pub struct Day {
     /// Local, "2026-10-25T07:21".
     pub sunrise: String,
     pub sunset: String,
+    /// From Open-Meteo's longer outlook, past the days the forecaster
+    /// covers: less sure, and shown dimmer.
+    pub outlook: bool,
 }
 
 /// A weather alert in force for the place: an advisory, watch or warning.

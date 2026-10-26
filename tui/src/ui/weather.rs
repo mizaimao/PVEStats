@@ -156,27 +156,28 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
 
     let mut body = banner(look, &w.alerts);
     body.extend([now(look, w, units), sun(look, w, units), Part::Gap]);
+    // The forecaster's own days, without the longer outlook.
+    let week: Vec<Day> = w.days.iter().filter(|d| !d.outlook).cloned().collect();
     match layout {
         'b' => {
             // No gap after the list: with none below it, it runs down to the
             // week rather than leaving rows blank.
             body.push(Part::HourList(HourList { hours: w.hours.clone(), wind: units.1 }));
-            body.push(Part::Table(week_table(look, w, units)));
+            body.push(Part::Table(week_table(look, &week, units)));
         }
         'c' => {
             body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 1, skip: 0 }));
             body.push(Part::Gap);
             body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 3, skip: 12 }));
             body.push(Part::Gap);
-            body.push(Part::Week(WeekTiles { days: w.days.clone() }));
+            body.push(Part::Week(WeekTiles { days: week }));
         }
         _ => {
             // Every two hours from the next one: the next 22 hours in a row.
             body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 2, skip: 1 }));
             body.push(Part::Gap);
-            // A week at least; more days as the rows allow, where the
-            // forecast has them.
-            body.push(Part::Growing(week_table(look, w, units), 7));
+            // The week at least; the outlook's later days as rows allow.
+            body.push(Part::Growing(week_table(look, &w.days, units), week.len().max(1)));
         }
     }
     // While the layouts take turns, the title says which this is.
@@ -278,19 +279,24 @@ fn sun(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str)) -> Par
     Part::Text(Line::from(spans))
 }
 
-/// The week a line a day: the sky, high and low, the chance of rain, and
-/// the amount where the source gives one.
-fn week_table(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str)) -> Table {
+/// The days a line each: the sky, high and low, the chance of rain, and
+/// the amount where the source gives one. Days from the longer outlook are
+/// dimmer, with their date, since their weekdays come round again.
+fn week_table(look: &Look, days: &[Day], (rain_unit, ..): (&str, &str, &str)) -> Table {
     let p = look.p;
-    let amounts = w.days.iter().any(|d| d.rain.is_some());
-    let rows = w
-        .days
+    let amounts = days.iter().any(|d| d.rain.is_some());
+    let rows = days
         .iter()
         .enumerate()
         .map(|(i, d)| {
             let (_, symbol, color) = sky(look, d.code, true);
+            let name = match (i, d.outlook) {
+                (0, _) => "Today".to_string(),
+                (_, true) => format!("{} {}", weekday(&d.date), d.date.get(8..10).unwrap_or("").trim_start_matches('0')),
+                _ => weekday(&d.date).to_string(),
+            };
             let mut row = vec![
-                Line::styled(if i == 0 { "Today".to_string() } else { weekday(&d.date).to_string() }, style(p.ink)),
+                Line::styled(name, style(p.ink)),
                 Line::styled(symbol, style(color)),
                 Line::styled(words(look, &d.text, d.code, true), style(p.ink2)),
                 Line::from(vec![
@@ -303,11 +309,16 @@ fn week_table(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str))
             if amounts {
                 row.push(Line::styled(d.rain.map_or(fmt::DASH.into(), |r| format!("{r:.1} {rain_unit}")), style(p.ink2)));
             }
+            if d.outlook {
+                for span in row.iter_mut().flat_map(|line| line.spans.iter_mut()) {
+                    span.style = style(p.muted);
+                }
+            }
             row
         })
         .collect();
     let mut cols = vec![
-        Col { title: "Day", width: 5, right: false },
+        Col { title: "Day", width: 6, right: false },
         Col { title: "", width: 1, right: false },
         Col { title: "Sky", width: 0, right: false },
         Col { title: "High / low", width: 10, right: true },

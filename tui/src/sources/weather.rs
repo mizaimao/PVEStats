@@ -127,14 +127,24 @@ impl Weather {
                 // Alerts are worth having but not worth failing the poll over.
                 let url = format!("{NWS}/alerts/active?point={lat:.4},{lon:.4}&status=actual");
                 data.alerts = self.get(&url, started).map(|a| alerts(&a)).unwrap_or_default();
+                // The NWS stops at a week; Open-Meteo's outlook runs on past
+                // it, for rows that would otherwise stand empty. Nor is that
+                // worth failing the poll over.
+                let url = format!(
+                    "{OPEN_METEO}?latitude={lat}&longitude={lon}\
+                     &daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,\
+                     sunrise,sunset&timezone=auto&forecast_days=16{}",
+                    open_meteo_units(imperial)
+                );
+                if let Ok(body) = self.get(&url, started) {
+                    let last = data.days.last().map(|d| d.date.clone()).unwrap_or_default();
+                    let later = open_meteo_days(&body).into_iter().filter(|d| d.date > last);
+                    data.days.extend(later.map(|d| Day { outlook: true, ..d }));
+                }
                 data
             }
             Provider::OpenMeteo => {
-                let units = if imperial {
-                    "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
-                } else {
-                    ""
-                };
+                let units = open_meteo_units(imperial);
                 let url = format!(
                     "{OPEN_METEO}?latitude={lat}&longitude={lon}\
                      &current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,\
@@ -427,22 +437,37 @@ fn open_meteo(body: &Value, place: String, imperial: bool) -> Result<WeatherData
         })
         .collect();
 
-    let daily = body.get("daily").cloned().unwrap_or_default();
-    let days = (0..list(&daily, "time").len())
-        .map(|i| Day {
-            date: label(&daily, "time", i),
-            code: at(&daily, "weather_code", i).map(|c| c as u64),
-            text: None,
-            high: at(&daily, "temperature_2m_max", i),
-            low: at(&daily, "temperature_2m_min", i),
-            rain_chance: at(&daily, "precipitation_probability_max", i),
-            rain: at(&daily, "precipitation_sum", i),
-            sunrise: label(&daily, "sunrise", i),
-            sunset: label(&daily, "sunset", i),
-        })
-        .collect();
-
+    let days = open_meteo_days(body);
     Ok(WeatherData { place, imperial, source: "Open-Meteo", now, hours, days, alerts: Vec::new() })
+}
+
+/// The days in an Open-Meteo reply, today first.
+fn open_meteo_days(body: &Value) -> Vec<Day> {
+    let daily = body.get("daily").cloned().unwrap_or_default();
+    let at = |key: &str, i: usize| list(&daily, key).get(i).and_then(Value::as_f64);
+    let label = |key: &str, i: usize| list(&daily, key).get(i).and_then(Value::as_str).unwrap_or("").to_string();
+    (0..list(&daily, "time").len())
+        .map(|i| Day {
+            date: label("time", i),
+            code: at("weather_code", i).map(|c| c as u64),
+            text: None,
+            high: at("temperature_2m_max", i),
+            low: at("temperature_2m_min", i),
+            rain_chance: at("precipitation_probability_max", i),
+            rain: at("precipitation_sum", i),
+            sunrise: label("sunrise", i),
+            sunset: label("sunset", i),
+            outlook: false,
+        })
+        .collect()
+}
+
+fn open_meteo_units(imperial: bool) -> &'static str {
+    if imperial {
+        "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
+    } else {
+        ""
+    }
 }
 
 /// A place name for a URL query: letters and digits as they are, the rest
