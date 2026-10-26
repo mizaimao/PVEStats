@@ -1,7 +1,8 @@
 //! pvestats-agent: ml60's GPU and loaded-model agent for PVEStats (spec
-//! §3.2), in place of agent.py and with the same replies.
+//! §3.2), in place of agent.py and with the same replies, plus "ram".
 //!
-//! GET / answers with the GPU (NVML) and Ollama's loaded models as JSON;
+//! GET / answers with the GPU (NVML), Ollama's loaded models and ml60's
+//! own memory (/proc/meminfo) as JSON;
 //! POST /unload {"model": name} asks Ollama to drop a loaded model, the one
 //! write this project makes. Both are served on 127.0.0.1:9836, which Caddy
 //! publishes to the LAN with no auth.
@@ -603,10 +604,12 @@ mod meminfo_tests {
     #[test]
     fn memory_as_free_counts_it() {
         // ml60's own figures on 2026-10-26: 64 GiB, 8 GB used by programs,
-        // 58.5 GB of cache.
+        // 58.5 GB of cache. SwapCached and KReclaimable come first here,
+        // unlike the real file, so a key matched anywhere in a line would
+        // read them in place of Cached and SReclaimable.
         let text = "MemTotal:       65782392 kB\nMemFree:         1355540 kB\nMemAvailable:   57908632 kB\n\
-                    Buffers:          157140 kB\nCached:         55369100 kB\nSwapCached:       1234 kB\n\
-                    SReclaimable:    1636588 kB\n";
+                    Buffers:          157140 kB\nSwapCached:       1234 kB\nCached:         55369100 kB\n\
+                    KReclaimable:    1702124 kB\nSReclaimable:    1636588 kB\n";
         let ram = meminfo(text);
         assert_eq!(ram["total"], 65_782_392u64 * 1024);
         assert_eq!(ram["available"], 57_908_632u64 * 1024);

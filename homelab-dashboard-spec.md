@@ -151,6 +151,12 @@ Response shape:
 inside the agent so the dashboard makes one request instead of two.
 `size_vram` is bytes.
 
+*Update 2026-10-26:* the Rust agent adds `"ram": {"total": …, "available":
+…, "cache": …}`, ml60's memory in bytes from its own `/proc/meminfo`, or
+null. PVE's figure for a VM counts the guest's disk cache as used (95% on
+ml60 while its programs used 12%); used = total − available and cache =
+buffers + page cache + reclaimable slab, as `free` counts them.
+
 Agent requirements:
 - `pip install nvidia-ml-py` — the official binding. Not the abandoned `pynvml`
   package on PyPI.
@@ -216,7 +222,9 @@ CPU %, memory used/total, 1/5/15 load average, uptime, guest count
 
 Merged from two sources — PVE for CPU/RAM, the agent for everything else.
 
-- CPU % and RAM (PVE, 10s)
+- CPU % and RAM (PVE, 10s). *Update 2026-10-26:* the terminal dashboard
+  takes RAM from the agent's `ram` (1s) while it is fresh, with the cache
+  shown beside it, and PVE's figure otherwise.
 - GPU utilisation %, large and prominent (agent, 1s)
 - VRAM used / total, with a bar (agent, 1s)
 - Temperature, power draw vs limit, fan % (agent, 1s)

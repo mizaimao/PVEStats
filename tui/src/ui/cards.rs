@@ -9,7 +9,7 @@ use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
 use crate::sources::{AgentData, Guest, NasData, Nic, Node, PveData, RouterData};
-use crate::state::{Series, Source, Status};
+use crate::state::{clock, Series, Source, Status};
 
 /// One guest's place on screen. `guest` is None for the GPU and NAS cards
 /// until PVE first answers: they have sources of their own and must not
@@ -323,8 +323,12 @@ pub fn gpu(
         .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
     // ml60's memory as ml60 sees it, where its agent says: PVE counts the
     // disk cache as used, and on ml60, with model files read into cache,
-    // that read 95% while its programs used 12%.
-    let ram = data.and_then(|d| d.ram.as_ref()).filter(|r| status.ok && r.total > 0.0);
+    // that read 95% while its programs used 12%. The agent still sends it
+    // when NVML fails, so it is used while fresh, whatever the GPU's state;
+    // after two missed polls the card goes back to PVE's figure.
+    let ram = data
+        .and_then(|d| d.ram.as_ref())
+        .filter(|r| r.total > 0.0 && clock() - r.at <= agent.interval * 3.0);
     // Network and disk ride beside the PCIe link, on the GPU's own lines.
     let mut chips = vec![
         chip(look, "Temp", round(get(|g| g.temp), "°C")),
@@ -340,7 +344,11 @@ pub fn gpu(
     }
     let chips = Part::Chips(chips);
 
+    // Two small charts side by side, CPU and memory, a figure under each;
+    // PVE's are greyed while it is not answering.
+    let pve_dim = |part: Part| if pve.ok { part } else { Part::Dim(Box::new(part)) };
     let cpu = guest.and_then(|g| g.cpu_pct);
+    let cpu_chart = pve_dim(small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu))));
     let mem_chart = match ram {
         Some(r) => {
             let used = (r.total - r.available).max(0.0) / r.total * 100.0;
@@ -350,17 +358,10 @@ pub fn gpu(
         }
         None => {
             let mem = guest.and_then(|g| ratio(g.mem, g.maxmem)).map(|r| r * 100.0);
-            small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem)))
+            pve_dim(small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem))))
         }
     };
-    // Two small charts side by side, CPU and memory, a figure under each.
-    let mut pve_parts = Part::Row(vec![
-        (0, small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu)))),
-        (0, mem_chart),
-    ]);
-    if !pve.ok {
-        pve_parts = Part::Dim(Box::new(pve_parts));
-    }
+    let pve_parts = Part::Row(vec![(0, cpu_chart), (0, mem_chart)]);
 
     let models: Vec<Vec<Line>> = data
         .map(|d| d.models.as_slice())

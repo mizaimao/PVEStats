@@ -8,7 +8,7 @@ use serde_json::Value;
 use super::{lock, AgentData, Gpu, Model, Pcie, Proc, Ram, AGENT_TIMEOUT};
 use crate::json::{int, list, num, text};
 use crate::net;
-use crate::state::Source;
+use crate::state::{clock, Source};
 
 pub struct Agent {
     url: String,
@@ -53,11 +53,7 @@ impl Agent {
             })
             .collect();
 
-        // ml60's own memory, from inside it: an agent from before it was
-        // added sends none, and the card falls back to PVE's figure.
-        let ram = payload.get("ram").filter(|r| r.is_object()).and_then(|r| {
-            Some(Ram { total: num(r, "total")?, available: num(r, "available")?, cache: num(r, "cache").unwrap_or(0.0) })
-        });
+        let ram = ram(&payload);
         let ram_used = ram.as_ref().filter(|r| r.total > 0.0).map(|r| (r.total - r.available).max(0.0) / r.total * 100.0);
 
         let Some(gpu) = payload.get("gpu").filter(|g| g.is_object()) else {
@@ -119,6 +115,13 @@ impl Agent {
         source.succeed(AgentData { gpu: Some(gpu), models, ram });
         Ok(())
     }
+}
+
+/// ml60's own memory, from inside it: an agent from before it was added
+/// sends none, and the card falls back to PVE's figure.
+fn ram(payload: &Value) -> Option<Ram> {
+    let r = payload.get("ram").filter(|r| r.is_object())?;
+    Some(Ram { total: num(r, "total")?, available: num(r, "available")?, cache: num(r, "cache").unwrap_or(0.0), at: clock() })
 }
 
 /// Four made-up Ollama models (one spilled to the CPU, one in use, one kept
@@ -243,5 +246,18 @@ mod tests {
         assert_eq!(placement(Some(100.0), Some(64.0)), (Some("36%/64% CPU/GPU".into()), true));
         assert_eq!(placement(None, Some(1.0)), (None, false));
         assert_eq!(placement(Some(1.0), Some(2.0)), (None, false));
+    }
+
+    #[test]
+    fn memory() {
+        let r = ram(&serde_json::json!({"ram": {"total": 64, "available": 56, "cache": 57}})).unwrap();
+        assert_eq!((r.total, r.available, r.cache), (64.0, 56.0, 57.0));
+        assert!(clock() - r.at < 1.0);
+        // An older agent, one that could not read /proc/meminfo, and a
+        // reply missing what the figure needs.
+        assert!(ram(&serde_json::json!({"gpu": null})).is_none());
+        assert!(ram(&serde_json::json!({"ram": null})).is_none());
+        assert!(ram(&serde_json::json!({"ram": {"total": 64}})).is_none());
+        assert_eq!(ram(&serde_json::json!({"ram": {"total": 64, "available": 8}})).unwrap().cache, 0.0);
     }
 }
