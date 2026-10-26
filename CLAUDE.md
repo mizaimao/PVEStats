@@ -34,6 +34,10 @@ Frank's rules for this project are in his knowledgebase
 - `tui/screenshot [file.png]` saves what the screen machine's monitor
   shows, pointer included, and says whether the kiosk has a pointing
   device. Check visual changes with it rather than asking Frank to look.
+- `tui/kiosk off | on | status` switches the kiosk's monitor off and
+  pauses the dashboard (no machine is polled), or back on. A deploy turns
+  it back on, so check `tui/kiosk status` before deploying while Frank has
+  it off, and ask him (Frank, 2026-10-26: he turns it off to measure power).
 - `tui: demo: true` in the screen machine's copy of config.yaml puts
   made-up models and GPU processes on ml60's card; the next deploy, which
   copies config.yaml over, takes it off again.
