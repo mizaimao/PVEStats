@@ -4,7 +4,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Table, Trace};
+use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Spark, Table, Trace};
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
@@ -589,8 +589,18 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
 /// One guest's card, holding as many lines as its box has rows, most
 /// telling first: CPU, memory, network, disk I/O, disk usage, then address
 /// and uptime. A wide card puts network and I/O on one line; a roomy one
-/// gives memory and disk in GiB.
-pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16) -> Card {
+/// gives memory and disk in GiB. With `chart` rows to spare, at least two,
+/// the CPU over the last few minutes sits under its meter, newest at the
+/// right: whether the guest has been busy, not only whether it is now.
+pub fn guest(
+    look: &Look,
+    slot: &Slot,
+    status: &Status,
+    pve: &Source<PveData>,
+    chart: u16,
+    width: u16,
+    height: u16,
+) -> Card {
     let g = slot.guest;
     let (muted, ink) = (style(look.p.muted), style(look.p.ink));
     let cpu = g.and_then(|g| g.cpu_pct);
@@ -635,7 +645,20 @@ pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16)
         }
         lines.push(Part::Text(chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime)))));
     }
-    lines.truncate(height.saturating_sub(2) as usize);
+    let rows = height.saturating_sub(2);
+    lines.truncate(rows as usize);
+    if chart >= 2 && rows >= lines.len() as u16 + chart {
+        lines.insert(
+            1,
+            // On the meter's own 0-100 scale, so it needs no axis.
+            Part::Spark(Spark {
+                traces: vec![Trace::from(pve.series(&format!("cpu.{}", slot.vmid)), 0, "")],
+                capacity: pve.capacity(),
+                top: 100.0,
+                rows: chart,
+            }),
+        );
+    }
     Card {
         title: slot.name.clone(),
         right: slot.vmid.to_string(),

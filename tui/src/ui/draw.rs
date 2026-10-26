@@ -74,6 +74,8 @@ pub enum Part {
     Text(Line<'static>),
     Meter(Meter),
     Chart(Chart),
+    /// A plot with nothing around it, for a card too small for axes.
+    Spark(Spark),
     /// Two graphs on one axis, one up and one down, btop's network style.
     Mirror(Mirror),
     /// The coming hours, a column each: time, sky, temperature, rain chance.
@@ -114,6 +116,7 @@ impl Part {
             Part::Gap | Part::Text(_) | Part::Meter(_) | Part::Spread(_) => 1,
             Part::Wrap(text, _, most) => wrap(text, width, *most).len().max(1) as u16,
             Part::Chart(c) => c.min_rows,
+            Part::Spark(s) => s.rows,
             Part::Mirror(m) => m.rows,
             Part::Hours(_) => 4,
             Part::HourList(_) => super::weather::HourList::MIN_ROWS,
@@ -172,6 +175,7 @@ impl Part {
             }
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
+            Part::Spark(s) => plot(pen, area, &s.traces, s.capacity, s.top, false, None),
             Part::Mirror(m) => m.render(pen, area),
             Part::Hours(h) => h.render(pen, area),
             Part::HourList(l) => l.render(pen, area),
@@ -489,6 +493,15 @@ impl Chart {
         pen.line(left, x, y, &Line::from(legend));
         pen.text(area, now_x, y, "now", muted);
     }
+}
+
+/// A plot alone: no axis, no time row, the newest sample at the right.
+/// For a history under a meter, on the meter's scale.
+pub struct Spark {
+    pub traces: Vec<Trace>,
+    pub capacity: usize,
+    pub top: f64,
+    pub rows: u16,
 }
 
 /// btop's network graph: one half rising from a shared axis (receive), the
