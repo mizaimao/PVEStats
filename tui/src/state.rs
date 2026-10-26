@@ -30,7 +30,6 @@ pub struct Status {
     /// None while waiting, so the screen says "waiting", not a fault.
     pub error: Option<String>,
     pub age: Option<f64>,
-    pub interval: f64,
     /// True once a source has gone missing for more than two polls.
     pub stale: bool,
 }
@@ -186,7 +185,6 @@ impl<T> Source<T> {
             ok: self.ok,
             error: if self.waiting() { None } else { self.error.clone() },
             age,
-            interval: self.interval,
             stale: age.is_some_and(|a| a > self.interval * 2.0),
         }
     }

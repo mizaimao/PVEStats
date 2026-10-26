@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::config::{Config, View};
@@ -147,16 +147,14 @@ impl Screen {
             }
             None => cards::pve_note(look, &sp),
         };
-        let mut sources = vec![("pve", &sp)];
-        // The host agent's dot beside PVE's, whose live figures it gives.
-        if config.host_configured() {
-            sources.push(("host", &sh));
-        }
-        sources.extend([("ml60", &sa), ("truenas", &sn)]);
+        // One dot per machine. Proxmox's covers both its feeds: its agent's
+        // live figures and its API's names and limits.
+        let proxmox = if config.host_configured() { pair_dot(look, "proxmox", &sh, &sp) } else { dot(look, "proxmox", &sp) };
+        let mut dots = vec![proxmox, dot(look, "ml60", &sa), dot(look, "truenas", &sn)];
         if config.router_shown() {
-            sources.push(("router", &sr));
+            dots.push(dot(look, "router", &sr));
         }
-        let top = with_status(look, &sources, theme_now, host_card);
+        let top = with_status(look, &dots, theme_now, host_card);
         let of = |view: View| slots.values().filter(move |s| s.view == view);
         let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &pve, &sp)).collect();
         // The router rides under the NAS in every layout.
@@ -451,24 +449,79 @@ fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>, gr
 /// more rows. The host's readings dim on their own when PVE is not
 /// answering, with the reason on the border; the source dots never do.
 /// During a theme tour the corner names the theme.
-fn with_status(look: &Look, sources: &[(&str, &Status)], theme_now: Option<&str>, host: Card) -> Card {
+/// One machine on the status line, and how its feed is doing.
+struct Dot {
+    name: &'static str,
+    color: Color,
+    /// Said only when something is wrong: how long since it answered.
+    note: Option<String>,
+}
+
+/// Answering on schedule.
+fn fine(s: &Status) -> bool {
+    s.ok && !s.stale
+}
+
+/// Not answered yet, and no error yet either: the grey dot says it.
+fn waiting(s: &Status) -> bool {
+    !s.ok && s.error.is_none() && s.age.is_none()
+}
+
+/// Green answering, amber late, red failing, grey before a first answer.
+fn color_of(look: &Look, s: &Status) -> Color {
+    let p = look.p;
+    if !s.ok {
+        if s.error.is_some() { p.critical } else { p.muted }
+    } else if s.stale {
+        p.warning
+    } else {
+        p.good
+    }
+}
+
+/// How long since a source last answered.
+fn since(s: &Status) -> String {
+    match s.age {
+        None => "never".into(),
+        Some(age) if age < 120.0 => format!("{}s ago", age.round()),
+        Some(age) => format!("{} ago", crate::format::uptime(Some(age))),
+    }
+}
+
+fn dot(look: &Look, name: &'static str, s: &Status) -> Dot {
+    Dot { name, color: color_of(look, s), note: (!fine(s) && !waiting(s)).then(|| since(s)) }
+}
+
+/// A machine with two feeds, its agent and its API: green while neither is
+/// down, amber naming the one that is while the other answers, and as the
+/// agent alone when nothing answers.
+fn pair_dot(look: &Look, name: &'static str, agent: &Status, api: &Status) -> Dot {
+    let down = |s: &Status| !fine(s) && !waiting(s);
+    let p = look.p;
+    match (down(agent), down(api)) {
+        (false, false) => {
+            Dot { name, color: if fine(agent) || fine(api) { p.good } else { p.muted }, note: None }
+        }
+        (false, true) if fine(agent) => Dot { name, color: p.warning, note: Some(format!("api {}", since(api))) },
+        (true, false) if fine(api) => Dot { name, color: p.warning, note: Some(format!("agent {}", since(agent))) },
+        (_, true) if !down(agent) => dot(look, name, api),
+        _ => dot(look, name, agent),
+    }
+}
+
+fn with_status(look: &Look, dots: &[Dot], theme_now: Option<&str>, host: Card) -> Card {
     let p = look.p;
     let mut spans = Vec::new();
-    for (i, (name, status)) in sources.iter().enumerate() {
-        let (color, age) = source_state(look, status);
+    // A dot and a name while all is well; how long since it answered only
+    // when it is late or failing.
+    for (i, d) in dots.iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw("  "));
         }
-        spans.push(Span::styled("● ", Style::default().fg(color)));
-        // A source asked every 2 s or faster counts down only "1s" or "2s"
-        // while healthy: its dot says it all, and the line keeps room for
-        // five. When it fails, its age shows as for any other.
-        let healthy = status.ok && !status.stale;
-        if healthy && status.interval <= 2.0 {
-            spans.push(Span::styled(name.to_string(), Style::default().fg(p.ink2)));
-        } else {
-            spans.push(Span::styled(format!("{name} "), Style::default().fg(p.ink2)));
-            spans.push(Span::styled(age, Style::default().fg(p.muted)));
+        spans.push(Span::styled("● ", Style::default().fg(d.color)));
+        spans.push(Span::styled(d.name, Style::default().fg(p.ink2)));
+        if let Some(note) = &d.note {
+            spans.push(Span::styled(format!(" {note}"), Style::default().fg(p.muted)));
         }
     }
     let clock = match theme_now {
@@ -486,26 +539,6 @@ fn with_status(look: &Look, sources: &[(&str, &Status)], theme_now: Option<&str>
             if host.stale { Part::Dim(Box::new(readings)) } else { readings },
         ],
     }
-}
-
-/// Dot colour, and the age beside it. A healthy source counts down to its
-/// next poll; a failing one says how long ago it last answered. The number
-/// keeps two columns, so "9s" and "10s" sit in the same place.
-fn source_state(look: &Look, s: &Status) -> (ratatui::style::Color, String) {
-    let p = look.p;
-    let color = if !s.ok {
-        if s.error.is_some() { p.critical } else { p.muted }
-    } else if s.stale {
-        p.warning
-    } else {
-        p.good
-    };
-    let age = match s.age {
-        None => "never".to_string(),
-        Some(age) if s.ok && !s.stale => format!("{:>2}s", (s.interval - age).ceil().max(0.0)),
-        Some(age) => format!("{:>2}s ago", age.round()),
-    };
-    (color, age)
 }
 
 /// Names each source and its state rather than a bare spinner: if one is
@@ -609,7 +642,7 @@ mod tests {
             .map(|(vmid, g)| Slot { vmid: *vmid, name: vmid.to_string(), view: View::Basic, guest: Some(g) })
             .collect();
         let refs: Vec<&Slot> = slots.iter().collect();
-        let status = Status { ok: true, error: None, age: None, interval: 10.0, stale: false };
+        let status = Status { ok: true, error: None, age: None, stale: false };
         let pve: crate::state::Source<PveData> = crate::state::Source::new(10.0, 600.0);
         let g = Guests { slots: &refs, status: &status, pve: &pve, host: None };
         // 57 x 12: two rows of six, three cards and then two.
@@ -618,5 +651,27 @@ mod tests {
         assert_eq!(rows, vec![vec![102, 103, 211], vec![107, 108]]);
         // Too little room for CPU and memory on a card: the one-line list.
         assert_eq!(g.rows(57, 3), None);
+    }
+
+    #[test]
+    fn proxmox_one_dot_for_its_agent_and_its_api() {
+        let look = Look::new("ice", theme::Colors::Rgb, false);
+        let p = look.p;
+        let up = Status { ok: true, error: None, age: Some(1.0), stale: false };
+        let down = Status { ok: false, error: Some("timed out".into()), age: Some(42.0), stale: true };
+        let starting = Status { ok: false, error: None, age: None, stale: false };
+        let seen = |d: Dot| (d.color, d.note);
+        assert_eq!(seen(pair_dot(&look, "proxmox", &up, &up)), (p.good, None));
+        // The API still on its first call: nothing wrong yet.
+        assert_eq!(seen(pair_dot(&look, "proxmox", &up, &starting)), (p.good, None));
+        assert_eq!(seen(pair_dot(&look, "proxmox", &up, &down)), (p.warning, Some("api 42s ago".into())));
+        assert_eq!(seen(pair_dot(&look, "proxmox", &down, &up)), (p.warning, Some("agent 42s ago".into())));
+        assert_eq!(seen(pair_dot(&look, "proxmox", &down, &down)), (p.critical, Some("42s ago".into())));
+        assert_eq!(seen(pair_dot(&look, "proxmox", &starting, &down)), (p.critical, Some("42s ago".into())));
+        assert_eq!(seen(pair_dot(&look, "proxmox", &starting, &starting)), (p.muted, None));
+        // A single feed: a dot and its name while fine, no countdown.
+        assert_eq!(seen(dot(&look, "ml60", &up)), (p.good, None));
+        let long = Status { age: Some(600.0), ..down };
+        assert_eq!(dot(&look, "router", &long).note.as_deref(), Some("10m ago"));
     }
 }
