@@ -73,6 +73,7 @@ exit; a failing guest network held back only its own band.
  "temp": {"cpu": 69.7},
  "wan": {"up": true, "ip": "…", "rx": 65611232984, "tx": 25224388291},
  "ports": [{"name": "eth1", "up": true, "mbps": 10000, "wan": true, "rx": 82099808698, "tx": 67885525746}],
+ "wired_devices": 8,
  "bands": [{"name": "5 GHz", "on": true, "devices": 1, "rx": 3663050058, "tx": 9191432552}],
  "devices_age": 12}
 ```
@@ -92,6 +93,15 @@ eth1), so it is listed among the LAN ports; every download comes in on it
 and goes out on another, and the dashboard leaves it out of its wired
 total so as not to count internet traffic twice. Found by downloading 50 MB
 on dev.lan: eth1 received 53 MB, eth0 sent 52 MB.
+
+`wired_devices` is every device the router has heard from lately on its
+LAN bridge, in its neighbour table (/proc/net/arp) or learned by the bridge
+on a wired port (/sys/class/net/br0/brforward), less those on Wi-Fi (in a
+radio's client list or learned on a Wi-Fi port) and those beyond the
+internet port. Counted every 30 s from those two file reads; null until the
+first count. Each VM on the PVE host counts, though they all come in on one
+port. The router's system sees four wired ports (eth0 to eth3); a band's
+`devices` counts each device once, however many of its networks list it.
 
 ## Building
 
