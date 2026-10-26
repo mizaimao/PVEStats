@@ -192,7 +192,6 @@ fn cpu_and_memory(
         // A cell per 10s sample, so the chart reaches back further than the
         // buffer would stretched across.
         sample_width: Some(1.0),
-        time_row: true,
     });
     let figures = Part::Stack(vec![
         figure("CPU", fmt::pct(cpu)),
@@ -291,7 +290,6 @@ pub fn gpu(
         max_rows: 11,
         weight: 3,
         sample_width: None,
-        time_row: true,
     });
 
     let power = match (get(|g| g.power), get(|g| g.power_limit)) {
@@ -591,17 +589,8 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
 /// One guest's card, holding as many lines as its box has rows, most
 /// telling first: CPU, memory, network, disk I/O, disk usage, then address
 /// and uptime. A wide card puts network and I/O on one line; a roomy one
-/// gives memory and disk in GiB. With `chart` rows to spare, at least two,
-/// the CPU's recent history sits under its meter.
-pub fn guest(
-    look: &Look,
-    slot: &Slot,
-    status: &Status,
-    pve: &Source<PveData>,
-    chart: u16,
-    width: u16,
-    height: u16,
-) -> Card {
+/// gives memory and disk in GiB.
+pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16) -> Card {
     let g = slot.guest;
     let (muted, ink) = (style(look.p.muted), style(look.p.ink));
     let cpu = g.and_then(|g| g.cpu_pct);
@@ -646,29 +635,7 @@ pub fn guest(
         }
         lines.push(Part::Text(chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime)))));
     }
-    let rows = height.saturating_sub(2);
-    lines.truncate(rows as usize);
-    if chart >= 2 && rows >= lines.len() as u16 + chart {
-        lines.insert(
-            1,
-            Part::Chart(Chart {
-                traces: vec![Trace::from(pve.series(&format!("cpu.{}", slot.vmid)), 0, "")],
-                capacity: pve.capacity(),
-                // Scaled to the busiest moment, so an idle guest's small
-                // stirrings show; the axis says the scale.
-                top: None,
-                floor: 10.0,
-                axis: axis_pct,
-                seconds_per_sample: pve.interval,
-                caption: String::new(),
-                min_rows: chart,
-                max_rows: chart,
-                weight: 1,
-                sample_width: None,
-                time_row: false,
-            }),
-        );
-    }
+    lines.truncate(height.saturating_sub(2) as usize);
     Card {
         title: slot.name.clone(),
         right: slot.vmid.to_string(),
@@ -775,6 +742,5 @@ fn small_chart(pve: &Source<PveData>, key: &str, series: usize, caption: String)
         max_rows: 5,
         weight: 1,
         sample_width: Some(1.0),
-        time_row: true,
     })
 }
