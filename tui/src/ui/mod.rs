@@ -16,8 +16,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::config::{Config, View};
-use crate::sources::{lock, Shared};
-use crate::state::{clock, Status};
+use crate::sources::{lock, PveData, Shared};
+use crate::state::{clock, Source, Status};
 use cards::Slot;
 use draw::{share, Card, Part, Pen};
 use theme::Look;
@@ -134,24 +134,25 @@ impl Screen {
         let nas_cards: Vec<Card> =
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn, &sp)).collect();
         let basic: Vec<&Slot> = of(View::Basic).collect();
-        let guests = Guests { slots: &basic, status: &sp };
+        let guests = Guests { slots: &basic, status: &sp, pve: &pve };
         let tour = self.tour.as_ref().map(|t| cards::tour(look, &names, t.index % names.len(), t.next_in));
 
         if self.focus && !gpu_cards.is_empty() {
-            column(&mut pen, body, &gpu_cards, None);
+            column(&mut pen, body, &gpu_cards, None, true);
             return;
         }
         let w = body.width;
         if w >= THREE_COLUMNS {
-            // Status, host, NAS and the guests on the left, the GPU in the
-            // middle, and the right kept for a forecast.
+            // Status, host and NAS on the left, the GPU in the middle, the
+            // forecast and the guests on the right. The left keeps its cards
+            // to their smallest: the rows under them are being kept free.
             let left = (w - 2) / 3;
             let mid = (w - left - 2) / 2;
             let right = w - left - mid - 2;
             let mut left_cards = vec![top];
             left_cards.extend(nas_cards);
-            column(&mut pen, Rect { width: left, ..body }, &left_cards, Some(&guests));
-            column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None);
+            column(&mut pen, Rect { width: left, ..body }, &left_cards, None, false);
+            column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None, true);
             // "tour" shows each layout for 20 seconds in turn, for choosing.
             let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             let (layout, touring) = match config.weather_layout.as_str() {
@@ -160,14 +161,14 @@ impl Screen {
             };
             let mut right_cards = vec![weather::card(look, &forecast, &forecast.status(), config.weather_configured(), layout, touring)];
             right_cards.extend(tour);
-            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, None);
+            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, Some(&guests), true);
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
             let mut left_cards = vec![top];
             left_cards.extend(gpu_cards);
-            column(&mut pen, Rect { width: left, ..body }, &left_cards, None);
+            column(&mut pen, Rect { width: left, ..body }, &left_cards, None, true);
             let right = Rect { x: body.x + left + 1, width: w - left - 1, ..body };
-            column(&mut pen, right, &nas_cards, Some(&guests));
+            column(&mut pen, right, &nas_cards, Some(&guests), true);
         } else {
             let mut all = vec![top];
             all.extend(gpu_cards);
@@ -190,7 +191,7 @@ impl Screen {
         let mut off = Buffer::empty(full);
         let mut off_pen = Pen { buf: &mut off, look: pen.look };
         off_pen.fill_bg(full, pen.look.p.plane);
-        column(&mut off_pen, full, cards, Some(guests));
+        column(&mut off_pen, full, cards, Some(guests), true);
         for row in 0..area.height {
             for x in area.left()..area.right() {
                 if let (Some(src), Some(dst)) = (off.cell((x, row + self.scroll)), pen.buf.cell_mut((x, area.y + row))) {
@@ -210,6 +211,8 @@ impl Screen {
 struct Guests<'a> {
     slots: &'a [&'a Slot<'a>],
     status: &'a Status,
+    /// For each guest's CPU history.
+    pve: &'a Source<PveData>,
 }
 
 /// Narrowest a guest card may be: room for "CPU ■■■ 12%".
@@ -300,10 +303,20 @@ impl Guests<'_> {
             let h = area.height / rows as u16 + u16::from((r as u16) < area.height % rows as u16);
             let k = row.len() as u16;
             let spare = area.width + 1 - k * ((area.width + 1) / k);
+            let width = |i: usize| (area.width + 1) / k - 1 + u16::from((i as u16) < spare);
+            // One chart height for the whole row, so its cards' lines stay
+            // level: the rows the fullest card leaves over.
+            let chart = row
+                .iter()
+                .enumerate()
+                .map(|(i, s)| h.saturating_sub(2 + cards::guest_lines(width(i), s.guest)))
+                .min()
+                .unwrap_or(0);
             let mut x = area.x;
             for (i, slot) in row.iter().enumerate() {
-                let w = (area.width + 1) / k - 1 + u16::from((i as u16) < spare);
-                cards::guest(pen.look, slot, self.status, w, h).render(pen, Rect { x, y, width: w, height: h });
+                let w = width(i);
+                cards::guest(pen.look, slot, self.status, self.pve, chart, w, h)
+                    .render(pen, Rect { x, y, width: w, height: h });
                 x += w + 1;
             }
             y += h;
@@ -332,14 +345,16 @@ fn card_rows(cards: &[Card], width: u16, total: u16) -> Vec<u16> {
 }
 
 /// Cards stacked top to bottom with a blank row between each, then the
-/// guests filling every row left. With guests below them the cards keep to
-/// their smallest; otherwise charts grow into spare rows.
-fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>) {
+/// guests filling every row left. With guests below them, or without
+/// `grow`, the cards keep to their smallest; otherwise charts grow into
+/// spare rows.
+fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>, grow: bool) {
     let w = area.width;
     let dividers = cards.len().saturating_sub(1) as u16;
-    let rows = match guests {
-        Some(g) if !g.slots.is_empty() => cards.iter().map(|c| c.height(w)).collect(),
-        _ => card_rows(cards, w, area.height.saturating_sub(dividers)),
+    let rows = if !grow || guests.is_some_and(|g| !g.slots.is_empty()) {
+        cards.iter().map(|c| c.height(w)).collect()
+    } else {
+        card_rows(cards, w, area.height.saturating_sub(dividers))
     };
     let mut y = area.y;
     for (card, h) in cards.iter().zip(rows) {
@@ -483,7 +498,8 @@ mod tests {
             .collect();
         let refs: Vec<&Slot> = slots.iter().collect();
         let status = Status { ok: true, error: None, age: None, interval: 10.0, stale: false };
-        let g = Guests { slots: &refs, status: &status };
+        let pve = Source::new(10.0, 600.0);
+        let g = Guests { slots: &refs, status: &status, pve: &pve };
         // 57 x 12: two rows of six, three cards and then two.
         assert_eq!(g.rows(57, 12), Some(2));
         let rows: Vec<Vec<u64>> = g.arrange(2).iter().map(|r| r.iter().map(|s| s.vmid).collect()).collect();

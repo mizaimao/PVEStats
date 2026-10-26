@@ -13,15 +13,16 @@ CPU, and sends about 1.5 KB/s to the terminal.
 
 The layout follows the terminal's width:
 
-- 150 columns or more: status, host, NAS and guests | GPU | a column kept
-  free for a weather forecast.
+- 150 columns or more: status, host and NAS (the rows under them kept free)
+  | GPU | the weather forecast and guests.
 - 96 to 149: status, host and GPU | NAS and guests.
 - Under 96: one column, GPU first, scrolled with the arrow keys or j/k.
 
 The source dots and the clock are a small panel at the top of the first
 column, so the other columns start at the top row. Guests fill the rows
 left under the other cards: the fullest cards that fit them all (full,
-compact, then tiny, up to three across), else one line each.
+compact, then tiny, up to three across), else one line each. Rows a guest
+card has over hold its CPU history, the same height across a row of them.
 
 Charts grow into spare rows up to a set height; a card without a chart
 keeps to its own height. Keys: `f` shows the GPU card alone and back, `q`
@@ -38,14 +39,15 @@ override.
 
 A `name` in config.yaml titles a card in place of the VM's name in Proxmox.
 
-The right-hand column is a weather forecast. In the United States it is the
+The right-hand column is a weather forecast, with any alerts in force at its
+top, and the guests under it. In the United States the forecast is the
 National Weather Service's own (api.weather.gov), with the latest reading
 from the nearest station for now; elsewhere Open-Meteo's. Both are free, with
 no key. Where it is for goes in .env, so it stays off GitHub: `WEATHER_PLACE`
 (a place name, looked up once) or `WEATHER_LATITUDE` and `WEATHER_LONGITUDE`;
 `WEATHER_UNITS=imperial` for °F, mph and inches. It refreshes every 15
-minutes. `tui: weather_layout` in config.yaml picks its layout: `a` (an
-hourly strip, a chart of the coming days, the week as a table), `b` (the hours
+minutes. `tui: weather_layout` in config.yaml picks its layout: `a` (a
+strip every two hours from the next, the week as a table), `b` (the hours
 a line each), `c` (hourly and three-hourly strips, the week as tiles with
 ASCII icons), or `tour` for each in turn.
 `tui: theme_tour: <seconds>` in config.yaml tours all twelve themes, naming

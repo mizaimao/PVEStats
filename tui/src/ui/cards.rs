@@ -192,6 +192,7 @@ fn cpu_and_memory(
         // A cell per 10s sample, so the chart reaches back further than the
         // buffer would stretched across.
         sample_width: Some(1.0),
+        time_row: true,
     });
     let figures = Part::Stack(vec![
         figure("CPU", fmt::pct(cpu)),
@@ -290,6 +291,7 @@ pub fn gpu(
         max_rows: 11,
         weight: 3,
         sample_width: None,
+        time_row: true,
     });
 
     let power = match (get(|g| g.power), get(|g| g.power_limit)) {
@@ -588,14 +590,24 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
 
 /// One guest's card, holding as many lines as its box has rows, most
 /// telling first: CPU, memory, network, disk I/O, disk usage, then address
-/// and uptime. A wide card puts network and I/O on one line, with memory in
-/// GiB.
-pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16) -> Card {
+/// and uptime. A wide card puts network and I/O on one line; a roomy one
+/// gives memory and disk in GiB. With `chart` rows to spare, at least two,
+/// the CPU's recent history sits under its meter.
+pub fn guest(
+    look: &Look,
+    slot: &Slot,
+    status: &Status,
+    pve: &Source<PveData>,
+    chart: u16,
+    width: u16,
+    height: u16,
+) -> Card {
     let g = slot.guest;
     let (muted, ink) = (style(look.p.muted), style(look.p.ink));
     let cpu = g.and_then(|g| g.cpu_pct);
     let used = g.and_then(|g| ratio(g.mem, g.maxmem));
     let wide = width.saturating_sub(4) >= 34;
+    let roomy = width.saturating_sub(4) >= 26;
     let rate = |v: Option<f64>| Span::styled(fmt::rate(v), ink);
     let mut lines = vec![meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4)];
     if wide {
@@ -604,7 +616,11 @@ pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16)
         lines.push(disk_line(look, g));
         lines.push(guest_sub(look, g));
     } else {
-        lines.push(meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4));
+        lines.push(if roomy {
+            meter(look, "Mem", used, mem_text(g.and_then(|g| g.mem), g.and_then(|g| g.maxmem)), 0)
+        } else {
+            meter(look, "Mem", used, fmt::pct(used.map(|r| r * 100.0)), 4)
+        });
         // Spread across the card, so a wide one has no empty right half.
         let pair = |mark: &str, v: Option<f64>| Line::from(vec![Span::styled(mark.to_string(), muted), rate(v)]);
         lines.push(Part::Spread(vec![
@@ -617,16 +633,42 @@ pub fn guest(look: &Look, slot: &Slot, status: &Status, width: u16, height: u16)
             Some(g) => vec![Line::styled("io", muted), pair("r", g.disk_read_bps), pair("w", g.disk_write_bps)],
             None => vec![Line::styled("io", muted), Line::styled(fmt::DASH, muted)],
         }));
-        let disk = g
-            .and_then(|g| g.filesystem.as_ref())
-            .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
-        lines.push(Part::Text(chip(look, "disk", disk)));
+        if roomy {
+            lines.push(disk_line(look, g));
+        } else {
+            let disk = g
+                .and_then(|g| g.filesystem.as_ref())
+                .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
+            lines.push(Part::Text(chip(look, "disk", disk)));
+        }
         if let Some(address) = g.and_then(|g| g.addresses.first()) {
             lines.push(Part::Text(Line::styled(address.clone(), style(look.p.ink2))));
         }
         lines.push(Part::Text(chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime)))));
     }
-    lines.truncate(height.saturating_sub(2) as usize);
+    let rows = height.saturating_sub(2);
+    lines.truncate(rows as usize);
+    if chart >= 2 && rows >= lines.len() as u16 + chart {
+        lines.insert(
+            1,
+            Part::Chart(Chart {
+                traces: vec![Trace::from(pve.series(&format!("cpu.{}", slot.vmid)), 0, "")],
+                capacity: pve.capacity(),
+                // Scaled to the busiest moment, so an idle guest's small
+                // stirrings show; the axis says the scale.
+                top: None,
+                floor: 10.0,
+                axis: axis_pct,
+                seconds_per_sample: pve.interval,
+                caption: String::new(),
+                min_rows: chart,
+                max_rows: chart,
+                weight: 1,
+                sample_width: None,
+                time_row: false,
+            }),
+        );
+    }
     Card {
         title: slot.name.clone(),
         right: slot.vmid.to_string(),
@@ -733,5 +775,6 @@ fn small_chart(pve: &Source<PveData>, key: &str, series: usize, caption: String)
         max_rows: 5,
         weight: 1,
         sample_width: Some(1.0),
+        time_row: true,
     })
 }

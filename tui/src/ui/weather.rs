@@ -171,7 +171,8 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
             body.push(Part::Week(WeekTiles { days: w.days.clone() }));
         }
         _ => {
-            body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 1, skip: 0 }));
+            // Every two hours from the next one: the next 22 hours in a row.
+            body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 2, skip: 1 }));
             body.push(Part::Gap);
             body.push(week_table(look, w, units));
         }
@@ -318,7 +319,9 @@ fn week_table(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str))
 
 /// Hours a column each, `step` hours apart after the first `skip`: the
 /// hour, the sky, the temperature and the chance of rain. As many columns
-/// as fit.
+/// as fit. A column standing for several hours shows the first one's
+/// temperature, and the worst of them for sky and rain, so a shower in the
+/// hour between is not lost.
 pub struct HourStrip {
     pub hours: Vec<Hour>,
     pub step: usize,
@@ -330,15 +333,21 @@ impl HourStrip {
         const COLUMN: u16 = 5;
         let p = pen.look.p;
         let columns = (area.width / COLUMN).max(1) as usize;
-        for (c, hour) in self.hours.iter().skip(self.skip).step_by(self.step.max(1)).take(columns).enumerate() {
+        let hours = &self.hours[self.skip.min(self.hours.len())..];
+        for (c, span) in hours.chunks(self.step.max(1)).take(columns).enumerate() {
+            let hour = &span[0];
             let x = area.x + c as u16 * COLUMN;
-            let (_, symbol, color) = sky(pen.look, hour.code, hour.day);
+            // WMO codes run roughly from clear to storm, so the highest is
+            // the worst sky.
+            let code = span.iter().filter_map(|h| h.code).max();
+            let rain = span.iter().filter_map(|h| h.rain_chance).max_by(f64::total_cmp);
+            let (_, symbol, color) = sky(pen.look, code, hour.day);
             let label = if self.skip == 0 && c == 0 { "now".to_string() } else { hour_label(&hour.time) };
             let cells = [
                 Line::styled(label, style(p.muted)),
                 Line::styled(symbol, style(color)),
                 Line::styled(degrees(hour.temp), bold(p.ink)),
-                rain_chance(pen.look, hour.rain_chance),
+                rain_chance(pen.look, rain),
             ];
             for (r, cell) in cells.iter().enumerate() {
                 let w = cell.width() as u16;
