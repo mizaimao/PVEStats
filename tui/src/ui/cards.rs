@@ -328,12 +328,12 @@ pub fn gpu(
     let cpu = guest.and_then(|g| g.cpu_pct);
     let mem = guest.and_then(|g| ratio(g.mem, g.maxmem)).map(|r| r * 100.0);
     let mut pve_parts = Part::Stack(vec![
+        Part::Flow(24, vec![Part::Text(net), disk_line(look, guest)]),
         // Two small charts side by side, CPU and memory, a figure under each.
         Part::Row(vec![
             (0, small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu)))),
             (0, small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem)))),
         ]),
-        Part::Flow(24, vec![Part::Text(net), disk_line(look, guest)]),
     ]);
     if !pve.ok {
         pve_parts = Part::Dim(Box::new(pve_parts));
