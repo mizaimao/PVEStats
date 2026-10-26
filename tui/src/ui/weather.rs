@@ -161,7 +161,7 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
             // No gap after the list: with none below it, it runs down to the
             // week rather than leaving rows blank.
             body.push(Part::HourList(HourList { hours: w.hours.clone(), wind: units.1 }));
-            body.push(week_table(look, w, units));
+            body.push(Part::Table(week_table(look, w, units)));
         }
         'c' => {
             body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 1, skip: 0 }));
@@ -174,7 +174,9 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
             // Every two hours from the next one: the next 22 hours in a row.
             body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 2, skip: 1 }));
             body.push(Part::Gap);
-            body.push(week_table(look, w, units));
+            // A week at least; more days as the rows allow, where the
+            // forecast has them.
+            body.push(Part::Growing(week_table(look, w, units), 7));
         }
     }
     // While the layouts take turns, the title says which this is.
@@ -278,7 +280,7 @@ fn sun(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str)) -> Par
 
 /// The week a line a day: the sky, high and low, the chance of rain, and
 /// the amount where the source gives one.
-fn week_table(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str)) -> Part {
+fn week_table(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str)) -> Table {
     let p = look.p;
     let amounts = w.days.iter().any(|d| d.rain.is_some());
     let rows = w
@@ -314,7 +316,7 @@ fn week_table(look: &Look, w: &WeatherData, (rain_unit, ..): (&str, &str, &str))
     if amounts {
         cols.push(Col { title: "Amount", width: 7, right: true });
     }
-    Part::Table(Table { caption: None, cols, rows, empty: "no forecast" })
+    Table { caption: None, cols, rows, empty: "no forecast" }
 }
 
 /// Hours a column each, `step` hours apart after the first `skip`: the

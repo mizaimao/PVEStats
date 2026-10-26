@@ -159,9 +159,19 @@ impl Screen {
                 "tour" => (['a', 'b', 'c'][(secs / 20 % 3) as usize], true),
                 other => (other.chars().next().unwrap_or('a'), false),
             };
-            let mut right_cards = vec![weather::card(look, &forecast, &forecast.status(), config.weather_configured(), layout, touring)];
-            right_cards.extend(tour);
-            column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, Some(&guests), true);
+            let forecast_card =
+                weather::card(look, &forecast, &forecast.status(), config.weather_configured(), layout, touring);
+            // The guests keep a set height at the foot of the column, short
+            // of squeezing the forecast; the forecast takes every row above
+            // them, for more days.
+            let area = Rect { x: body.x + left + mid + 2, width: right, ..body };
+            let guests_h = guests.set_height(right).min(area.height.saturating_sub(forecast_card.height(right) + 1));
+            let above = Rect { height: area.height - guests_h - u16::from(guests_h > 0), ..area };
+            match tour {
+                Some(tour) => column(&mut pen, above, &[forecast_card, tour], None, true),
+                None => forecast_card.render(&mut pen, above),
+            }
+            guests.render(&mut pen, Rect { y: area.bottom() - guests_h, height: guests_h, ..area });
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
             let mut left_cards = vec![top];
@@ -218,7 +228,19 @@ struct Guests<'a> {
 /// Narrowest a guest card may be: room for "CPU ■■■ 12%".
 const GUEST_NARROWEST: u16 = 18;
 
+/// A guest card's height where the guests keep a set height: its borders,
+/// six lines and a three-row CPU chart.
+const GUEST_ROWS: u16 = 11;
+
 impl Guests<'_> {
+    /// Rows they take at the set card height: as few rows of cards as
+    /// leave each card wide enough.
+    fn set_height(&self, width: u16) -> u16 {
+        let n = self.slots.len();
+        let rows = (1..=n).find(|&r| (width + 1) / self.counts(r)[0] as u16 > GUEST_NARROWEST).unwrap_or(n);
+        rows as u16 * GUEST_ROWS
+    }
+
     /// Cards per row, fullest rows first, for `rows` rows.
     fn counts(&self, rows: usize) -> Vec<usize> {
         let n = self.slots.len();

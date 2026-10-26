@@ -40,7 +40,10 @@ override.
 A `name` in config.yaml titles a card in place of the VM's name in Proxmox.
 
 The right-hand column is a weather forecast, with any alerts in force at its
-top, and the guests under it. In the United States the forecast is the
+top, and the guests under it. There the guest cards keep a set height (11
+rows) at the foot, and the forecast takes every row above them: when an
+alert ends, its rows go to more days, not to the guests. In the United
+States the forecast is the
 National Weather Service's own (api.weather.gov), with the latest reading
 from the nearest station for now; elsewhere Open-Meteo's. Both are free, with
 no key. Where it is for goes in .env, so it stays off GitHub: `WEATHER_PLACE`
