@@ -587,8 +587,9 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
 // --------------------------------------------------------------- guests
 
 /// One guest's card, holding as many lines as its box has rows, most
-/// telling first: CPU, memory, network, disk I/O, disk usage, then address
-/// and uptime. A wide card puts network and I/O on one line; a roomy one
+/// telling first: CPU, memory, network, disk I/O, disk usage, then address;
+/// uptime only on a wide card, beside the address, where it costs no row.
+/// A wide card puts network and I/O on one line; a roomy one
 /// gives memory and disk in GiB. With `chart` rows to spare, at least two,
 /// the CPU over the last few minutes sits under its meter, newest at the
 /// right: whether the guest has been busy, not only whether it is now.
@@ -643,7 +644,6 @@ pub fn guest(
         if let Some(address) = g.and_then(|g| g.addresses.first()) {
             lines.push(Part::Text(Line::styled(address.clone(), style(look.p.ink2))));
         }
-        lines.push(Part::Text(chip(look, "up", fmt::uptime(g.and_then(|g| g.uptime)))));
     }
     let rows = height.saturating_sub(2);
     lines.truncate(rows as usize);
@@ -673,7 +673,7 @@ pub fn guest_lines(width: u16, guest: Option<&Guest>) -> u16 {
     if width.saturating_sub(4) >= 34 {
         5
     } else {
-        6 + u16::from(guest.is_some_and(|g| !g.addresses.is_empty()))
+        5 + u16::from(guest.is_some_and(|g| !g.addresses.is_empty()))
     }
 }
 
