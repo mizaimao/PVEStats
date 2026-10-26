@@ -7,7 +7,7 @@ use std::thread;
 use serde_json::{json, Map, Value};
 
 use crate::config::Config;
-use crate::sources::{self, agent::Agent, lock, pve::Pve, run_poller, truenas::TrueNas};
+use crate::sources::{self, agent::Agent, lock, pve::Pve, router::Router, run_poller, truenas::TrueNas};
 use crate::state::{clock, Source};
 
 pub struct Collector {
@@ -15,16 +15,21 @@ pub struct Collector {
     pub pve: Mutex<Source>,
     pub agent: Mutex<Source>,
     pub truenas: Mutex<Source>,
+    /// Optional: only a configured router gets a source, a status dot and a
+    /// card.
+    pub router: Option<Mutex<Source>>,
 }
 
 impl Collector {
     pub fn new(config: Arc<Config>) -> Self {
         let window = config.ui().get("window").and_then(Value::as_f64).unwrap_or(180.0);
+        let router = config.router_configured().then(|| Mutex::new(Source::new(sources::ROUTER_INTERVAL, 600.0)));
         let collector = Collector {
             config,
             pve: Mutex::new(Source::new(sources::PVE_INTERVAL, 600.0)),
             agent: Mutex::new(Source::new(sources::AGENT_INTERVAL, 600.0)),
             truenas: Mutex::new(Source::new(sources::TRUENAS_INTERVAL, 600.0)),
+            router,
         };
         collector.set_history_window(window);
         collector
@@ -51,12 +56,19 @@ impl Collector {
         } else {
             lock(&self.truenas).fail(missing());
         }
+        if self.router.is_some() {
+            let (c, mut router) = (Arc::clone(self), Router::new(Arc::clone(&self.config)));
+            thread::spawn(move || {
+                let source = c.router.as_ref().expect("checked above");
+                run_poller(source, sources::ROUTER_INTERVAL, || router.poll(source))
+            });
+        }
     }
 
     /// Re-lengths every ring buffer; charts take their span from it.
     pub fn set_history_window(&self, seconds: f64) {
         let seconds = seconds.clamp(30.0, 3600.0).trunc();
-        for source in [&self.pve, &self.agent, &self.truenas] {
+        for source in [&self.pve, &self.agent, &self.truenas].into_iter().chain(self.router.as_ref()) {
             lock(source).resize(seconds);
         }
     }
@@ -148,6 +160,7 @@ impl Collector {
         }
         guests.sort_by_key(|(vmid, _)| *vmid);
 
+        let router = self.router.as_ref().map(|r| lock(r));
         let mut sources = Map::new();
         sources.insert("pve".into(), pve.status());
         sources.insert("agent".into(), agent.status());
@@ -156,10 +169,21 @@ impl Collector {
         history.insert("pve".into(), pve.history());
         history.insert("agent".into(), agent.history());
         history.insert("truenas".into(), nas.history());
+        if let Some(router) = &router {
+            sources.insert("router".into(), router.status());
+            history.insert("router".into(), router.history());
+        }
+        // Last known good, like every other card's: a failing router keeps
+        // its numbers, greyed, rather than blanking.
+        let router_data = router
+            .as_ref()
+            .filter(|r| !r.data.is_empty())
+            .map_or(Value::Null, |r| Value::Object(r.data.clone()));
         json!({
             "sources": sources,
             "node": pve.data.get("node").cloned().unwrap_or(Value::Null),
             "guests": guests.into_iter().map(|(_, g)| Value::Object(g)).collect::<Vec<_>>(),
+            "router": router_data,
             "history": history,
         })
     }

@@ -81,6 +81,8 @@ class Config:
         self.truenas_api_key = os.getenv("TRUENAS_API_KEY", "").strip()
 
         self.agent_url = os.getenv("ML60_AGENT_URL", "").strip()
+        # Optional: with none, the page has no router card at all.
+        self.router_url = os.getenv("ROUTER_AGENT_URL", "").strip()
         # `DASHBOARD_PORT=` with nothing after it reads as "", not unset.
         self.port = int(os.getenv("DASHBOARD_PORT", "").strip() or "8080")
 
@@ -162,3 +164,7 @@ class Config:
     @property
     def agent_configured(self):
         return bool(self.agent_url)
+
+    @property
+    def router_configured(self):
+        return bool(self.router_url)

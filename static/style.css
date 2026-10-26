@@ -654,6 +654,8 @@ body {
   font-weight: 600;
   line-height: 1.25;
 }
+/* The router's WAN when it is down: said in words, and in red. */
+.tile.is-down .value { color: var(--critical); }
 .tile .value .unit {
   font-size: 12px;
   font-weight: 400;

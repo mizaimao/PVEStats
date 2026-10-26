@@ -20,6 +20,10 @@ class Collector:
             "agent": Source("agent", sources.AGENT_INTERVAL),
             "truenas": Source("truenas", sources.TRUENAS_INTERVAL),
         }
+        # Optional: only a configured router gets a source, a status dot and
+        # a card.
+        if config.router_configured:
+            self.sources["router"] = Source("router", sources.ROUTER_INTERVAL)
         self.session = None
         self._tasks = []
         self._truenas = None
@@ -48,6 +52,11 @@ class Collector:
                         lambda: self._truenas.poll(self.session))
         else:
             self.sources["truenas"].fail("not configured — see .env")
+
+        if "router" in self.sources:
+            router = sources.RouterSource(self.config, self.sources["router"])
+            self._spawn(self.sources["router"], sources.ROUTER_INTERVAL,
+                        lambda: router.poll(self.session))
 
     def _spawn(self, source, interval, poll):
         self._tasks.append(
@@ -131,13 +140,20 @@ class Collector:
                         }
                     guest["nas"] = data
 
+        router = self.sources.get("router")
+        history = {
+            "pve": pve.history(),
+            "agent": agent.history(),
+            "truenas": nas.history(),
+        }
+        if router is not None:
+            history["router"] = router.history()
         return {
             "sources": {name: source.status() for name, source in self.sources.items()},
             "node": pve.data.get("node"),
             "guests": sorted(guests.values(), key=lambda g: g["vmid"]),
-            "history": {
-                "pve": pve.history(),
-                "agent": agent.history(),
-                "truenas": nas.history(),
-            },
+            # Last known good, like every other card's: a failing router
+            # keeps its numbers, greyed, rather than blanking.
+            "router": (router.data or None) if router is not None else None,
+            "history": history,
         }

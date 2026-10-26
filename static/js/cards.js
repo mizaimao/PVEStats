@@ -543,6 +543,79 @@ export function nasCard(guest) {
   };
 }
 
+/* --- router --- */
+
+/* The router, from its own agent (router/ in this repo), as the terminal
+   dashboard draws it: the WAN and the router's own load, the internet link
+   over time, then the wired ports and each Wi-Fi band with their devices and
+   traffic. Only a configured router has a card. */
+export function routerCard() {
+  const shell = cardShell("Router", "");
+
+  const tiles = el("div", "tiles");
+  const wan = tile("WAN");
+  const cpu = tile("CPU", { unit: "%" });
+  const mem = tile("Memory", { unit: "%" });
+  const temp = tile("Temp", { unit: "°C" });
+  tiles.append(wan.el, cpu.el, mem.el, temp.el);
+
+  // Download and upload on one plot, in megabits as internet speeds are
+  // quoted; 1 Mbit/s at least, so an idle line stays flat.
+  const series = [
+    { key: "wan.down", color: "var(--series-1)", label: "Download" },
+    { key: "wan.up", color: "var(--series-2)", label: "Upload" },
+  ];
+  const spark = new Spark(series, {
+    format: v => ((v * 8) / 1e6).toFixed(1), unit: " Mbit/s", height: 96, axis: true,
+    xTicks: true, secondsPerSample: 1, minScale: 125000, caption: "Internet",
+  });
+  const links = dataTable("Links", [
+    { label: "Link" }, { label: "Devices", num: true },
+    { label: "Download", num: true }, { label: "Upload", num: true },
+  ]);
+  shell.el.append(tiles, spark.el, legend(series), links.el);
+
+  // A sum of the rates there are; none at all reads "–", not 0.
+  const total = rates => rates.reduce((sum, v) => (v == null ? sum : (sum || 0) + v), null);
+
+  return {
+    el: shell.el,
+    update(r, history, status) {
+      if (r) {
+        setSub(shell, [(r.model || "").replace(/_/g, " "), r.wan_ip && `WAN ${r.wan_ip}`,
+                       r.uptime != null && `up ${fmt.uptime(r.uptime)}`]);
+        wan.set(r.wan_up ? "up" : "down");
+        wan.el.classList.toggle("is-down", !r.wan_up);
+        cpu.set(fmt.pct(r.cpu_pct));
+        mem.set(fmt.pct(r.mem_total ? (r.mem_used / r.mem_total) * 100 : null));
+        temp.set(fmt.pct(r.temp));
+        // The LAN ports only: the port the internet comes in on carries every
+        // download in and would count it again as wired traffic. Devices, as
+        // for the bands: every VM behind the PVE host's one port counts.
+        const lan = (r.ports || []).filter(p => !p.wan);
+        const linked = lan.filter(p => p.up).length;
+        const rows = [[
+          `wired · ${linked} ports`,
+          r.wired_devices == null ? "–" : String(r.wired_devices),
+          fmt.bits(total(lan.map(p => p.down_bps))),
+          fmt.bits(total(lan.map(p => p.up_bps))),
+        ]];
+        for (const b of r.bands || []) {
+          rows.push([
+            b.name,
+            !b.on ? "off" : b.devices == null ? "–" : String(b.devices),
+            fmt.bits(b.down_bps),
+            fmt.bits(b.up_bps),
+          ]);
+        }
+        links.set(rows);
+      }
+      spark.update(history || {}, status && status.capacity);
+      applyStale(shell, status);
+    },
+  };
+}
+
 /* --- 4.1 PVE host --- */
 
 export const nodeCard = (() => {
