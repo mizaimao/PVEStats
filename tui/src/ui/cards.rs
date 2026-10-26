@@ -202,7 +202,9 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         value: util.map_or(fmt::DASH.to_string(), |u| format!("{}", u.round() as i64)),
         unit: "%".into(),
         slots: 3,
-        small: false,
+        // Three rows, picked over five on the screen itself; the console keeps
+        // its five-row blocks.
+        small: !look.console_glyphs,
         style: bold(p.s1),
     };
     // VRAM filling up is the failure that actually bites on this box: a model
@@ -525,6 +527,8 @@ pub enum Size {
     Full,
     /// CPU and memory, then a line of whatever fits: traffic, disk, uptime.
     Compact,
+    /// CPU and memory, then traffic and disk I/O on a line each.
+    Small,
     /// CPU and memory only.
     Tiny,
 }
@@ -575,12 +579,34 @@ pub fn basic(look: &Look, slot: &Slot, status: &Status, size: Size) -> Card {
                 ]),
             ]
         }
+        Size::Small => {
+            let rate = |v: Option<f64>| Span::styled(fmt::rate(v), ink);
+            // Passed-through storage reads near zero however busy it is.
+            let io = match g.filter(|g| g.disk_io_visible) {
+                Some(g) => vec![
+                    Span::styled("io  r", muted),
+                    rate(g.disk_read_bps),
+                    Span::styled(" w", muted),
+                    rate(g.disk_write_bps),
+                ],
+                None => vec![Span::styled("io  –", muted)],
+            };
+            vec![
+                bars(),
+                Part::Text(Line::from(vec![
+                    Span::styled("net ↓", muted),
+                    rate(g.and_then(|g| g.net_in_bps)),
+                    Span::styled(" ↑", muted),
+                    rate(g.and_then(|g| g.net_out_bps)),
+                ])),
+                Part::Text(Line::from(io)),
+            ]
+        }
         Size::Tiny => vec![bars()],
     };
     Card {
         title: slot.name.clone(),
-        // A tiny card has no room for both name and vmid on its border.
-        right: if size == Size::Tiny { String::new() } else { slot.vmid.to_string() },
+        right: slot.vmid.to_string(),
         stale: !status.ok,
         error: status.error.clone(),
         body,
@@ -670,33 +696,5 @@ pub fn tour(look: &Look, names: &[&str], index: usize, next_in: u64) -> Card {
         stale: false,
         error: None,
         body,
-    }
-}
-
-// ------------------------------------------------------- digits preview
-
-/// The GPU figure in both sizes of big digits, live, for choosing one.
-pub fn digits_preview(look: &Look, util: Option<f64>) -> Card {
-    let p = look.p;
-    let value = util.map_or(fmt::DASH.to_string(), |u| format!("{}", u.round() as i64));
-    let digits = |small: bool| Big {
-        value: value.clone(),
-        unit: "%".into(),
-        slots: 3,
-        small: small && !look.console_glyphs,
-        style: bold(p.s1),
-    };
-    Card {
-        title: "Big digits: pick one".into(),
-        right: String::new(),
-        stale: false,
-        error: None,
-        body: vec![
-            Part::Text(Line::styled("5 rows, as on the ml60 card", style(p.muted))),
-            Part::Big(digits(false)),
-            Part::Text(Line::raw("")),
-            Part::Text(Line::styled("3 rows", style(p.muted))),
-            Part::Big(digits(true)),
-        ],
     }
 }
