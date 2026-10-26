@@ -3,7 +3,7 @@
 A small read-only program for TrueNAS. It serves everything PVEStats'
 TrueNAS card shows as JSON over HTTP, read from the kernel and ZFS inside
 TrueNAS, instead of through TrueNAS's API (middlewared) and Proxmox's. Linear
-MOO-192. Not installed yet: see Installing, below.
+MOO-192. Installed 2026-10-26; the terminal dashboard reads it (NAS_AGENT_URL).
 
 ## Why
 
@@ -91,7 +91,7 @@ Checked on TrueNAS, as `pvestats`, in user-level units (2026-10-26):
   user namespace that a user-level unit needs. The system service runs
   outside such a namespace.
 
-## Installing (only with Frank's go-ahead)
+## Installing (done 2026-10-26; only with Frank's go-ahead)
 
 1. From the repo, after `nas/build`, copy the program into pvestats's home:
 
