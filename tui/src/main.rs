@@ -269,15 +269,45 @@ impl Power {
     }
 }
 
-/// Every output wlr-randr lists, on or off. A missing wlr-randr leaves the
-/// display as it is.
+/// Every output wlr-randr lists, on or off. Only outputs not already so are
+/// switched: turning on a display that is on would make it flicker each
+/// time the dashboard restarts. A missing wlr-randr leaves the display as
+/// it is.
 fn switch_outputs(on: bool) {
     let Ok(list) = std::process::Command::new("wlr-randr").output() else { return };
     let text = String::from_utf8_lossy(&list.stdout);
-    let outputs = text.lines().filter(|l| !l.starts_with(char::is_whitespace)).filter_map(|l| l.split_whitespace().next());
-    for output in outputs {
-        let _ = std::process::Command::new("wlr-randr")
-            .args(["--output", output, if on { "--on" } else { "--off" }])
-            .status();
+    for (output, enabled) in outputs(&text) {
+        if enabled != on {
+            let _ = std::process::Command::new("wlr-randr")
+                .args(["--output", output, if on { "--on" } else { "--off" }])
+                .status();
+        }
+    }
+}
+
+/// (name, enabled) for each output in wlr-randr's listing: a name line,
+/// then indented details, one of them "Enabled: yes" or "Enabled: no".
+fn outputs(text: &str) -> Vec<(&str, bool)> {
+    let mut found = Vec::new();
+    for line in text.lines() {
+        if !line.starts_with(char::is_whitespace) {
+            if let Some(name) = line.split_whitespace().next() {
+                found.push((name, true));
+            }
+        } else if let Some(state) = line.trim().strip_prefix("Enabled:") {
+            if let Some(last) = found.last_mut() {
+                last.1 = state.trim() == "yes";
+            }
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wlr_randr_listing() {
+        let text = "HDMI-A-2 \"Monitor (HDMI-A-2)\"\n  Make: X\n  Enabled: no\n  Modes:\n    1920x1080 px\nDP-1 \"Other\"\n  Enabled: yes\n";
+        assert_eq!(super::outputs(text), vec![("HDMI-A-2", false), ("DP-1", true)]);
     }
 }

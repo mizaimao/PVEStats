@@ -35,3 +35,9 @@ hosts:
     # hardware backs a virtual NIC.
     nic_labels:
       ens18: virtual (E610)
+
+# The terminal dashboard (tui/) only.
+tui:
+  # Daily hours with the display switched off, against burn-in. Applies in
+  # the full-screen kiosk (through wlr-randr); remove the line to keep it on.
+  screen_off: "03:00-05:00"

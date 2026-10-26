@@ -124,11 +124,12 @@ impl Screen {
 
         let names: Vec<&str> = theme::names().collect();
         let theme_now = self.tour.as_ref().map(|t| names[t.index % names.len()]);
-        let status = status_card(look, &[("pve", &sp), ("agent", &sa), ("truenas", &sn)], theme_now);
         let host_card = match pve.data.as_ref() {
             Some(d) => cards::host(look, &d.node, &pve, &sp),
             None => cards::pve_note(look, &sp),
         };
+        let top = with_status(look, &[("pve", &sp), ("agent", &sa), ("truenas", &sn)], theme_now, host_card);
+        let util = agent.data.as_ref().and_then(|d| d.gpu.as_ref()).and_then(|g| g.util);
         let of = |view: View| slots.values().filter(move |s| s.view == view);
         let gpu_cards: Vec<Card> = of(View::Gpu).map(|s| cards::gpu(look, s, &agent, &sa, &sp)).collect();
         let nas_cards: Vec<Card> =
@@ -148,24 +149,23 @@ impl Screen {
             let left = (w - 2) / 3;
             let mid = (w - left - 2) / 2;
             let right = w - left - mid - 2;
-            let mut left_cards = vec![status, host_card];
+            let mut left_cards = vec![top];
             left_cards.extend(nas_cards);
             column(&mut pen, Rect { width: left, ..body }, &left_cards, Some(&guests), None);
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None, None);
-            let mut right_cards = vec![cards::weather_placeholder(look)];
+            let mut right_cards = vec![cards::weather_placeholder(look), cards::digits_preview(look, util)];
             right_cards.extend(tour);
             column(&mut pen, Rect { x: body.x + left + mid + 2, width: right, ..body }, &right_cards, None, None);
         } else if w >= TWO_COLUMNS {
             let left = (w - 1) / 2;
-            let mut left_cards = vec![status, host_card];
+            let mut left_cards = vec![top];
             left_cards.extend(gpu_cards);
             column(&mut pen, Rect { width: left, ..body }, &left_cards, None, None);
             let right = Rect { x: body.x + left + 1, width: w - left - 1, ..body };
             column(&mut pen, right, &nas_cards, Some(&guests), tour.as_ref());
         } else {
-            let mut all = vec![status];
+            let mut all = vec![top];
             all.extend(gpu_cards);
-            all.push(host_card);
             all.extend(nas_cards);
             self.scrolled(&mut pen, body, &all, &guests);
         }
@@ -315,9 +315,12 @@ fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>, ta
     }
 }
 
-/// The dashboard's name and its sources, each a dot and an age, as a small
-/// panel. During a theme tour its corner names the theme.
-fn status_card(look: &Look, sources: &[(&str, &Status)], theme_now: Option<&str>) -> Card {
+/// The dashboard's name and its sources, each a dot and an age, on top of
+/// the host card: one panel rather than two leaves the cards below three
+/// more rows. The host's readings dim on their own when PVE is not
+/// answering, with the reason on the border; the source dots never do.
+/// During a theme tour the corner names the theme.
+fn with_status(look: &Look, sources: &[(&str, &Status)], theme_now: Option<&str>, host: Card) -> Card {
     let p = look.p;
     let mut spans = Vec::new();
     for (i, (name, status)) in sources.iter().enumerate() {
@@ -329,13 +332,20 @@ fn status_card(look: &Look, sources: &[(&str, &Status)], theme_now: Option<&str>
         spans.push(Span::styled(format!("{name} "), Style::default().fg(p.ink2)));
         spans.push(Span::styled(age, Style::default().fg(p.muted)));
     }
-    let clock = local_time();
+    let clock = match theme_now {
+        Some(theme) => format!("theme {theme} · {}", local_time()),
+        None => local_time(),
+    };
+    let readings = Part::Stack(host.body);
     Card {
         title: "PVEStats".into(),
-        right: theme_now.map_or(clock.clone(), |t| format!("theme {t} · {clock}")),
+        right: if host.right.is_empty() { clock } else { format!("{} · {clock}", host.right) },
         stale: false,
-        error: None,
-        body: vec![Part::Text(Line::from(spans))],
+        error: host.error,
+        body: vec![
+            Part::Text(Line::from(spans)),
+            if host.stale { Part::Dim(Box::new(readings)) } else { readings },
+        ],
     }
 }
 
