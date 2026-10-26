@@ -76,8 +76,6 @@ pub enum Part {
     Chart(Chart),
     /// Two graphs on one axis, one up and one down, btop's network style.
     Mirror(Mirror),
-    /// A meter standing upright, filling from the foot.
-    Upright(Upright),
     /// A value in big digits.
     Big(Big),
     /// A muted label over its value.
@@ -104,7 +102,6 @@ impl Part {
             Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
             Part::Chart(c) => c.min_rows,
             Part::Mirror(m) => m.rows,
-            Part::Upright(_) => 3,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
@@ -158,7 +155,6 @@ impl Part {
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
             Part::Mirror(m) => m.render(pen, area),
-            Part::Upright(u) => u.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
@@ -388,6 +384,9 @@ pub struct Chart {
     pub min_rows: u16,
     pub max_rows: u16,
     pub weight: u16,
+    /// Cells each sample takes, for a slow source whose buffer would
+    /// otherwise fill only part of the width; None fits the buffer across.
+    pub sample_width: Option<f64>,
 }
 
 impl Chart {
@@ -430,12 +429,13 @@ impl Chart {
             }
             pen.cell(area, area.x + label_w, y, if label.is_some() { "┤" } else { "│" }, grid);
         }
-        plot(pen, plot_area, &self.traces, self.capacity, top, false);
+        plot(pen, plot_area, &self.traces, self.capacity, top, false, self.sample_width);
 
         // Bottom row: the span on the left, the legend, "now" on the right.
         let y = area.bottom() - 1;
-        let across = plot_area.width as usize * if pen.look.console_glyphs { 1 } else { 2 };
-        let shown = (across / dots_per_sample(self.capacity, across)).min(self.capacity);
+        let dots = if pen.look.console_glyphs { 1 } else { 2 };
+        let across = plot_area.width as usize * dots;
+        let shown = (across / per_sample(self.capacity, across, self.sample_width, dots)).min(self.capacity);
         let span = span(shown as f64 * self.seconds_per_sample);
         let now_x = area.right().saturating_sub(3);
         let left = Rect { width: now_x.saturating_sub(area.x + 1), ..area };
@@ -504,8 +504,8 @@ impl Mirror {
         let width = area.width.saturating_sub(self.label_w + self.value_w + 1);
         let upper = Rect { x, y: top, width, height: half };
         let lower = Rect { x, y: top + half, width, height: area.height - half };
-        plot(pen, upper, std::slice::from_ref(&self.up), self.capacity, self.scale.unwrap_or_else(|| nice(up_peak.max(self.floor))), false);
-        plot(pen, lower, std::slice::from_ref(&self.down), self.capacity, self.scale.unwrap_or_else(|| nice(down_peak.max(self.floor))), true);
+        plot(pen, upper, std::slice::from_ref(&self.up), self.capacity, self.scale.unwrap_or_else(|| nice(up_peak.max(self.floor))), false, None);
+        plot(pen, lower, std::slice::from_ref(&self.down), self.capacity, self.scale.unwrap_or_else(|| nice(down_peak.max(self.floor))), true, None);
     }
 }
 
@@ -513,25 +513,26 @@ impl Mirror {
 /// over it, rising from the foot, or with `down` hanging from the top.
 /// Braille dots, two samples across and four levels per cell, shaded from
 /// the axis out; on the console, whole cells and shades.
-fn plot(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool) {
+fn plot(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool, width: Option<f64>) {
     let area = area.intersection(pen.buf.area);
     if area.width == 0 || area.height == 0 || top <= 0.0 {
         return;
     }
     if pen.look.console_glyphs {
-        plot_cells(pen, area, traces, capacity, top, down);
+        plot_cells(pen, area, traces, capacity, top, down, width);
     } else {
-        plot_braille(pen, area, traces, capacity, top, down);
+        plot_braille(pen, area, traces, capacity, top, down, width);
     }
 }
 
 /// Braille dot bits, by side of the cell and by level from its foot.
 const DOTS: [[u8; 4]; 2] = [[0x40, 0x04, 0x02, 0x01], [0x80, 0x20, 0x10, 0x08]];
 
-fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool) {
+fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool, width: Option<f64>) {
     let look = pen.look;
     let (w, rows) = (area.width as usize, area.height as usize);
     let (across, levels) = (w * 2, rows * 4);
+    let per = per_sample(capacity, across, width, 2);
     // Per cell, counted from the axis: its dots, and the line series passing
     // through it, if any. Levels count from the axis too.
     let mut dots = vec![0u8; w * rows];
@@ -542,7 +543,7 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     };
     if let Some(first) = traces.first() {
         for sub in 0..across {
-            let Some(v) = sample_at(&first.data, capacity, sub, across) else { continue };
+            let Some(v) = sample_at(&first.data, capacity, sub, across, per) else { continue };
             let mut height = (v / top * levels as f64).round() as usize;
             // Any reading above zero shows, however small.
             if v > 0.0 {
@@ -555,7 +556,7 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     }
     for trace in traces.iter().skip(1) {
         for sub in 0..across {
-            let Some(v) = sample_at(&trace.data, capacity, sub, across) else { continue };
+            let Some(v) = sample_at(&trace.data, capacity, sub, across, per) else { continue };
             let level = ((v / top * levels as f64).floor() as usize).min(levels - 1);
             set(&mut dots, sub, level);
             line[(level / 4) * w + sub / 2] = Some(trace.series);
@@ -577,13 +578,14 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     }
 }
 
-fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool) {
+fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top: f64, down: bool, width: Option<f64>) {
     let look = pen.look;
     let rows = area.height;
+    let per = per_sample(capacity, area.width as usize, width, 1);
     let y_of = |level: u16| if down { area.y + level } else { area.bottom() - 1 - level };
     for c in 0..area.width {
         let x = area.x + c;
-        let column = |t: &Trace| sample_at(&t.data, capacity, c as usize, area.width as usize);
+        let column = |t: &Trace| sample_at(&t.data, capacity, c as usize, area.width as usize, per);
         let mut filled = 0.0;
         if let Some(first) = traces.first() {
             if let Some(v) = column(first) {
@@ -609,14 +611,20 @@ fn dots_per_sample(capacity: usize, width: usize) -> usize {
     (width / capacity.max(1)).max(1)
 }
 
+/// Columns each sample takes: `width` cells of `dots` columns each when a
+/// chart sets one, else as many as fit the buffer across.
+fn per_sample(capacity: usize, across: usize, width: Option<f64>, dots: usize) -> usize {
+    width.map_or_else(|| dots_per_sample(capacity, across), |w| ((w * dots as f64).round() as usize).max(1))
+}
+
 /// The sample drawn at column `c` of `width`, the newest at the right edge.
 /// Each sample takes the same whole number of columns, so every new one
 /// moves the graph by exactly that much. Fitting a long buffer into fewer
 /// columns put two samples in some and one in others, so a column changed
 /// only every other tick; now a buffer longer than the width shows its
 /// newest part.
-fn sample_at(data: &[Option<f64>], capacity: usize, c: usize, width: usize) -> Option<f64> {
-    let back = (width.max(1) - 1 - c.min(width.max(1) - 1)) / dots_per_sample(capacity, width);
+fn sample_at(data: &[Option<f64>], capacity: usize, c: usize, width: usize, per: usize) -> Option<f64> {
+    let back = (width.max(1) - 1 - c.min(width.max(1) - 1)) / per.max(1);
     if back >= capacity {
         return None;
     }
@@ -912,16 +920,16 @@ mod tests {
     fn columns_hold_the_newest_sample_right() {
         let data = vec![Some(1.0), Some(2.0), Some(3.0)];
         // Four columns, three samples: the first column is empty.
-        assert_eq!(sample_at(&data, 4, 0, 4), None);
-        assert_eq!(sample_at(&data, 4, 3, 4), Some(3.0));
+        assert_eq!(sample_at(&data, 4, 0, 4, 1), None);
+        assert_eq!(sample_at(&data, 4, 3, 4, 1), Some(3.0));
         // A buffer of 2 over 8 columns: each sample four columns wide.
-        assert_eq!(sample_at(&data[1..], 2, 7, 8), Some(3.0));
-        assert_eq!(sample_at(&data[1..], 2, 4, 8), Some(3.0));
-        assert_eq!(sample_at(&data[1..], 2, 3, 8), Some(2.0));
+        assert_eq!(sample_at(&data[1..], 2, 7, 8, 4), Some(3.0));
+        assert_eq!(sample_at(&data[1..], 2, 4, 8, 4), Some(3.0));
+        assert_eq!(sample_at(&data[1..], 2, 3, 8, 4), Some(2.0));
         // A buffer longer than the width shows its newest part, one column
         // per sample, so each new sample moves the graph by one.
-        assert_eq!(sample_at(&data, 3, 0, 2), Some(2.0));
-        assert_eq!(sample_at(&data, 3, 1, 2), Some(3.0));
+        assert_eq!(sample_at(&data, 3, 0, 2, 1), Some(2.0));
+        assert_eq!(sample_at(&data, 3, 1, 2, 1), Some(3.0));
     }
 
     #[test]
@@ -944,6 +952,7 @@ mod tests {
             min_rows: 4,
             max_rows: 9,
             weight: 1,
+            sample_width: None,
         });
         let parts = vec![Part::Gap, chart, Part::Gap, Part::Text(Line::raw("x"))];
         // Six spare rows: four to the chart, two to the gap below it.
@@ -961,51 +970,5 @@ mod tests {
         assert_eq!(nice(31.0 * mib), 50.0 * mib);
         assert_eq!(span(180.0), "3m ago");
         assert_eq!(span(90.0), "90s ago");
-    }
-}
-
-// --------------------------------------------------------- upright meter
-
-/// A meter standing upright: its label on top, the figure at the foot, and
-/// between them a bar filling from the bottom, as tall as it is given.
-pub struct Upright {
-    pub label: String,
-    pub ratio: Option<f64>,
-    pub color: Color,
-    pub value: String,
-}
-
-impl Upright {
-    fn render(&self, pen: &mut Pen, area: Rect) {
-        let p = pen.look.p;
-        if area.height < 3 {
-            return;
-        }
-        let centre = |text: &str| area.x + area.width.saturating_sub(text.chars().count() as u16) / 2;
-        pen.text(area, centre(&self.label), area.y, &self.label, Style::default().fg(p.muted));
-        pen.text(area, centre(&self.value), area.bottom() - 1, &self.value, Style::default().fg(p.ink));
-        let rows = area.height - 2;
-        let bar_w = area.width.saturating_sub(2).clamp(1, 5);
-        let x = area.x + (area.width - bar_w) / 2;
-        let filled = self.ratio.unwrap_or(0.0).clamp(0.0, 1.0) * rows as f64;
-        let full = filled.floor() as u16;
-        let partial: &[&str] = if pen.look.console_glyphs { &["░", "▒"] } else { &["▁", "▂", "▃", "▄", "▅", "▆", "▇"] };
-        // The empty part of the track: dim blocks, or a shade on the console,
-        // whose dim grey would read as filled.
-        let track = if pen.look.console_glyphs { "░" } else { "█" };
-        for r in 0..rows {
-            let y = area.bottom() - 2 - r;
-            let (symbol, color) = if r < full {
-                ("█", self.color)
-            } else if r == full {
-                let step = ((filled - full as f64) * (partial.len() + 1) as f64).floor() as usize;
-                if step > 0 { (partial[step - 1], self.color) } else { (track, p.grid) }
-            } else {
-                (track, p.grid)
-            };
-            for dx in 0..bar_w {
-                pen.cell(area, x + dx, y, symbol, Style::default().fg(color));
-            }
-        }
     }
 }

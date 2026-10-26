@@ -36,7 +36,9 @@ pub struct Shared {
 impl Shared {
     pub fn new(window: f64) -> Self {
         Shared {
-            pve: Mutex::new(Source::new(PVE_INTERVAL, window)),
+            // Ten minutes at least: PVE's chart gives each 10s sample a cell,
+            // so a wide one reaches back further than the window.
+            pve: Mutex::new(Source::new(PVE_INTERVAL, window.max(600.0))),
             agent: Mutex::new(Source::new(AGENT_INTERVAL, window)),
             nas: Mutex::new(Source::new(TRUENAS_INTERVAL, window)),
         }

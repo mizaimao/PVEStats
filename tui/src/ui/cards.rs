@@ -4,7 +4,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Table, Trace, Upright};
+use super::draw::{bar, Big, Card, Chart, Col, Meter, Mirror, Part, Table, Trace};
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
@@ -131,6 +131,7 @@ fn disk_line(look: &Look, guest: Option<&Guest>) -> Part {
 // ------------------------------------------------------------ PVE host
 
 pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) -> Card {
+    let p = look.p;
     // Trim pve-manager's build hash: it is noise at a glance.
     let version = node.pveversion.as_deref().unwrap_or("").split('/').take(2).collect::<Vec<_>>().join(" ");
     // The node leads: the card shares its title with the status line.
@@ -140,147 +141,46 @@ pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) ->
     if let Some(threads) = node.cpus {
         info.push(format!("{threads} threads"));
     }
-    let load = node.loadavg.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>().join(" / ");
-    Card {
-        title: format!("Proxmox host · {}", node.name),
-        right: version,
-        stale: !status.ok,
-        error: status.error.clone(),
-        body: vec![
-            sub(look, info),
-            Part::Flow(
-                30,
-                vec![
-                    meter(look, "CPU", node.cpu_pct.map(|v| v / 100.0), fmt::pct(node.cpu_pct), 4),
-                    meter(look, "Mem", ratio(node.mem, node.maxmem), mem_text(node.mem, node.maxmem), 0),
-                ],
-            ),
-            Part::Chart(Chart {
-                traces: vec![Trace::from(pve.series("node.cpu"), 0, "")],
-                capacity: pve.capacity(),
-                top: Some(100.0),
-                floor: 0.0,
-                axis: axis_pct,
-                seconds_per_sample: pve.interval,
-                // The load rides on the caption: a line of its own cost the guests a row.
-                caption: format!("Host CPU {} · load {}", fmt::pct(node.cpu_pct), if load.is_empty() { fmt::DASH.into() } else { load }),
-                min_rows: 3,
-                max_rows: 4,
-                weight: 1,
-            }),
-        ],
-    }
-}
-
-/// Trial versions of the host card with CPU and memory on one chart and no
-/// bars, shown in the right-hand column until one is picked. Each is as tall
-/// as it would be in the first column.
-pub fn host_variants(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) -> Vec<Card> {
-    let p = look.p;
-    let cpu = node.cpu_pct;
-    let mem_ratio = ratio(node.mem, node.maxmem);
-    let mem_pct = fmt::pct(mem_ratio.map(|r| r * 100.0));
-    let gib = mem_text(node.mem, node.maxmem);
     let load = node.loadavg.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>().join(" ");
-    let info = || {
-        sub(
-            look,
-            vec![
-                node.name.clone(),
-                format!("up {}", fmt::uptime(node.uptime)),
-                format!("guests {} / {}", node.guests_running, node.guests_total),
-                format!("load {load}"),
-            ],
-        )
-    };
-    let chart = |cpu_label: String, mem_label: String, caption: String| {
-        Part::Chart(Chart {
-            traces: vec![
-                Trace::from(pve.series("node.cpu"), 0, &cpu_label),
-                Trace::from(pve.series("node.mem_pct"), 1, &mem_label),
-            ],
-            capacity: pve.capacity(),
-            top: Some(100.0),
-            floor: 0.0,
-            axis: axis_pct,
-            seconds_per_sample: pve.interval,
-            caption,
-            min_rows: 5,
-            max_rows: 5,
-            weight: 1,
-        })
-    };
-    let card = |name: &str, body: Vec<Part>| Card {
-        title: format!("Host, variant {name}"),
-        right: node.name.clone(),
-        stale: !status.ok,
-        error: status.error.clone(),
-        body,
-    };
     let figure = |label: &str, value: String| {
         Part::Text(Line::from(vec![
             Span::styled(fmt::left(label, 7), style(p.muted)),
             Span::styled(value, bold(p.ink)),
         ]))
     };
-    vec![
-        // A: the figures ride in the legend, the GiB in the caption.
-        card("A", vec![
-            info(),
-            chart(format!("CPU {}", fmt::pct(cpu)), format!("mem {mem_pct}"), gib.clone()),
-        ]),
-        // B: the chart, and the figures in a panel at its side.
-        card("B", vec![
-            info(),
-            Part::Row(vec![
-                (0, chart("CPU".into(), "mem".into(), String::new())),
-                (
-                    18,
-                    Part::Stack(vec![
-                        figure("CPU", fmt::pct(cpu)),
-                        figure("Memory", mem_pct.clone()),
-                        Part::Text(Line::styled(gib.clone(), style(p.ink2))),
-                        Part::Text(Line::styled(format!("load {load}"), style(p.muted))),
-                    ]),
-                ),
-            ]),
-        ]),
-        // C: the chart, and memory as an upright gauge at its side.
-        card("C", vec![
-            info(),
-            Part::Row(vec![
-                (0, chart(format!("CPU {}", fmt::pct(cpu)), "mem".into(), gib.clone())),
-                (
-                    7,
-                    Part::Upright(Upright {
-                        label: "Mem".into(),
-                        ratio: mem_ratio,
-                        color: severity(look, mem_ratio, p.s2),
-                        value: mem_pct.clone(),
-                    }),
-                ),
-            ]),
-        ]),
-        // D: btop's network style, CPU rising and memory hanging.
-        card("D", vec![
-            info(),
-            Part::Mirror(Mirror {
-                up: Trace::from(pve.series("node.cpu"), 0, ""),
-                down: Trace::from(pve.series("node.mem_pct"), 1, ""),
-                up_label: Line::styled("CPU", style(look.flat(0))),
-                down_label: Line::styled("Memory", style(look.flat(1))),
-                up_value: fmt::pct(cpu),
-                down_value: format!("{mem_pct} · {gib}"),
-                label_w: 8,
-                value_w: 24,
-                capacity: pve.capacity(),
-                floor: 0.0,
-                scale: Some(100.0),
-                format: |v| fmt::pct(Some(v)),
-                rows: 5,
-            }),
-        ]),
-    ]
+    // CPU as an area and memory as a line on one 0-100 chart, as on the GPU
+    // card, with the figures in a panel at its side.
+    let chart = Part::Chart(Chart {
+        traces: vec![
+            Trace::from(pve.series("node.cpu"), 0, "CPU"),
+            Trace::from(pve.series("node.mem_pct"), 1, "mem"),
+        ],
+        capacity: pve.capacity(),
+        top: Some(100.0),
+        floor: 0.0,
+        axis: axis_pct,
+        seconds_per_sample: pve.interval,
+        caption: String::new(),
+        min_rows: 5,
+        max_rows: 8,
+        weight: 1,
+        // A cell per 10s sample, so the chart reaches back further than the
+        // buffer would stretched across.
+        sample_width: Some(1.0),
+    });
+    let figures = Part::Stack(vec![
+        figure("CPU", fmt::pct(node.cpu_pct)),
+        figure("Memory", fmt::pct(ratio(node.mem, node.maxmem).map(|r| r * 100.0))),
+        Part::Text(Line::styled(mem_text(node.mem, node.maxmem), style(p.ink2))),
+        Part::Text(Line::styled(format!("load {load}"), style(p.muted))),
+    ]);
+    Card {
+        title: format!("Proxmox host · {}", node.name),
+        right: version,
+        stale: !status.ok,
+        error: status.error.clone(),
+        body: vec![sub(look, info), Part::Row(vec![(0, chart), (18, figures)])],
+    }
 }
 
 /// While PVE has given no data the host card cannot exist, so a note in
@@ -363,6 +263,7 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         min_rows: 5,
         max_rows: 11,
         weight: 3,
+        sample_width: None,
     });
 
     let power = match (get(|g| g.power), get(|g| g.power_limit)) {
