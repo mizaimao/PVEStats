@@ -22,7 +22,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers
 use ratatui::Terminal;
 
 use config::Config;
-use sources::{agent::Agent, host::Host, lock, nas_agent::NasAgent, pve::Pve, router::Router, run_poller, truenas::TrueNas, weather::Weather, Shared};
+use sources::{agent::Agent, host::Host, lock, nas_agent::NasAgent, pve::Pve, router::Router, run_poller, weather::Weather, Shared};
 use ui::theme::{Colors, Look};
 use ui::{Screen, Tour};
 
@@ -106,7 +106,7 @@ fn main() {
     config.demo |= args.demo;
     let config = Arc::new(config);
     let shared =
-        Arc::new(Shared::new(config.window, config.pve_interval(), config.pve_agent_every, config.nas_interval()));
+        Arc::new(Shared::new(config.window, config.pve_interval(), config.pve_agent_every, config.nas_agent_every));
     start(&config, &shared);
 
     let term = std::env::var("TERM").unwrap_or_default();
@@ -199,14 +199,11 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
         let (mut weather, s) = (Weather::new(config.clone()), shared.clone());
         thread::spawn(move || run_poller(&s.weather, sources::WEATHER_INTERVAL, || weather.poll(&s.weather)));
     }
-    // TrueNAS's agent when there is one, and then never its API.
+    // TrueNAS only through its own agent: its API is no longer asked.
     if config.nas_agent_configured() {
         let (mut nas, s) = (NasAgent::new(config.nas_agent_url.clone()), shared.clone());
         let every = config.nas_agent_every;
         thread::spawn(move || run_poller(&s.nas, every, || nas.poll(&s.nas)));
-    } else if config.truenas_configured() {
-        let (mut nas, s) = (TrueNas::new(config.clone()), shared.clone());
-        thread::spawn(move || run_poller(&s.nas, sources::TRUENAS_INTERVAL, || nas.poll(&s.nas)));
     } else {
         lock(&shared.nas).fail(missing());
     }

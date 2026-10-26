@@ -524,46 +524,30 @@ fn nic_role(name: &str, nic: &Nic, host: Option<&Host>) -> String {
     }
 }
 
-pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>, status: &Status, pve: &Status) -> Card {
+pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>, status: &Status) -> Card {
     let p = look.p;
-    let guest = slot.guest;
     let data = nas.data.as_ref();
     let interfaces = data.map_or(&[][..], |d| d.interfaces.as_slice());
-    // With TrueNAS's agent, everything on the card comes from it; without,
-    // CPU, memory, address and uptime are PVE's, greyed while it is down.
+    // Everything on the card comes from TrueNAS's own agent.
     let inside = data.and_then(|d| d.inside.as_ref());
-    let (cpu, mem, maxmem) = match inside {
-        Some(i) => (i.cpu_pct, i.mem_used, i.mem_total),
-        None => (guest.and_then(|g| g.cpu_pct), guest.and_then(|g| g.mem), guest.and_then(|g| g.maxmem)),
-    };
+    let (cpu, mem, maxmem) = inside.map_or((None, None, None), |i| (i.cpu_pct, i.mem_used, i.mem_total));
 
     // The bars at half length, side by side; the GiB ride on the line above.
     let mem_ratio = ratio(mem, maxmem);
-    let mut usage = Part::Flow(
+    let usage = Part::Flow(
         24,
         vec![
             meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
             meter(look, "Mem", mem_ratio, fmt::pct(mem_ratio.map(|r| r * 100.0)), 4),
         ],
     );
-    let heading = match (inside, guest) {
-        (Some(i), _) => sub(
+    let heading = match inside {
+        Some(i) => sub(
             look,
             vec![i.ip.clone().unwrap_or_default(), format!("up {}", fmt::uptime(i.uptime)), mem_text(mem, maxmem)],
         ),
-        (None, None) => sub(look, vec![fmt::DASH.into()]),
-        (None, Some(g)) => sub(
-            look,
-            vec![
-                g.addresses.first().cloned().unwrap_or_default(),
-                format!("up {}", fmt::uptime(g.uptime)),
-                mem_text(mem, maxmem),
-            ],
-        ),
+        None => sub(look, vec![fmt::DASH.into()]),
     };
-    if inside.is_none() && !pve.ok {
-        usage = Part::Dim(Box::new(usage));
-    }
 
     // Interface throughput is read from inside TrueNAS, never from PVE's
     // counters (spec §3.3). Each interface gets btop's network graph:
@@ -623,18 +607,14 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
         .map_or(&[][..], |d| d.pools.as_slice())
         .iter()
         .map(|pool| {
-            // Usable space where TrueNAS gave it: the raw zpool size counts
-            // parity, about twice what a RAIDZ2 pool can hold. Raw, and said
-            // so, only as a fallback.
-            let usable = pool.usable.is_some() && pool.used_bytes.is_some();
-            let (used, total) = if usable { (pool.used_bytes, pool.usable) } else { (pool.allocated, pool.size) };
+            // Usable space, from the root dataset: the raw zpool size counts
+            // parity, about twice what a RAIDZ2 pool can hold.
+            let (used, total) = (pool.used_bytes, pool.usable);
             let r = ratio(used, total);
             // Graded: a ZFS pool past 80% is a genuine performance concern.
             let color = severity(look, r, p.s1);
             let figure = match (r, total) {
-                (Some(r), Some(total)) => {
-                    format!("{}% of {:.1} TiB{}", (r * 100.0).round() as i64, total / TIB, if usable { "" } else { " raw" })
-                }
+                (Some(r), Some(total)) => format!("{}% of {:.1} TiB", (r * 100.0).round() as i64, total / TIB),
                 _ => fmt::DASH.into(),
             };
             // Icon plus label: pool state never rides on colour alone.
