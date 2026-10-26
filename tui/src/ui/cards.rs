@@ -306,34 +306,38 @@ pub fn gpu(
         }
         Some(text)
     });
+    // The guest's network, disk usage, CPU and memory are PVE's, at its 10s
+    // pace. When PVE is not answering they keep its last values, greyed,
+    // rather than looking live. ml60's storage is passed through, so the
+    // hypervisor never sees its disk traffic: usage only.
+    let guest = slot.guest;
+    let pve_ink = style(if pve.ok { p.ink } else { p.muted });
+    let net = Line::from(vec![
+        Span::styled("net ↓", style(p.muted)),
+        Span::styled(fmt::rate(guest.and_then(|g| g.net_in_bps)), pve_ink),
+        Span::styled(" ↑", style(p.muted)),
+        Span::styled(fmt::rate(guest.and_then(|g| g.net_out_bps)), pve_ink),
+    ]);
+    let disk = guest
+        .and_then(|g| g.filesystem.as_ref())
+        .map_or(fmt::DASH.into(), |fs| fmt::pct(ratio(fs.used, Some(fs.total)).map(|r| r * 100.0)));
+    // Network and disk ride beside the PCIe link, on the GPU's own lines.
     let chips = Part::Chips(vec![
         chip(look, "Temp", round(get(|g| g.temp), "°C")),
         chip(look, "Power", power),
         chip(look, "Fan", fmt::pct(get(|g| g.fan))),
         chip(look, "SM clock", get(|g| g.clock_sm).map_or(fmt::DASH.into(), |c| format!("{} MHz", fmt::int(Some(c))))),
         chip(look, "PCIe", link.unwrap_or_else(|| fmt::DASH.into())),
+        net,
+        Line::from(vec![Span::styled("disk ", style(p.muted)), Span::styled(disk, pve_ink)]),
     ]);
 
-    // The guest's CPU and memory are PVE's, at its 10s pace. When PVE is not
-    // answering they keep its last values, greyed, rather than looking live.
-    // The guest's CPU and memory, and network: ml60's storage is passed
-    // through, so the hypervisor never sees its disk traffic.
-    let guest = slot.guest;
-    let net = Line::from(vec![
-        Span::styled("net ↓", style(p.muted)),
-        Span::styled(fmt::rate(guest.and_then(|g| g.net_in_bps)), style(p.ink)),
-        Span::styled(" ↑", style(p.muted)),
-        Span::styled(fmt::rate(guest.and_then(|g| g.net_out_bps)), style(p.ink)),
-    ]);
     let cpu = guest.and_then(|g| g.cpu_pct);
     let mem = guest.and_then(|g| ratio(g.mem, g.maxmem)).map(|r| r * 100.0);
-    let mut pve_parts = Part::Stack(vec![
-        Part::Flow(24, vec![Part::Text(net), disk_line(look, guest)]),
-        // Two small charts side by side, CPU and memory, a figure under each.
-        Part::Row(vec![
-            (0, small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu)))),
-            (0, small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem)))),
-        ]),
+    // Two small charts side by side, CPU and memory, a figure under each.
+    let mut pve_parts = Part::Row(vec![
+        (0, small_chart(pve_data, &format!("cpu.{}", slot.vmid), 0, format!("CPU {}", fmt::pct(cpu)))),
+        (0, small_chart(pve_data, &format!("mem.{}", slot.vmid), 1, format!("Mem {}", fmt::pct(mem)))),
     ]);
     if !pve.ok {
         pve_parts = Part::Dim(Box::new(pve_parts));
