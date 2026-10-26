@@ -64,9 +64,12 @@ then `kill` that pid and `rm ~/pvestats-nas`.
  "nics":[{"name":"ens18","driver":"virtio_net","rx":…,"tx":…}],
  "disks":[{"name":"sdb","model":"ST16000NE000-2RW","size":…,"pool":"CompoundZ2FS","read":…,"write":…},
  …],
- "pools":[{"name":"CompoundZ2FS","state":"ONLINE","used":…,"available":…,"boot":false},…]}
+ "pools":[{"name":"CompoundZ2FS","state":"ONLINE","used":…,"available":…,"age":12,"boot":false},…]}
 ```
 
 Counters are totals since boot (disks in bytes); the client makes rates.
 `boot` marks the pool TrueNAS runs from, so a client can leave it, and its
-disk, off the card.
+disk, off the card. A pool's `age` is the seconds since `zfs get` last gave
+its capacity: a run that hangs or fails on that pool keeps the last figures,
+and says how old they are. `zpool` and `zfs` are run by full path
+(`/usr/sbin/`), whatever PATH the agent starts with.

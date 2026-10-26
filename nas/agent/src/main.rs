@@ -53,6 +53,10 @@ const MAX_CLIENTS: usize = 4;
 const IDLE_LIMIT: Duration = Duration::from_secs(30);
 /// ZFS's per-pool kstat directories, and its ARC statistics.
 const KSTAT: &str = "/proc/spl/kstat/zfs";
+/// ZFS's tools, by full path: whatever PATH the agent is started with
+/// (an SSH command's, TrueNAS's init script's), they are found.
+const ZPOOL: &str = "/usr/sbin/zpool";
+const ZFS: &str = "/usr/sbin/zfs";
 
 /// One disk: its model and size, and the pool it belongs to, if any.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -70,6 +74,9 @@ struct PoolInfo {
     name: String,
     used: Option<u64>,
     available: Option<u64>,
+    /// When `zfs get` last gave this pool's figures: a run that hangs or
+    /// fails leaves them as they were, and the answer says how old.
+    read_at: Option<Instant>,
     /// The pool TrueNAS itself runs from.
     boot: bool,
 }
@@ -377,11 +384,12 @@ fn json(slow: &Slow) -> String {
             // that degrades should show at once.
             let state = read(&format!("{KSTAT}/{}/state", p.name)).map(|s| s.trim().to_string());
             format!(
-                "{{\"name\":{},\"state\":{},\"used\":{},\"available\":{},\"boot\":{}}}",
+                "{{\"name\":{},\"state\":{},\"used\":{},\"available\":{},\"age\":{},\"boot\":{}}}",
                 quote(&p.name),
                 state.as_deref().map_or("null".to_string(), quote),
                 or_null(p.used),
                 or_null(p.available),
+                or_null(p.read_at.map(|t| t.elapsed().as_secs())),
                 p.boot,
             )
         })
@@ -409,8 +417,9 @@ struct Runner {
 }
 
 impl Runner {
-    /// A tool's output, or None if it failed, could not start, or ran over
-    /// RUN_LIMIT and was killed.
+    /// A tool's output, whether it exited well or not (`zfs get` fails as a
+    /// whole when one pool does, and still prints the others), or None if it
+    /// could not start, or ran over RUN_LIMIT and was killed.
     fn run(&mut self, program: &str, args: &[&str]) -> Option<String> {
         self.run_within(program, args, RUN_LIMIT)
     }
@@ -431,36 +440,51 @@ impl Runner {
             .ok()?;
         let started = Instant::now();
         // Read as it comes, so a long answer cannot fill the pipe and stall
-        // the tool: the reading thread ends when the tool's output does.
-        let mut stdout = child.stdout.take()?;
-        let reader = thread::spawn(move || {
+        // the tool: the reading thread ends when the tool's output does. A
+        // thread the system will not give is no answer this round, not a
+        // panic, which would end the agent.
+        let Some(mut stdout) = child.stdout.take() else {
+            self.give_up(child);
+            return None;
+        };
+        let spawned = thread::Builder::new().stack_size(64 * 1024).spawn(move || {
             let mut out = String::new();
             stdout.read_to_string(&mut out).ok().map(|_| out)
         });
+        let Ok(reader) = spawned else {
+            self.give_up(child);
+            return None;
+        };
         loop {
             match child.try_wait() {
-                Ok(Some(status)) => {
-                    let out = reader.join().ok().flatten()?;
-                    return status.success().then_some(out);
-                }
+                Ok(Some(_)) => return reader.join().ok().flatten(),
                 Ok(None) if started.elapsed() < limit => thread::sleep(Duration::from_millis(5)),
                 _ => {
-                    let _ = child.kill();
-                    thread::sleep(Duration::from_millis(50));
-                    if !matches!(child.try_wait(), Ok(Some(_))) {
-                        self.stuck = Some(child);
-                    }
+                    self.give_up(child);
                     return None;
                 }
             }
+        }
+    }
+
+    /// Kills a run and reaps it; one that will not die is kept, and nothing
+    /// else starts until it goes.
+    fn give_up(&mut self, mut child: Child) {
+        let _ = child.kill();
+        thread::sleep(Duration::from_millis(50));
+        if !matches!(child.try_wait(), Ok(Some(_))) {
+            self.stuck = Some(child);
         }
     }
 }
 
 /// Each pool's devices from `zpool list -v -H -P -o name`: a pool on a line
 /// of its own, its vdevs and devices indented by a tab beneath it. Only
-/// devices given as paths (/dev/...) are kept, as (pool, path).
-fn pool_devices(out: &str) -> Vec<(String, String)> {
+/// devices given as paths (/dev/...) are kept, as (pool, path). The class
+/// headers a pool's cache, log, spare or special devices sit under are
+/// unindented too: only a name in `pools` starts a pool, and the devices
+/// under a class header stay with the pool above it.
+fn pool_devices(out: &str, pools: &[String]) -> Vec<(String, String)> {
     let mut pool = String::new();
     let mut found = Vec::new();
     for line in out.lines() {
@@ -469,24 +493,20 @@ fn pool_devices(out: &str) -> Vec<(String, String)> {
             if field.starts_with("/dev/") && !pool.is_empty() {
                 found.push((pool.clone(), field.to_string()));
             }
-        } else if let Some(name) = line.split('\t').next().filter(|n| !n.is_empty()) {
+        } else if let Some(name) = line.split('\t').next().map(str::trim).filter(|n| pools.iter().any(|p| p == n)) {
             pool = name.to_string();
         }
     }
     found
 }
 
-/// The disk a block device belongs to, from its path in /sys: a partition
-/// sits in its disk's directory (.../block/sdf/sdf2), a whole disk directly
-/// under block (.../block/sdb).
-fn disk_of(sys_path: &Path) -> Option<String> {
-    let name = sys_path.file_name()?.to_str()?;
-    let parent = sys_path.parent()?;
-    if parent.file_name()?.to_str()? == "block" {
-        Some(name.to_string())
-    } else {
-        Some(parent.file_name()?.to_str()?.to_string())
-    }
+/// The disk a block device belongs to, from its directory in /sys: a
+/// partition (one with a `partition` file there) sits in its disk's
+/// directory (.../block/sdf/sdf2, .../nvme0n1/nvme0n1p1); anything else is a
+/// disk itself (.../block/sdb, .../nvme/nvme0/nvme0n1).
+fn disk_of(sys_path: &Path, is_partition: bool) -> Option<String> {
+    let at = if is_partition { sys_path.parent()? } else { sys_path };
+    Some(at.file_name()?.to_str()?.to_string())
 }
 
 /// used and available for each pool's root dataset, from
@@ -566,17 +586,26 @@ fn refresh(r: &mut Runner, slow: &Mutex<Slow>, with_members: bool) {
         .collect();
     nics.sort();
 
+    // The pools, by ZFS's own kstat directories.
+    let names: Vec<String> = std::fs::read_dir(KSTAT)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().join("state").exists())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .collect();
+
     // Which disk is in which pool, by the device paths zpool gives.
-    let listed = if with_members { r.run("zpool", &["list", "-v", "-H", "-P", "-o", "name"]) } else { None };
+    let listed = if with_members { r.run(ZPOOL, &["list", "-v", "-H", "-P", "-o", "name"]) } else { None };
     let members: Vec<(String, String)> = listed
-        .map(|out| pool_devices(&out))
+        .map(|out| pool_devices(&out, &names))
         .unwrap_or_default()
         .into_iter()
         .filter_map(|(pool, path)| {
             let device = std::fs::canonicalize(&path).ok()?;
             let name = device.file_name()?.to_str()?.to_string();
             let sys = std::fs::canonicalize(format!("/sys/class/block/{name}")).ok()?;
-            Some((disk_of(&sys)?, pool))
+            Some((disk_of(&sys, sys.join("partition").exists())?, pool))
         })
         .collect();
     let mut disks: Vec<DiskInfo> = std::fs::read_dir("/sys/block")
@@ -595,30 +624,33 @@ fn refresh(r: &mut Runner, slow: &Mutex<Slow>, with_members: bool) {
     disks.sort_by(|a, b| a.name.cmp(&b.name));
 
     // Each pool's capacity, and which one TrueNAS runs from.
-    let names: Vec<String> = std::fs::read_dir(KSTAT)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().join("state").exists())
-        .filter_map(|e| e.file_name().to_str().map(str::to_string))
-        .collect();
     let boot = read("/proc/self/mounts").and_then(|m| boot_pool(&m));
     let mut args = vec!["get", "-Hp", "-o", "name,property,value", "used,available"];
     args.extend(names.iter().map(String::as_str));
-    let space = if names.is_empty() { None } else { r.run("zfs", &args).map(|out| pool_space(&out)) };
+    let space = if names.is_empty() { Vec::new() } else { r.run(ZFS, &args).map(|out| pool_space(&out)).unwrap_or_default() };
     let ip = read("/proc/net/route").and_then(|t| gateway(&t)).and_then(address);
 
     let mut s = lock(slow);
     let old = std::mem::take(&mut s.pools);
+    let now = Instant::now();
     let mut pools: Vec<PoolInfo> = names
         .iter()
         .map(|name| {
-            let last = old.iter().find(|p| p.name == *name);
-            let get = |property: &str| match &space {
-                Some(space) => space.iter().find(|(n, p, _)| n == name && *p == property).map(|(_, _, v)| *v),
-                None => last.and_then(|l| if property == "used" { l.used } else { l.available }),
+            let value = |property: &str| space.iter().find(|(n, p, _)| n == name && *p == property).map(|(_, _, v)| *v);
+            let fresh = PoolInfo {
+                name: name.clone(),
+                used: value("used"),
+                available: value("available"),
+                read_at: Some(now),
+                boot: boot.as_deref() == Some(name),
             };
-            PoolInfo { name: name.clone(), used: get("used"), available: get("available"), boot: boot.as_deref() == Some(name) }
+            // A pool zfs gave nothing for this round (it hung, or failed on
+            // this pool) keeps its last figures, with their age.
+            match old.iter().find(|p| p.name == *name) {
+                Some(last) if fresh.used.is_none() && fresh.available.is_none() => PoolInfo { boot: fresh.boot, ..last.clone() },
+                _ if fresh.used.is_none() && fresh.available.is_none() => PoolInfo { read_at: None, ..fresh },
+                _ => fresh,
+            }
         })
         .collect();
     pools.sort_by(|a, b| a.name.cmp(&b.name));
@@ -677,15 +709,26 @@ mod tests {
     #[test]
     fn pools_and_their_disks() {
         // TrueNAS's own answer, 2026-10-26.
+        let pools: Vec<String> = ["CompoundZ2FS", "TimeMachine8", "freenas-boot"].map(String::from).to_vec();
         let out = "CompoundZ2FS\n\traidz2-0\n\t/dev/sdb\n\t/dev/sde\n\t/dev/sdd\n\t/dev/sdc\nTimeMachine8\n\t/dev/sdf2\n\
                    freenas-boot\n\t/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-part2\n";
-        let found = pool_devices(out);
+        let found = pool_devices(out, &pools);
         assert_eq!(found.len(), 6, "{found:?}");
         assert_eq!(found[0], ("CompoundZ2FS".to_string(), "/dev/sdb".to_string()));
         assert_eq!(found[4], ("TimeMachine8".to_string(), "/dev/sdf2".to_string()));
         assert_eq!(found[5].0, "freenas-boot");
-        assert_eq!(disk_of(Path::new("/sys/devices/pci0000:00/0000:00:10.0/host0/target0:0:0/0:0:0:0/block/sdf/sdf2")).as_deref(), Some("sdf"));
-        assert_eq!(disk_of(Path::new("/sys/devices/pci0000:00/0000:00:10.0/host0/target0:0:0/0:0:0:0/block/sdb")).as_deref(), Some("sdb"));
+        // A pool's cache and log devices under their class headers, which
+        // zpool prints unindented: they stay with their pool.
+        let classed = "TimeMachine8\n\t/dev/sdf2\ncache     -\n\t/dev/nvme0n1p1\nlogs      -\n\t/dev/sdg\n";
+        let found = pool_devices(classed, &pools);
+        assert!(found.iter().all(|(p, _)| p == "TimeMachine8"), "{found:?}");
+        assert_eq!(found.len(), 3);
+        let disk = "/sys/devices/pci0000:00/0000:00:10.0/host0/target0:0:0/0:0:0:0/block";
+        assert_eq!(disk_of(Path::new(&format!("{disk}/sdf/sdf2")), true).as_deref(), Some("sdf"));
+        assert_eq!(disk_of(Path::new(&format!("{disk}/sdb")), false).as_deref(), Some("sdb"));
+        // A whole NVMe disk sits under its controller, not under "block".
+        assert_eq!(disk_of(Path::new("/sys/devices/pci0000:00/0000:01:00.0/nvme/nvme0/nvme0n1"), false).as_deref(), Some("nvme0n1"));
+        assert_eq!(disk_of(Path::new("/sys/devices/pci0000:00/0000:01:00.0/nvme/nvme0/nvme0n1/nvme0n1p1"), true).as_deref(), Some("nvme0n1"));
         let space = "CompoundZ2FS\tused\t21893142802752\nCompoundZ2FS\tavailable\t8969214574272\nTimeMachine8\tused\t5382667722752\n";
         assert_eq!(pool_space(space), [
             ("CompoundZ2FS".to_string(), "used", 21_893_142_802_752),
@@ -738,7 +781,7 @@ mod tests {
         let slow = Arc::new(Mutex::new(Slow {
             nics: vec![("lo".into(), "x".into())],
             disks: vec![DiskInfo { name: "sdz".into(), model: "M \"1\"".into(), size: Some(512), pool: Some("tank".into()) }],
-            pools: vec![PoolInfo { name: "tank".into(), used: Some(1), available: None, boot: false }],
+            pools: vec![PoolInfo { name: "tank".into(), used: Some(1), available: None, read_at: None, boot: false }],
             ip: Some("192.0.2.1".into()),
         }));
         thread::spawn(move || serve(&listener, &slow));
@@ -750,7 +793,7 @@ mod tests {
         assert_eq!(got.matches("HTTP/1.1 200 OK").count(), 2, "{got}");
         assert!(got.contains("\"nics\":[{\"name\":\"lo\",\"driver\":\"x\""), "{got}");
         assert!(got.contains("\"model\":\"M \\\"1\\\"\",\"size\":512,\"pool\":\"tank\""), "{got}");
-        assert!(got.contains("\"pools\":[{\"name\":\"tank\",\"state\":null,\"used\":1,\"available\":null,\"boot\":false}]"), "{got}");
+        assert!(got.contains("\"pools\":[{\"name\":\"tank\",\"state\":null,\"used\":1,\"available\":null,\"age\":null,\"boot\":false}]"), "{got}");
         assert!(got.contains("\"ip\":\"192.0.2.1\"") && got.ends_with("]}\n"), "{got}");
     }
 }
