@@ -34,6 +34,9 @@ pub struct Config {
     pub router_url: String,
     /// The Proxmox host's own agent (pve/), plain HTTP on its LAN address.
     pub pve_agent_url: String,
+    /// TrueNAS's own agent (nas/), plain HTTP on its LAN address. With it,
+    /// TrueNAS's API is not asked at all.
+    pub nas_agent_url: String,
     /// Where the forecast is for, from .env so it stays off GitHub: a place
     /// name to look up (WEATHER_PLACE), or coordinates (WEATHER_LATITUDE and
     /// WEATHER_LONGITUDE), which win. WEATHER_UNITS=imperial for °F, mph, in.
@@ -55,6 +58,9 @@ pub struct Config {
     /// kernel each time it is asked, so this alone sets how often its
     /// figures change.
     pub pve_agent_every: f64,
+    /// Seconds between polls of TrueNAS's agent: config.yaml,
+    /// `tui: nas_agent_every`, 1 to 10, 2 when unset.
+    pub nas_agent_every: f64,
     /// Made-up Ollama models and GPU processes on ml60's card, to see how
     /// a busy GPU lays out: config.yaml, `tui: demo: true`, or --demo.
     pub demo: bool,
@@ -111,6 +117,7 @@ impl Config {
             agent_url: var("ML60_AGENT_URL"),
             router_url: var("ROUTER_AGENT_URL"),
             pve_agent_url: var("PVE_AGENT_URL"),
+            nas_agent_url: var("NAS_AGENT_URL"),
             weather_place: var("WEATHER_PLACE"),
             weather_at: var("WEATHER_LATITUDE").parse().ok().zip(var("WEATHER_LONGITUDE").parse().ok()),
             weather_imperial: var("WEATHER_UNITS").eq_ignore_ascii_case("imperial"),
@@ -123,13 +130,8 @@ impl Config {
                 .and_then(|t| t.get("screen_off"))
                 .and_then(|v| v.as_str())
                 .and_then(hours),
-            pve_agent_every: raw
-                .get("tui")
-                .and_then(|t| t.get("pve_agent_every"))
-                .and_then(|v| v.as_f64())
-                .filter(|v| v.is_finite())
-                .unwrap_or(crate::sources::HOST_INTERVAL)
-                .clamp(1.0, 10.0),
+            pve_agent_every: every(&raw, "pve_agent_every", crate::sources::HOST_INTERVAL),
+            nas_agent_every: every(&raw, "nas_agent_every", crate::sources::NAS_AGENT_INTERVAL),
             tour: raw
                 .get("tui")
                 .and_then(|t| t.get("theme_tour"))
@@ -145,6 +147,19 @@ impl Config {
 
     pub fn truenas_configured(&self) -> bool {
         !self.truenas_host.is_empty() && !self.truenas_api_key.is_empty()
+    }
+
+    pub fn nas_agent_configured(&self) -> bool {
+        !self.nas_agent_url.is_empty()
+    }
+
+    /// The TrueNAS card's poll: its agent's, or the API's every 5 s.
+    pub fn nas_interval(&self) -> f64 {
+        if self.nas_agent_configured() {
+            self.nas_agent_every
+        } else {
+            crate::sources::TRUENAS_INTERVAL
+        }
     }
 
     pub fn agent_configured(&self) -> bool {
@@ -188,6 +203,17 @@ impl Config {
     pub fn view_for(&self, vmid: u64) -> View {
         self.hosts.get(&vmid).map_or(View::Basic, |h| h.view)
     }
+}
+
+/// An agent's seconds between polls, `tui: <key>`: 1 to 10, `default`
+/// when unset.
+fn every(raw: &Yaml, key: &str, default: f64) -> f64 {
+    raw.get("tui")
+        .and_then(|t| t.get(key))
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .unwrap_or(default)
+        .clamp(1.0, 10.0)
 }
 
 fn hosts(raw: &Yaml) -> BTreeMap<u64, Host> {
@@ -313,6 +339,14 @@ mod tests {
         assert_eq!(hosts[&100].nic_labels["ens18"], "virtual (E610)");
         let empty: Yaml = serde_yaml::from_str("hosts:\n").unwrap();
         assert!(super::hosts(&empty).is_empty());
+    }
+
+    #[test]
+    fn poll_seconds() {
+        let raw: Yaml = serde_yaml::from_str("tui:\n  nas_agent_every: 0.2\n  pve_agent_every: 5\n").unwrap();
+        assert_eq!(every(&raw, "nas_agent_every", 2.0), 1.0);
+        assert_eq!(every(&raw, "pve_agent_every", 2.0), 5.0);
+        assert_eq!(every(&raw, "missing", 2.0), 2.0);
     }
 
     #[test]

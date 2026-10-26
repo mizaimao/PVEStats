@@ -302,8 +302,8 @@ impl TrueNas {
                 let info = self.nics.get(&label);
                 // netdata reports kilobits/s; normalise to bytes/sec.
                 let nic = Nic {
-                    rx_bps: a * 125.0,
-                    tx_bps: b * 125.0,
+                    rx_bps: Some(a * 125.0),
+                    tx_bps: Some(b * 125.0),
                     role: info.map(|i| i.role.clone()),
                     media: info.map(|i| i.media.clone()).unwrap_or_default(),
                 };
@@ -314,7 +314,7 @@ impl TrueNas {
             } else {
                 // netdata reports kibibytes/s; normalise to bytes/sec.
                 let size = self.disk_sizes.get(&label).copied();
-                disks.insert(label, Disk { read_bps: a * 1024.0, write_bps: b * 1024.0, size });
+                disks.insert(label, Disk { read_bps: Some(a * 1024.0), write_bps: Some(b * 1024.0), size });
             }
         }
 
@@ -339,10 +339,10 @@ impl TrueNas {
 
         let mut source = lock(source);
         for (name, nic) in &interfaces {
-            source.push(&format!("if.{name}.rx"), Some(nic.rx_bps));
-            source.push(&format!("if.{name}.tx"), Some(nic.tx_bps));
+            source.push(&format!("if.{name}.rx"), nic.rx_bps);
+            source.push(&format!("if.{name}.tx"), nic.tx_bps);
         }
-        source.succeed(NasData { interfaces, disks: disks.into_iter().collect(), pools });
+        source.succeed(NasData { interfaces, disks: disks.into_iter().collect(), pools, inside: None });
         Ok(())
     }
 

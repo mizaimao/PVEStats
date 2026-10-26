@@ -7,6 +7,7 @@
 
 pub mod agent;
 pub mod host;
+pub mod nas_agent;
 pub mod pve;
 pub mod router;
 pub mod truenas;
@@ -34,6 +35,10 @@ pub const PVE_INTERVAL_WITH_AGENT: f64 = 30.0;
 pub const HOST_INTERVAL: f64 = 2.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
 pub const TRUENAS_INTERVAL: f64 = 5.0;
+/// TrueNAS's own agent (nas/agent) reads the kernel as it is asked: the
+/// default seconds between polls, `tui: nas_agent_every` in config.yaml to
+/// change it (0.41 ms of TrueNAS's CPU a poll, measured; the API's 25 ms).
+pub const NAS_AGENT_INTERVAL: f64 = 2.0;
 /// The router's agent answers from kernel counters: measured on the router,
 /// polling it every second costs 0.05% of its CPU.
 pub const ROUTER_INTERVAL: f64 = 1.0;
@@ -44,6 +49,7 @@ pub const PVE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const HOST_TIMEOUT: Duration = Duration::from_secs(2);
 pub const AGENT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const TRUENAS_TIMEOUT: Duration = Duration::from_secs(5);
+pub const NAS_AGENT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const ROUTER_TIMEOUT: Duration = Duration::from_secs(2);
 pub const WEATHER_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -58,14 +64,14 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn new(window: f64, pve_interval: f64, host_interval: f64) -> Self {
+    pub fn new(window: f64, pve_interval: f64, host_interval: f64, nas_interval: f64) -> Self {
         Shared {
             // Ten minutes at least: PVE's chart gives each 10s sample a cell,
             // so a wide one reaches back further than the window.
             pve: Mutex::new(Source::new(pve_interval, window.max(600.0))),
             host: Mutex::new(Source::new(host_interval, window.max(600.0))),
             agent: Mutex::new(Source::new(AGENT_INTERVAL, window)),
-            nas: Mutex::new(Source::new(TRUENAS_INTERVAL, window)),
+            nas: Mutex::new(Source::new(nas_interval, window)),
             router: Mutex::new(Source::new(ROUTER_INTERVAL, window)),
             weather: Mutex::new(Source::new(WEATHER_INTERVAL, window)),
         }
@@ -282,17 +288,32 @@ pub struct Model {
 
 #[derive(Clone, Debug, Default)]
 pub struct NasData {
-    /// In the order netdata lists them.
+    /// In the order netdata (or the agent) lists them.
     pub interfaces: Vec<(String, Nic)>,
     /// By device name, so sdb..sdf read in the order they are labelled.
     pub disks: Vec<(String, Disk)>,
     pub pools: Vec<Pool>,
+    /// From TrueNAS's own agent: what the card otherwise takes from PVE.
+    pub inside: Option<NasInside>,
+}
+
+/// TrueNAS's CPU, memory, address and uptime as its agent reads them.
+#[derive(Clone, Debug, Default)]
+pub struct NasInside {
+    /// None until there are two readings.
+    pub cpu_pct: Option<f64>,
+    /// In use, ZFS's cache (the ARC) included, as Proxmox counts it.
+    pub mem_used: Option<f64>,
+    pub mem_total: Option<f64>,
+    pub uptime: Option<f64>,
+    pub ip: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Nic {
-    pub rx_bps: f64,
-    pub tx_bps: f64,
+    /// None until there are two readings.
+    pub rx_bps: Option<f64>,
+    pub tx_bps: Option<f64>,
     /// "virtual", "physical" or "unknown"; None before discovery saw it.
     pub role: Option<String>,
     pub media: String,
@@ -300,8 +321,8 @@ pub struct Nic {
 
 #[derive(Clone, Debug)]
 pub struct Disk {
-    pub read_bps: f64,
-    pub write_bps: f64,
+    pub read_bps: Option<f64>,
+    pub write_bps: Option<f64>,
     pub size: Option<f64>,
 }
 

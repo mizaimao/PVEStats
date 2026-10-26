@@ -529,28 +529,39 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
     let guest = slot.guest;
     let data = nas.data.as_ref();
     let interfaces = data.map_or(&[][..], |d| d.interfaces.as_slice());
+    // With TrueNAS's agent, everything on the card comes from it; without,
+    // CPU, memory, address and uptime are PVE's, greyed while it is down.
+    let inside = data.and_then(|d| d.inside.as_ref());
+    let (cpu, mem, maxmem) = match inside {
+        Some(i) => (i.cpu_pct, i.mem_used, i.mem_total),
+        None => (guest.and_then(|g| g.cpu_pct), guest.and_then(|g| g.mem), guest.and_then(|g| g.maxmem)),
+    };
 
     // The bars at half length, side by side; the GiB ride on the line above.
-    let mem_ratio = guest.and_then(|g| ratio(g.mem, g.maxmem));
+    let mem_ratio = ratio(mem, maxmem);
     let mut usage = Part::Flow(
         24,
         vec![
-            meter(look, "CPU", guest.and_then(|g| g.cpu_pct).map(|v| v / 100.0), fmt::pct(guest.and_then(|g| g.cpu_pct)), 4),
+            meter(look, "CPU", cpu.map(|v| v / 100.0), fmt::pct(cpu), 4),
             meter(look, "Mem", mem_ratio, fmt::pct(mem_ratio.map(|r| r * 100.0)), 4),
         ],
     );
-    let heading = match guest {
-        None => sub(look, vec![fmt::DASH.into()]),
-        Some(g) => sub(
+    let heading = match (inside, guest) {
+        (Some(i), _) => sub(
+            look,
+            vec![i.ip.clone().unwrap_or_default(), format!("up {}", fmt::uptime(i.uptime)), mem_text(mem, maxmem)],
+        ),
+        (None, None) => sub(look, vec![fmt::DASH.into()]),
+        (None, Some(g)) => sub(
             look,
             vec![
                 g.addresses.first().cloned().unwrap_or_default(),
                 format!("up {}", fmt::uptime(g.uptime)),
-                mem_text(g.mem, g.maxmem),
+                mem_text(mem, maxmem),
             ],
         ),
     };
-    if !pve.ok {
+    if inside.is_none() && !pve.ok {
         usage = Part::Dim(Box::new(usage));
     }
 
@@ -579,8 +590,8 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             down: Trace::from(nas.series(&format!("if.{name}.tx")), 1, ""),
             up_label: label(0, "↓", "receive"),
             down_label: label(1, "↑", "send"),
-            up_value: fmt::rate_auto(nic.rx_bps),
-            down_value: fmt::rate_auto(nic.tx_bps),
+            up_value: nic.rx_bps.map_or(fmt::DASH.into(), fmt::rate_auto),
+            down_value: nic.tx_bps.map_or(fmt::DASH.into(), fmt::rate_auto),
             label_w: 10,
             value_w: 15,
             capacity: nas.capacity(),
@@ -595,7 +606,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
         network.push(Part::Text(Line::styled("no interfaces yet", style(p.muted))));
     }
 
-    let rate = |v: f64| Line::styled(fmt::rate(Some(v)), style(p.ink));
+    let rate = |v: Option<f64>| Line::styled(fmt::rate(v), style(p.ink));
     let disk_rows = data
         .map_or(&[][..], |d| d.disks.as_slice())
         .iter()
