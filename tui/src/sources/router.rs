@@ -91,6 +91,7 @@ impl Router {
                 let name = text(p, "name").unwrap_or("?");
                 Port {
                     up: p.get("up").and_then(Value::as_bool).unwrap_or(false),
+                    wan: p.get("wan").and_then(Value::as_bool).unwrap_or(false),
                     down_bps: rate(format!("port.{name}.tx"), num(p, "tx")),
                     up_bps: rate(format!("port.{name}.rx"), num(p, "rx")),
                 }
@@ -135,7 +136,7 @@ fn demo(t: f64) -> RouterData {
     let wave = |period: f64, phase: f64| ((t / period + phase).sin() + 1.0) / 2.0;
     let down = 1.5e6 + 9.0e6 * wave(11.0, 0.0).powi(3);
     let up = 0.2e6 + 1.2e6 * wave(7.0, 1.3).powi(2);
-    let port = |up_now: bool, share: f64| Port { up: up_now, down_bps: Some(down * share), up_bps: Some(up * share) };
+    let port = |up_now: bool, share: f64| Port { up: up_now, wan: false, down_bps: Some(down * share), up_bps: Some(up * share) };
     let band = |name: &str, devices: u64, share: f64| Band {
         name: name.into(),
         on: true,

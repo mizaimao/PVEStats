@@ -10,10 +10,15 @@
 //! seconds, and one that will not die stops any more from starting, so a
 //! hung driver cannot pile processes up; the counts then just grow old.
 //!
-//! Requests are answered one at a time, at least 100 ms apart, each given at
-//! most 3 seconds, and what they ask is never looked at. Nothing is logged
-//! and nothing written. Should the LAN address change, it exits, for its
-//! keeper to start it again on the new one.
+//! Each client keeps one connection and asks over it again and again (HTTP/1.1
+//! keep-alive): a dashboard polling every second is one entry in the router's
+//! connection table, not a new connection a second, each remembered for two
+//! minutes after it closes. At most 4 clients at once; a connection with no
+//! request for 30 seconds is closed. Answers are at least 100 ms apart across
+//! all of them, each request's head is given at most 3 seconds once it has
+//! begun, and what a request asks is never looked at. Nothing is logged and
+//! nothing written. Should the LAN address change, it exits, for its keeper
+//! to start it again on the new one.
 //!
 //!     pvestats-router --listen 10.10.10.1:9837
 //!     pvestats-router --once      the JSON once, for trying it by hand
@@ -22,6 +27,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::process::{exit, Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -33,13 +39,17 @@ const SLOW_EVERY: Duration = Duration::from_secs(30);
 const LAYOUT_EVERY: u32 = 10;
 /// Longest an `nvram` or `wl` run may take before it is killed.
 const RUN_LIMIT: Duration = Duration::from_secs(5);
-/// Longest one request may hold the server, reading its head and answering.
+/// Longest a request's head may take once it has begun, and an answer.
 const REQUEST_LIMIT: Duration = Duration::from_secs(3);
 /// Most of a request's head that is read.
 const HEAD_LIMIT: usize = 8192;
 /// Answers are at least this far apart, so a client asking in a tight loop
 /// gets ten a second, not as many as a core can make.
 const MIN_GAP: Duration = Duration::from_millis(100);
+/// Clients served at once, each on the connection it keeps.
+const MAX_CLIENTS: usize = 4;
+/// A kept connection with no request for this long is closed.
+const IDLE_LIMIT: Duration = Duration::from_secs(30);
 
 /// One radio and the networks it carries (wl0 with wl0.1 and so on).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -55,6 +65,10 @@ struct Radio {
 struct Layout {
     model: String,
     wan_if: String,
+    /// The physical port the WAN rides on, when it is one of the LAN ports
+    /// (a 10G port set as WAN carries the WAN as a VLAN): every download
+    /// crosses it, so the dashboard leaves it out of the wired traffic.
+    wan_port: Option<String>,
     /// The wired LAN ports, in the order the router lists them.
     ports: Vec<String>,
     radios: Vec<Radio>,
@@ -106,16 +120,25 @@ fn main() {
 
 // ------------------------------------------------------------------ serving
 
-fn serve(listener: &TcpListener, slow: &Mutex<Slow>) -> ! {
-    let mut last: Option<Instant> = None;
+fn serve(listener: &TcpListener, slow: &Arc<Mutex<Slow>>) -> ! {
+    let active = Arc::new(AtomicUsize::new(0));
+    let last: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                if let Some(last) = last {
-                    thread::sleep(MIN_GAP.saturating_sub(last.elapsed()));
+                // Past the limit: closed at once, unread.
+                if active.load(Ordering::SeqCst) >= MAX_CLIENTS {
+                    continue;
                 }
-                let _ = answer(stream, slow);
-                last = Some(Instant::now());
+                active.fetch_add(1, Ordering::SeqCst);
+                let (slow, last, gone) = (Arc::clone(slow), Arc::clone(&last), Arc::clone(&active));
+                let spawned = thread::Builder::new().stack_size(256 * 1024).spawn(move || {
+                    client(stream, &slow, &last);
+                    gone.fetch_sub(1, Ordering::SeqCst);
+                });
+                if spawned.is_err() {
+                    active.fetch_sub(1, Ordering::SeqCst);
+                }
             }
             // Out of file descriptors, say: wait rather than spin.
             Err(_) => thread::sleep(Duration::from_millis(100)),
@@ -123,48 +146,109 @@ fn serve(listener: &TcpListener, slow: &Mutex<Slow>) -> ! {
     }
 }
 
-/// Reads the request's head, so closing does not reset the connection under
-/// the client, then answers. The request itself is never looked at.
-fn answer(mut stream: TcpStream, slow: &Mutex<Slow>) -> std::io::Result<()> {
-    let deadline = Instant::now() + REQUEST_LIMIT;
-    let mut head = [0u8; HEAD_LIMIT];
-    let mut len = 0;
-    while len < HEAD_LIMIT {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            break;
+/// One client's connection, answered request after request until it is
+/// idle for IDLE_LIMIT, asks to close, or sends anything unexpected. What a
+/// request asks is never looked at; every one gets the same answer.
+fn client(mut stream: TcpStream, slow: &Mutex<Slow>, last: &Mutex<Option<Instant>>) {
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(head) = next_head(&mut stream, &mut buf) {
+        let keep = keep_alive(&head);
+        // Answers at least MIN_GAP apart, across all clients.
+        {
+            let mut last = lock(last);
+            if let Some(t) = *last {
+                thread::sleep(MIN_GAP.saturating_sub(t.elapsed()));
+            }
+            *last = Some(Instant::now());
         }
-        stream.set_read_timeout(Some(left))?;
-        match stream.read(&mut head[len..]) {
-            Ok(0) | Err(_) => break,
+        let snapshot = lock(slow).clone();
+        let body = json(&snapshot);
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {}\r\n\r\n{body}",
+            body.len(),
+            if keep { "keep-alive" } else { "close" }
+        );
+        if stream.set_write_timeout(Some(REQUEST_LIMIT)).is_err() || stream.write_all(reply.as_bytes()).is_err() {
+            return;
+        }
+        if !keep {
+            let _ = stream.shutdown(Shutdown::Write);
+            return;
+        }
+    }
+}
+
+/// Where a request's head ends, and where what follows it starts: at its
+/// blank line, however the client ends its lines. Looks only from `from`.
+fn head_end(buf: &[u8], from: usize) -> Option<(usize, usize)> {
+    (from..buf.len()).find_map(|i| {
+        if buf[i..].starts_with(b"\r\n\r\n") {
+            Some((i, i + 4))
+        } else if buf[i..].starts_with(b"\n\n") {
+            Some((i, i + 2))
+        } else {
+            None
+        }
+    })
+}
+
+/// The next request's head on the connection: up to IDLE_LIMIT for one to
+/// begin, then REQUEST_LIMIT for the rest of it, at most HEAD_LIMIT bytes.
+/// Bytes after it (a pipelined request) stay in `buf` for the next call.
+fn next_head(stream: &mut TcpStream, buf: &mut Vec<u8>) -> Option<String> {
+    let idle_until = Instant::now() + IDLE_LIMIT;
+    let mut deadline = (!buf.is_empty()).then(|| Instant::now() + REQUEST_LIMIT);
+    let mut scanned: usize = 0;
+    let mut chunk = [0u8; 2048];
+    loop {
+        // Only what arrived since the last look, and the three bytes before
+        // it, can complete the blank line: a byte at a time costs no rescans.
+        if let Some((end, next)) = head_end(buf, scanned.saturating_sub(3)) {
+            let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+            buf.drain(..next);
+            return Some(head);
+        }
+        scanned = buf.len();
+        if buf.len() >= HEAD_LIMIT {
+            return None;
+        }
+        let left = deadline.unwrap_or(idle_until).saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        stream.set_read_timeout(Some(left)).ok()?;
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => return None,
             Ok(n) => {
-                // Only the new bytes and the three before them can complete
-                // the blank line: a client sending a byte at a time does not
-                // make every read rescan the whole head.
-                let from = len.saturating_sub(3);
-                len += n;
-                if ended(&head[from..len]) {
-                    break;
-                }
+                buf.extend_from_slice(&chunk[..n]);
+                deadline.get_or_insert(Instant::now() + REQUEST_LIMIT);
             }
         }
     }
-    let snapshot = lock(slow).clone();
-    let body = json(&snapshot);
-    let left = deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(100));
-    stream.set_write_timeout(Some(left))?;
-    let reply = format!(
-        "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream.write_all(reply.as_bytes())?;
-    stream.shutdown(Shutdown::Write)
 }
 
-/// Whether a request's head is complete: a blank line, however the client
-/// ends its lines.
-fn ended(head: &[u8]) -> bool {
-    head.windows(4).any(|w| w == b"\r\n\r\n") || head.windows(2).any(|w| w == b"\n\n")
+/// Whether to keep the connection after answering: HTTP/1.1 keeps it unless
+/// asked to close, HTTP/1.0 only when asked to keep it. A request with a
+/// body is answered and the connection closed, since bodies are not read.
+fn keep_alive(head: &str) -> bool {
+    let mut lines = head.lines();
+    let http11 = lines.next().is_some_and(|l| l.trim_end().ends_with("HTTP/1.1"));
+    let mut connection = String::new();
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else { continue };
+        let (name, value) = (name.trim().to_ascii_lowercase(), value.trim().to_ascii_lowercase());
+        match name.as_str() {
+            "connection" => connection = value,
+            "transfer-encoding" => return false,
+            "content-length" if value != "0" => return false,
+            _ => {}
+        }
+    }
+    if http11 {
+        !connection.contains("close")
+    } else {
+        connection.contains("keep-alive")
+    }
 }
 
 // --------------------------------------------------------------- the answer
@@ -253,7 +337,8 @@ fn json(slow: &Slow) -> String {
             let up = read(&format!("/sys/class/net/{p}/operstate")).is_some_and(|s| s.trim() == "up");
             let mbps = if up { slow.speeds.get(i).copied().unwrap_or(0) } else { 0 };
             let (rx, tx) = bytes(std::slice::from_ref(p));
-            format!("{{\"name\":{},\"up\":{up},\"mbps\":{mbps},\"rx\":{rx},\"tx\":{tx}}}", quote(p))
+            let wan = l.wan_port.as_deref() == Some(p.as_str());
+            format!("{{\"name\":{},\"up\":{up},\"mbps\":{mbps},\"wan\":{wan},\"rx\":{rx},\"tx\":{tx}}}", quote(p))
         })
         .collect();
     let bands: Vec<String> = l
@@ -392,7 +477,15 @@ fn layout(r: &mut Runner) -> Option<Layout> {
         let on = r.nvram(&format!("wl{u}_radio"))? == "1";
         radios.push(Radio { name, networks, on });
     }
-    Some(Layout { model, wan_if, ports, radios })
+    let wan_port = lower_port(&wan_if);
+    Some(Layout { model, wan_if, wan_port, ports, radios })
+}
+
+/// The device a VLAN interface rides on, from the kernel's own link in
+/// /sys (`lower_eth1` for vlan4094 on eth1); None for a plain interface.
+fn lower_port(interface: &str) -> Option<String> {
+    let dir = std::fs::read_dir(format!("/sys/class/net/{interface}")).ok()?;
+    dir.flatten().find_map(|e| e.file_name().to_str()?.strip_prefix("lower_").map(str::to_string))
 }
 
 fn refresh_forever(slow: &Mutex<Slow>, bound: SocketAddr) -> ! {
@@ -504,10 +597,50 @@ mod tests {
     }
 
     #[test]
-    fn heads_end_at_a_blank_line() {
-        assert!(ended(b"GET / HTTP/1.1\r\nHost: r\r\n\r\n"));
-        assert!(ended(b"GET / HTTP/1.0\n\n"));
-        assert!(!ended(b"GET / HTTP/1.1\r\nHost: r\r\n"));
+    fn heads_and_keeping_the_connection() {
+        assert_eq!(head_end(b"GET / HTTP/1.1\r\nHost: r\r\n\r\nGET", 0), Some((23, 27)));
+        assert_eq!(head_end(b"GET / HTTP/1.0\n\n", 0), Some((14, 16)));
+        assert_eq!(head_end(b"GET / HTTP/1.1\r\nHost: r\r\n", 0), None);
+        assert!(keep_alive("GET / HTTP/1.1\r\nHost: r"));
+        assert!(!keep_alive("GET / HTTP/1.1\r\nConnection: close"));
+        assert!(!keep_alive("GET / HTTP/1.0"));
+        assert!(keep_alive("GET / HTTP/1.0\r\nConnection: Keep-Alive"));
+        assert!(!keep_alive("POST / HTTP/1.1\r\nContent-Length: 5"), "a body is not read, so the connection goes");
+    }
+
+    /// Many requests over one connection, pipelined ones too, and a client
+    /// past the limit closed at once.
+    #[test]
+    fn one_connection_serves_request_after_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let slow = Arc::new(Mutex::new(Slow::default()));
+        thread::spawn(move || serve(&listener, &slow));
+        let mut stream = TcpStream::connect(addr).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut answers = 0;
+        let mut got = Vec::new();
+        stream.write_all(b"GET / HTTP/1.1\r\nHost: r\r\n\r\nGET / HTTP/1.1\r\nHost: r\r\n\r\n").unwrap();
+        stream.write_all(b"GET / HTTP/1.1\r\nHost: r\r\nConnection: close\r\n\r\n").unwrap();
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = stream.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            got.extend_from_slice(&chunk[..n]);
+        }
+        let text = String::from_utf8_lossy(&got);
+        answers += text.matches("HTTP/1.1 200 OK").count();
+        assert_eq!(answers, 3, "{text}");
+        assert!(text.contains("Connection: keep-alive") && text.ends_with("}\n"));
+        // Four clients holding their connections; a fifth is closed unread.
+        let held: Vec<TcpStream> = (0..MAX_CLIENTS).map(|_| TcpStream::connect(addr).unwrap()).collect();
+        thread::sleep(Duration::from_millis(200));
+        let mut fifth = TcpStream::connect(addr).unwrap();
+        fifth.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let _ = fifth.write_all(b"GET / HTTP/1.1\r\n\r\n");
+        assert_eq!(fifth.read(&mut chunk).unwrap_or(0), 0);
+        drop(held);
     }
 
     #[test]
@@ -527,6 +660,7 @@ mod tests {
             layout: Layout {
                 model: "GT-BE98_PRO".into(),
                 wan_if: "lo".into(),
+                wan_port: Some("eth-none".into()),
                 ports: vec!["eth-none".into()],
                 radios: vec![Radio { name: "5 GHz".into(), networks: vec!["wl0".into(), "wl0.1".into()], on: true }],
             },
@@ -538,7 +672,7 @@ mod tests {
         let text = json(&slow);
         assert!(text.starts_with("{\"model\":\"GT-BE98_PRO\","));
         assert!(text.contains("\"bands\":[{\"name\":\"5 GHz\",\"on\":true,\"devices\":3,"));
-        assert!(text.contains("\"ports\":[{\"name\":\"eth-none\",\"up\":false,\"mbps\":0,\"rx\":0,\"tx\":0}]"));
+        assert!(text.contains("\"ports\":[{\"name\":\"eth-none\",\"up\":false,\"mbps\":0,\"wan\":true,\"rx\":0,\"tx\":0}]"));
         assert!(text.ends_with("\"devices_age\":0}\n"));
     }
 }

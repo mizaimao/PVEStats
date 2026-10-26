@@ -26,10 +26,17 @@ On the build machine a request takes 0.09 ms of CPU.
 
 ## Limits, so it cannot hurt the router
 
-- Requests are answered one at a time, at least 100 ms apart, each given at
-  most 3 seconds; at most 8 KiB of a request is read and none of it is
-  looked at. A client asking in a tight loop gets ten answers a second, and
-  one that connects and says nothing delays the next answer by 3 seconds.
+- Each client keeps one connection and asks over it again and again (HTTP/1.1
+  keep-alive), so the dashboard's poll every second is one entry in the
+  router's connection table. The first version closed the connection after
+  each answer, and every closed connection stays in that table for about
+  two minutes: the infrastructure agent found 116 from thinkpad on
+  2026-10-26. At most 4 clients at once (a fifth is closed unread); a
+  connection with no request for 30 seconds is closed.
+- Answers are at least 100 ms apart across all clients, a request's head
+  gets at most 3 seconds once it has begun, at most 8 KiB of it is read and
+  none of it is looked at. A client asking in a tight loop gets ten answers
+  a second.
 - Per request it reads no file the kernel locks its network stack for: the
   ports' link speeds are read every 30 s, with the devices.
 - Each `nvram` or `wl` run is killed after 5 seconds. One that will not die
@@ -65,7 +72,7 @@ exit; a failing guest network held back only its own band.
  "mem": {"total": 2097111040, "available": 891924480},
  "temp": {"cpu": 69.7},
  "wan": {"up": true, "ip": "…", "rx": 65611232984, "tx": 25224388291},
- "ports": [{"name": "eth0", "up": true, "mbps": 10000, "rx": 99486587416, "tx": 169834333430}],
+ "ports": [{"name": "eth1", "up": true, "mbps": 10000, "wan": true, "rx": 82099808698, "tx": 67885525746}],
  "bands": [{"name": "5 GHz", "on": true, "devices": 1, "rx": 3663050058, "tx": 9191432552}],
  "devices_age": 12}
 ```
@@ -78,6 +85,13 @@ the radio and the networks it carries (`wl0` with `wl0.1` and so on). Two
 radios on one band are numbered: "6 GHz-1", "6 GHz-2". A band's `devices`
 is null until it is first counted. `devices_age` is seconds since the
 oldest band's count, null before any.
+
+A port's `wan` is true for the one the internet comes in on. On Frank's
+router the 10G port is set as WAN and carries it as a VLAN (vlan4094 on
+eth1), so it is listed among the LAN ports; every download comes in on it
+and goes out on another, and the dashboard leaves it out of its wired
+total so as not to count internet traffic twice. Found by downloading 50 MB
+on dev.lan: eth1 received 53 MB, eth0 sent 52 MB.
 
 ## Building
 
