@@ -390,8 +390,6 @@ pub struct Trace {
     /// Series 1 (0) or 2 (1), for its colour.
     pub series: usize,
     pub label: String,
-    /// Drawn in dashes, not a solid line (a trace after the first only).
-    pub dashed: bool,
 }
 
 impl Trace {
@@ -400,12 +398,7 @@ impl Trace {
             data: data.map(|s| s.iter().copied().collect()).unwrap_or_default(),
             series,
             label: label.to_string(),
-            dashed: false,
         }
-    }
-
-    pub fn dashed(self) -> Trace {
-        Trace { dashed: true, ..self }
     }
 
     fn peak(&self) -> f64 {
@@ -509,12 +502,7 @@ impl Chart {
                 continue;
             }
             legend.push(Span::raw("  "));
-            let swatch = match (i, trace.dashed, pen.look.console_glyphs) {
-                (0, ..) => area_swatch,
-                (_, true, false) => "┄",
-                (_, true, true) => "-",
-                _ => "─",
-            };
+            let swatch = if i == 0 { area_swatch } else { "─" };
             legend.push(Span::styled(swatch, Style::default().fg(pen.look.flat(trace.series))));
             legend.push(Span::styled(format!(" {}", trace.label), muted));
         }
@@ -634,10 +622,6 @@ fn plot_braille(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, to
     }
     for trace in traces.iter().skip(1) {
         for sub in 0..across {
-            // Dashes: two cells drawn, one left out.
-            if trace.dashed && sub % 6 >= 4 {
-                continue;
-            }
             let Some(v) = sample_at(&trace.data, capacity, sub, across, per) else { continue };
             let level = ((v / top * levels as f64).floor() as usize).min(levels - 1);
             set(&mut dots, sub, level);
@@ -676,10 +660,6 @@ fn plot_cells(pen: &mut Pen, area: Rect, traces: &[Trace], capacity: usize, top:
             }
         }
         for trace in traces.iter().skip(1) {
-            // Dashes: two cells drawn, one left out.
-            if trace.dashed && c % 3 == 2 {
-                continue;
-            }
             let Some(v) = column(trace) else { continue };
             let level = ((v / top * rows as f64).floor() as u16).min(rows - 1);
             let mut style = Style::default().fg(look.flat(trace.series));
