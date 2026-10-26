@@ -11,6 +11,15 @@ export const fmt = {
   pctText: v => (v == null ? "–" : `${Math.round(v)}%`),
   gib: v => (v == null ? "–" : (v / GiB).toFixed(1)),
   rate: v => (v == null ? "–" : (v / MiB).toFixed(1)),
+  // Bytes per second as internet speeds are quoted: in bits, in the unit that
+  // suits. As the terminal dashboard's bits_auto.
+  bits(v) {
+    if (v == null) return "–";
+    const bits = v * 8;
+    if (bits >= 1e9) return `${(bits / 1e9).toFixed(2)} Gbit/s`;
+    if (bits >= 1e6) return `${(bits / 1e6).toFixed(1)} Mbit/s`;
+    return `${(bits / 1e3).toFixed(0)} kbit/s`;
+  },
   int: v => (v == null ? "–" : Math.round(v).toLocaleString()),
 
   uptime(seconds) {

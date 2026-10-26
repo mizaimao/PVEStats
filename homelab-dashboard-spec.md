@@ -16,7 +16,9 @@ Explicit design constraints, in priority order:
    *Update 2026-10-26:* a second, on the router (`router/`), installed with
    Frank's go-ahead: Asuswrt-Merlin has only its admin account, so the router
    serves its own counters rather than the dashboard holding that login. It
-   reads only, logs nothing and writes nothing to flash.
+   reads only, logs nothing and writes nothing to flash. Both dashboards poll
+   it once a second when `ROUTER_AGENT_URL` is set, and turn its counters into
+   rates themselves.
 
 ## 2. Architecture
 

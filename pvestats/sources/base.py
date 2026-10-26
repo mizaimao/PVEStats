@@ -13,10 +13,12 @@ import aiohttp
 PVE_INTERVAL = 10.0
 AGENT_INTERVAL = 1.0
 TRUENAS_INTERVAL = 5.0
+ROUTER_INTERVAL = 1.0
 
 PVE_TIMEOUT = aiohttp.ClientTimeout(total=5)
 AGENT_TIMEOUT = aiohttp.ClientTimeout(total=2)
 TRUENAS_TIMEOUT = aiohttp.ClientTimeout(total=5)
+ROUTER_TIMEOUT = aiohttp.ClientTimeout(total=2)
 
 
 async def run_poller(source, interval, poll):

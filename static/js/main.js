@@ -5,7 +5,7 @@
  */
 
 import { el } from "./dom.js";
-import { basicCard, gpuCard, nasCard, nodeCard } from "./cards.js";
+import { basicCard, gpuCard, nasCard, nodeCard, routerCard } from "./cards.js";
 import { initSettings } from "./settings.js";
 import { initAppearance, selectTheme, THEMES_ORDERED } from "./theme.js";
 
@@ -50,6 +50,7 @@ function renderSources(sources) {
 /* ---------------- main loop ---------------- */
 
 const cards = new Map();
+let router = null;           // the router's card, once its source exists
 let entered = 0;
 
 function controllerFor(guest) {
@@ -142,6 +143,18 @@ function render(state) {
   for (const [vmid, card] of cards) {
     if (!seen.has(vmid)) { card.el.remove(); cards.delete(vmid); }
   }
+
+  // The router, when one is configured: last in the left column, under the
+  // NAS, which can arrive after it.
+  const routerStatus = state.sources.router;
+  if (routerStatus) {
+    if (!router) {
+      router = routerCard();
+      router.el.style.setProperty("--enter", staggering ? String(entered++) : "0");
+    }
+    if (left.lastElementChild !== router.el) left.appendChild(router.el);
+    router.update(state.router, (state.history || {}).router, routerStatus);
+  }
 }
 
 async function tick() {
@@ -179,6 +192,7 @@ const SOURCE_LABELS = {
   pve: "Proxmox VE",
   agent: "ml60 GPU agent",
   truenas: "TrueNAS",
+  router: "Router agent",
 };
 const STANDBY_GIVE_UP_MS = 25000;
 

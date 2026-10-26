@@ -64,6 +64,8 @@ pub struct Config {
     pub truenas_host: String,
     pub truenas_api_key: String,
     pub agent_url: String,
+    /// Optional: with none, the page has no router card at all.
+    pub router_url: String,
     pub port: u16,
     /// By VMID, each entry as written in config.yaml.
     pub hosts: Vec<(u64, Map<String, Value>)>,
@@ -141,6 +143,7 @@ impl Config {
             truenas_host: var("TRUENAS_HOST"),
             truenas_api_key: var("TRUENAS_API_KEY"),
             agent_url: var("ML60_AGENT_URL"),
+            router_url: var("ROUTER_AGENT_URL"),
             port,
             hosts,
             ui_defaults,
@@ -212,6 +215,10 @@ impl Config {
 
     pub fn agent_configured(&self) -> bool {
         !self.agent_url.is_empty()
+    }
+
+    pub fn router_configured(&self) -> bool {
+        !self.router_url.is_empty()
     }
 }
 

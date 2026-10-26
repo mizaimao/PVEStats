@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod pve;
+pub mod router;
 pub mod truenas;
 
 use std::sync::{Mutex, MutexGuard};
@@ -18,10 +19,12 @@ use crate::state::Source;
 pub const PVE_INTERVAL: f64 = 10.0;
 pub const AGENT_INTERVAL: f64 = 1.0;
 pub const TRUENAS_INTERVAL: f64 = 5.0;
+pub const ROUTER_INTERVAL: f64 = 1.0;
 
 pub const PVE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const AGENT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const TRUENAS_TIMEOUT: Duration = Duration::from_secs(5);
+pub const ROUTER_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A poisoned lock still holds good data: a panic in one poll must not take
 /// the rest with it.
