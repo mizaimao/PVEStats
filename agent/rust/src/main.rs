@@ -102,6 +102,8 @@ pub struct Shared {
     unloading: AtomicBool,
     /// Models unloaded lately, and when.
     stopped: Mutex<HashMap<String, Instant>>,
+    /// When an unload last went to Ollama: at most one a second.
+    last_unload: Mutex<Option<Instant>>,
 }
 
 impl Shared {
@@ -117,6 +119,7 @@ impl Shared {
             connections: AtomicUsize::new(0),
             unloading: AtomicBool::new(false),
             stopped: Mutex::new(HashMap::new()),
+            last_unload: Mutex::new(None),
         }
     }
 }
@@ -138,12 +141,6 @@ fn main() {
         eprintln!("pvestats-agent: {e}");
         exit(2);
     });
-    // Loudly at startup if the GPU is unreachable, so a broken install shows
-    // in `systemctl status`, not only in the JSON.
-    let mut gpu = gpu::Gpu::default();
-    if let Err(e) = gpu.start() {
-        eprintln!("warning: NVML unavailable at startup: {e}");
-    }
     let listener = TcpListener::bind(config.bind).unwrap_or_else(|e| {
         eprintln!("pvestats-agent: cannot listen on {}: {e}", config.bind);
         exit(1);
@@ -151,7 +148,7 @@ fn main() {
     eprintln!("pvestats-agent listening on {}", config.bind);
     let shared = Arc::new(Shared::new(config));
     let s = Arc::clone(&shared);
-    thread::spawn(move || sample_forever(&s, gpu));
+    thread::spawn(move || sample_forever(&s));
     let s = Arc::clone(&shared);
     thread::spawn(move || models_forever(&s));
     serve(&listener, &shared);
@@ -167,7 +164,14 @@ fn wait_for_demand(s: &Shared) {
     }
 }
 
-fn sample_forever(s: &Shared, mut gpu: gpu::Gpu) -> ! {
+fn sample_forever(s: &Shared) -> ! {
+    // NVML starts here, not before listening: should it hang, the models
+    // are still served. Loudly if the GPU is unreachable, so a broken
+    // install shows in `systemctl status`, not only in the JSON.
+    let mut gpu = gpu::Gpu::default();
+    if let Err(e) = gpu.start() {
+        eprintln!("warning: NVML unavailable at startup: {e}");
+    }
     loop {
         wait_for_demand(s);
         let started = Instant::now();
@@ -252,7 +256,13 @@ fn payload(s: &Shared) -> Value {
             }
             g = wait(&s.gpu_fresh, g, left);
         }
-        (g.value.clone(), g.error.clone())
+        // A reading that never came (NVML hung, say) is said to be missing,
+        // not served as if it were current.
+        match g.at.map(|t| t.elapsed()) {
+            Some(age) if age < STALE_AFTER => (g.value.clone(), g.error.clone()),
+            Some(age) => (None, Some(format!("NVML: no reading for {} s", age.as_secs()))),
+            None => (None, Some("NVML: no reading yet".to_string())),
+        }
     };
     let models = {
         let mut m = lock(&s.models);
@@ -328,21 +338,43 @@ fn unload_one(s: &Shared, name: &str) -> (u16, Value) {
             return refuse(429, format!("{name} was stopped moments ago"));
         }
     }
-    match ollama::fetch(&s.config.ollama) {
-        Err(e) => return refuse(502, format!("Ollama: {e}")),
-        Ok(list) if !list.iter().any(|m| m["name"].as_str() == Some(name)) => {
-            return refuse(404, format!("{name} is not loaded"));
-        }
-        Ok(_) => {}
+    // Whether it is loaded, from the cached list while that is a few
+    // seconds old at most: a loop of requests naming models that are not
+    // loaded must not reach Ollama, which logs each call to disk.
+    let cached = {
+        let m = lock(&s.models);
+        m.fetched.filter(|t| t.elapsed() < ollama::RECHECK_AFTER).map(|_| m.list.clone())
+    };
+    let listed = |list: &[Value]| list.iter().any(|m| m["name"].as_str() == Some(name));
+    if cached.as_deref().is_some_and(|list| !listed(list)) {
+        return refuse(404, format!("{name} is not loaded"));
     }
-    let reply = ollama::unload(&s.config.generate, name);
-    // Whatever came of it: the list is fetched again at once, the model
-    // watched until it has gone, and not stopped again for a while.
+    // From here on Ollama is asked: once a second at most.
+    {
+        let mut last = lock(&s.last_unload);
+        if last.is_some_and(|t| t.elapsed() < Duration::from_secs(1)) {
+            return refuse(429, "too many requests; try again in a second".into());
+        }
+        *last = Some(Instant::now());
+    }
+    if cached.is_none() {
+        match ollama::fetch(&s.config.ollama) {
+            Err(e) => return refuse(502, format!("Ollama: {e}")),
+            Ok(list) if !listed(&list) => return refuse(404, format!("{name} is not loaded")),
+            Ok(_) => {}
+        }
+    }
+    let (status, body) = ollama::unload(&s.config.generate, name);
+    // Whatever came of it, the list is fetched again at once and the model
+    // watched until it has gone; once it has been stopped, not again for a
+    // while.
     let now = Instant::now();
-    lock(&s.stopped).insert(name.to_string(), now);
+    if status == 200 {
+        lock(&s.stopped).insert(name.to_string(), now);
+    }
     lock(&s.models).stopped(name, now);
     s.wake.notify_all();
-    reply
+    (status, body)
 }
 
 #[cfg(test)]
@@ -470,6 +502,8 @@ mod tests {
     fn unload_checks_in_order_then_unloads_once() {
         let ollama = fake_ollama(PS);
         let addr = agent(&ollama, true);
+        // The dashboard has polled, so the list is cached.
+        ask(&addr, "GET / HTTP/1.1\r\n\r\n");
         let model = r#"{"model":"qwen3:32b"}"#;
         assert_eq!(post(&addr, &format!("Origin: https://evil\r\n{JSON}"), model).0, 403);
         assert_eq!(post(&addr, "Content-Type: text/plain\r\n", model).0, 415);
@@ -479,7 +513,11 @@ mod tests {
         assert_eq!(post(&addr, JSON, "{not json").1["error"], "malformed request");
         assert_eq!(post(&addr, JSON, "[1]").1["error"], "malformed request");
         assert_eq!(post(&addr, JSON, r#"{"model":"  "}"#).1["error"], "no model named");
-        assert_eq!(post(&addr, JSON, r#"{"model":"llama3:8b"}"#).0, 404);
+        // Not loaded, answered from the cached list as often as asked.
+        for _ in 0..5 {
+            assert_eq!(post(&addr, JSON, r#"{"model":"llama3:8b"}"#).0, 404);
+        }
+        assert_eq!(ollama.ps_calls.load(Ordering::SeqCst), 1, "the 404s did not reach Ollama");
         assert_eq!(ollama.generate_calls.load(Ordering::SeqCst), 0, "nothing reached Ollama yet");
         let (status, body) = post(&addr, "Content-Type: Application/JSON; charset=utf-8\r\n", model);
         assert_eq!((status, body["ok"].as_bool()), (200, Some(true)), "{body}");

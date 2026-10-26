@@ -171,7 +171,9 @@ pub fn dechunk(mut data: &[u8]) -> Option<Vec<u8>> {
         if size == 0 {
             return Some(out);
         }
-        if data.len() < size + 2 {
+        // Compared without adding to `size`, which can be as large as a
+        // usize gets.
+        if size > data.len().saturating_sub(2) {
             return None;
         }
         out.extend_from_slice(&data[..size]);
@@ -180,18 +182,31 @@ pub fn dechunk(mut data: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// One call, all of it (connecting, sending, reading) by `deadline`, at most
-/// `cap` bytes of reply. The status and the body.
+/// `cap` bytes of reply. The status and the body. A host name is looked up
+/// with no deadline of its own, which is why the defaults are addresses.
 pub fn call(url: &Url, method: &str, body: Option<&[u8]>, deadline: Instant, cap: usize) -> Result<(u16, Vec<u8>), String> {
     let left = || deadline.saturating_duration_since(Instant::now());
-    let addr = (url.host.as_str(), url.port)
+    let addrs: Vec<_> = (url.host.as_str(), url.port)
         .to_socket_addrs()
         .map_err(|e| format!("cannot resolve {}: {e}", url.host))?
-        .next()
-        .ok_or_else(|| format!("cannot resolve {}", url.host))?;
-    if left().is_zero() {
-        return Err("timed out".into());
+        .collect();
+    // Each address in turn: "localhost" may give ::1 first while Ollama
+    // listens on 127.0.0.1 only.
+    let mut stream = None;
+    let mut why = format!("cannot resolve {}", url.host);
+    for addr in &addrs {
+        if left().is_zero() {
+            return Err("timed out".into());
+        }
+        match TcpStream::connect_timeout(addr, left()) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => why = format!("cannot connect: {e}"),
+        }
     }
-    let mut stream = TcpStream::connect_timeout(&addr, left()).map_err(|e| format!("cannot connect: {e}"))?;
+    let mut stream = stream.ok_or(why)?;
     let mut request = format!(
         "{method} {} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: pvestats-agent\r\nAccept: application/json\r\nConnection: close\r\n",
         url.path, url.host, url.port
@@ -220,6 +235,11 @@ pub fn call(url: &Url, method: &str, body: Option<&[u8]>, deadline: Instant, cap
                 if reply.len() > cap {
                     return Err("reply too large".into());
                 }
+                // Done once the body is all there, should the other side
+                // keep the connection open despite being asked to close.
+                if complete(&reply) {
+                    break;
+                }
             }
             Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
                 return Err("timed out".into())
@@ -230,14 +250,11 @@ pub fn call(url: &Url, method: &str, body: Option<&[u8]>, deadline: Instant, cap
     parse_reply(&reply).ok_or_else(|| "unreadable reply".to_string())
 }
 
-fn parse_reply(reply: &[u8]) -> Option<(u16, Vec<u8>)> {
-    let (end, body_at) = head_end(reply, 0)?;
-    let head = std::str::from_utf8(&reply[..end]).ok()?;
-    let mut lines = head.lines();
-    let status: u16 = lines.next()?.split_whitespace().nth(1)?.parse().ok()?;
+/// How a reply's head says its body ends: chunked, or a length.
+fn framing(head: &str) -> (bool, Option<usize>) {
     let mut chunked = false;
     let mut length: Option<usize> = None;
-    for line in lines {
+    for line in head.lines().skip(1) {
         let Some((k, v)) = line.split_once(':') else { continue };
         let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
         if k == "transfer-encoding" && v.to_ascii_lowercase().contains("chunked") {
@@ -246,6 +263,27 @@ fn parse_reply(reply: &[u8]) -> Option<(u16, Vec<u8>)> {
             length = v.parse().ok();
         }
     }
+    (chunked, length)
+}
+
+/// Whether a reply has all of its body, by its own framing; one with
+/// neither ends when the connection does.
+fn complete(reply: &[u8]) -> bool {
+    let Some((end, body_at)) = head_end(reply, 0) else { return false };
+    let Ok(head) = std::str::from_utf8(&reply[..end]) else { return false };
+    let body = &reply[body_at..];
+    match framing(head) {
+        (true, _) => dechunk(body).is_some(),
+        (false, Some(n)) => body.len() >= n,
+        (false, None) => false,
+    }
+}
+
+fn parse_reply(reply: &[u8]) -> Option<(u16, Vec<u8>)> {
+    let (end, body_at) = head_end(reply, 0)?;
+    let head = std::str::from_utf8(&reply[..end]).ok()?;
+    let status: u16 = head.lines().next()?.split_whitespace().nth(1)?.parse().ok()?;
+    let (chunked, length) = framing(head);
     let raw = &reply[body_at..];
     let body = if chunked {
         dechunk(raw)?
@@ -281,6 +319,12 @@ mod tests {
     fn replies_plain_and_chunked() {
         assert_eq!(dechunk(b"4\r\nWiki\r\n5;x=y\r\npedia\r\n0\r\n\r\n"), Some(b"Wikipedia".to_vec()));
         assert_eq!(dechunk(b"9\r\nshort\r\n"), None);
+        // A size as large as a usize gets is refused, not a panic.
+        assert_eq!(dechunk(b"ffffffffffffffff\r\nx\r\n"), None);
+        assert!(complete(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"));
+        assert!(!complete(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n{}"));
+        assert!(complete(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n"));
+        assert!(!complete(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n"));
         let plain = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}extra";
         assert_eq!(parse_reply(plain), Some((200, b"{}".to_vec())));
         let chunked = b"HTTP/1.1 404 Not Found\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n";
