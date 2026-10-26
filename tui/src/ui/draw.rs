@@ -76,9 +76,8 @@ pub enum Part {
     Chart(Chart),
     /// A label, a short graph and the latest value, btop's per-core style.
     Spark(Spark),
-    /// A value in digits five rows tall, flush right in room for this many
-    /// digits so the unit after it holds still, then the unit in plain text.
-    Big(String, String, usize, Style),
+    /// A value in big digits.
+    Big(Big),
     /// A muted label over its value.
     Tile(String, Line<'static>),
     /// Short lines set side by side, wrapped onto as many rows as needed.
@@ -105,7 +104,7 @@ impl Part {
             Part::Gap | Part::Text(_) | Part::Meter(_) | Part::OneLine(_) => 1,
             Part::Chart(c) => c.min_rows,
             Part::Spark(s) => s.rows,
-            Part::Big(..) => 5,
+            Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
             Part::Chips(chips) => chip_lines(chips, width).len().max(1) as u16,
             Part::Table(t) => t.caption.is_some() as u16 + 1 + t.rows.len().max(1) as u16,
@@ -158,7 +157,7 @@ impl Part {
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
             Part::Spark(s) => s.render(pen, area),
-            Part::Big(value, unit, slots, style) => big(pen, area, value, unit, *slots, *style),
+            Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
                 pen.text(area, area.x, area.y, label, Style::default().fg(p.muted));
                 pen.line(area, area.x, area.y + 1, value);
@@ -648,69 +647,106 @@ fn span(seconds: f64) -> String {
 
 // ------------------------------------------------------------ big digits
 
+/// A value in big digits, flush right in room for `slots` digits so the
+/// unit after it holds still, then the unit in plain text on the baseline.
+pub struct Big {
+    pub value: String,
+    pub unit: String,
+    pub slots: usize,
+    /// Three rows tall rather than five. The console keeps five: its font
+    /// lacks the strokes.
+    pub small: bool,
+    pub style: Style,
+}
+
 /// Heavy box-drawing strokes, four columns by five rows.
-const STROKES: [(char, [&str; 5]); 11] = [
-    ('0', ["┏━━┓", "┃  ┃", "┃  ┃", "┃  ┃", "┗━━┛"]),
-    ('1', ["╺━┓ ", "  ┃ ", "  ┃ ", "  ┃ ", "╺━┻╸"]),
-    ('2', ["╺━━┓", "   ┃", "┏━━┛", "┃   ", "┗━━╸"]),
-    ('3', ["╺━━┓", "   ┃", " ━━┫", "   ┃", "╺━━┛"]),
-    ('4', ["╻  ╻", "┃  ┃", "┗━━┫", "   ┃", "   ╹"]),
-    ('5', ["┏━━╸", "┃   ", "┗━━┓", "   ┃", "╺━━┛"]),
-    ('6', ["┏━━╸", "┃   ", "┣━━┓", "┃  ┃", "┗━━┛"]),
-    ('7', ["╺━━┓", "   ┃", "   ┃", "   ┃", "   ╹"]),
-    ('8', ["┏━━┓", "┃  ┃", "┣━━┫", "┃  ┃", "┗━━┛"]),
-    ('9', ["┏━━┓", "┃  ┃", "┗━━┫", "   ┃", "╺━━┛"]),
-    ('–', ["    ", "    ", "╺━━╸", "    ", "    "]),
+const STROKES: [(char, &[&str]); 11] = [
+    ('0', &["┏━━┓", "┃  ┃", "┃  ┃", "┃  ┃", "┗━━┛"]),
+    ('1', &["╺━┓ ", "  ┃ ", "  ┃ ", "  ┃ ", "╺━┻╸"]),
+    ('2', &["╺━━┓", "   ┃", "┏━━┛", "┃   ", "┗━━╸"]),
+    ('3', &["╺━━┓", "   ┃", " ━━┫", "   ┃", "╺━━┛"]),
+    ('4', &["╻  ╻", "┃  ┃", "┗━━┫", "   ┃", "   ╹"]),
+    ('5', &["┏━━╸", "┃   ", "┗━━┓", "   ┃", "╺━━┛"]),
+    ('6', &["┏━━╸", "┃   ", "┣━━┓", "┃  ┃", "┗━━┛"]),
+    ('7', &["╺━━┓", "   ┃", "   ┃", "   ┃", "   ╹"]),
+    ('8', &["┏━━┓", "┃  ┃", "┣━━┫", "┃  ┃", "┗━━┛"]),
+    ('9', &["┏━━┓", "┃  ┃", "┗━━┫", "   ┃", "╺━━┛"]),
+    ('–', &["    ", "    ", "╺━━╸", "    ", "    "]),
+];
+
+/// The same strokes three columns by three rows, seven-segment style: the
+/// smallest that still reads as a big figure.
+const SMALL_STROKES: [(char, &[&str]); 11] = [
+    ('0', &["┏━┓", "┃ ┃", "┗━┛"]),
+    ('1', &["╺┓ ", " ┃ ", "╺┻╸"]),
+    ('2', &["╺━┓", "┏━┛", "┗━╸"]),
+    ('3', &["╺━┓", " ━┫", "╺━┛"]),
+    ('4', &["╻ ╻", "┗━┫", "  ╹"]),
+    ('5', &["┏━╸", "┗━┓", "╺━┛"]),
+    ('6', &["┏━╸", "┣━┓", "┗━┛"]),
+    ('7', &["╺━┓", "  ┃", "  ╹"]),
+    ('8', &["┏━┓", "┣━┫", "┗━┛"]),
+    ('9', &["┏━┓", "┗━┫", "╺━┛"]),
+    ('–', &["   ", "╺━╸", "   "]),
 ];
 
 /// Block pixels for the console, whose font has few of those strokes:
 /// three by five, each pixel two cells wide.
-const BLOCKS: [(char, [&str; 5]); 11] = [
-    ('0', ["###", "# #", "# #", "# #", "###"]),
-    ('1', [" # ", "## ", " # ", " # ", "###"]),
-    ('2', ["###", "  #", "###", "#  ", "###"]),
-    ('3', ["###", "  #", " ##", "  #", "###"]),
-    ('4', ["# #", "# #", "###", "  #", "  #"]),
-    ('5', ["###", "#  ", "###", "  #", "###"]),
-    ('6', ["###", "#  ", "###", "# #", "###"]),
-    ('7', ["###", "  #", "  #", "  #", "  #"]),
-    ('8', ["###", "# #", "###", "# #", "###"]),
-    ('9', ["###", "# #", "###", "  #", "###"]),
-    ('–', ["   ", "   ", "###", "   ", "   "]),
+const BLOCKS: [(char, &[&str]); 11] = [
+    ('0', &["###", "# #", "# #", "# #", "###"]),
+    ('1', &[" # ", "## ", " # ", " # ", "###"]),
+    ('2', &["###", "  #", "###", "#  ", "###"]),
+    ('3', &["###", "  #", " ##", "  #", "###"]),
+    ('4', &["# #", "# #", "###", "  #", "  #"]),
+    ('5', &["###", "#  ", "###", "  #", "###"]),
+    ('6', &["###", "#  ", "###", "# #", "###"]),
+    ('7', &["###", "  #", "  #", "  #", "  #"]),
+    ('8', &["###", "# #", "###", "# #", "###"]),
+    ('9', &["###", "# #", "###", "  #", "###"]),
+    ('–', &["   ", "   ", "###", "   ", "   "]),
 ];
 
-fn glyph_width(look: &Look) -> u16 {
-    if look.console_glyphs {
-        7
-    } else {
-        5
-    }
-}
-
-/// Columns taken by `digits` big digits and a short unit after them.
-pub fn big_width(look: &Look, digits: usize, unit: &str) -> u16 {
-    digits as u16 * glyph_width(look) + unit.chars().count() as u16
-}
-
-fn big(pen: &mut Pen, area: Rect, value: &str, unit: &str, slots: usize, style: Style) {
-    let empty = slots.saturating_sub(value.chars().count()) as u16;
-    let mut x = area.x + empty * glyph_width(pen.look);
-    for ch in value.chars() {
-        let font = if pen.look.console_glyphs { &BLOCKS } else { &STROKES };
-        if let Some((_, rows)) = font.iter().find(|(c, _)| *c == ch) {
-            for (r, row) in rows.iter().enumerate() {
-                let cells: String = if pen.look.console_glyphs {
-                    row.chars().map(|c| if c == '#' { "██" } else { "  " }).collect()
-                } else {
-                    row.to_string()
-                };
-                pen.text(area, x, area.y + r as u16, &cells, style);
-            }
+impl Big {
+    /// The font, and each glyph's width with the gap after it.
+    fn font(&self, look: &Look) -> (&'static [(char, &'static [&'static str])], u16) {
+        match (look.console_glyphs, self.small) {
+            (true, _) => (&BLOCKS, 7),
+            (false, true) => (&SMALL_STROKES, 4),
+            (false, false) => (&STROKES, 5),
         }
-        x += glyph_width(pen.look);
     }
-    // The unit sits small on the baseline.
-    pen.text(area, x, area.y + 4, unit, style);
+
+    /// Small digits are for terminals other than the console, which keeps
+    /// five rows; whoever builds one checks.
+    pub fn height(&self) -> u16 {
+        if self.small { 3 } else { 5 }
+    }
+
+    /// Columns taken, digits and unit.
+    pub fn width(&self, look: &Look) -> u16 {
+        self.slots as u16 * self.font(look).1 + self.unit.chars().count() as u16
+    }
+
+    fn render(&self, pen: &mut Pen, area: Rect) {
+        let (font, step) = self.font(pen.look);
+        let empty = self.slots.saturating_sub(self.value.chars().count()) as u16;
+        let mut x = area.x + empty * step;
+        for ch in self.value.chars() {
+            if let Some((_, rows)) = font.iter().find(|(c, _)| *c == ch) {
+                for (r, row) in rows.iter().enumerate() {
+                    let cells: String = if pen.look.console_glyphs {
+                        row.chars().map(|c| if c == '#' { "██" } else { "  " }).collect()
+                    } else {
+                        row.to_string()
+                    };
+                    pen.text(area, x, area.y + r as u16, &cells, self.style);
+                }
+            }
+            x += step;
+        }
+        // The unit sits small on the baseline.
+        pen.text(area, x, area.y + self.height() - 1, &self.unit, self.style);
+    }
 }
 
 // ----------------------------------------------------------------- tables
@@ -827,7 +863,9 @@ impl Card {
             let right = Line::styled(format!(" {} ", self.right), Style::default().fg(p.muted));
             block = block.title_top(right.right_aligned());
         }
-        if self.stale {
+        // A live card can still carry an error: a merged panel whose own part
+        // is live while the source behind another part is not.
+        if self.stale || self.error.is_some() {
             let (text, color) = match &self.error {
                 Some(e) => (e.clone(), p.critical),
                 None => ("waiting…".to_string(), p.muted),

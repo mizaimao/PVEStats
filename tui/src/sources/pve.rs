@@ -345,7 +345,6 @@ impl Pve {
                 .unwrap_or_default(),
             uptime: num(&status, "uptime"),
             pveversion: text(&status, "pveversion").map(str::to_string),
-            cores: int(&cpuinfo, "cores"),
             cpus: int(&cpuinfo, "cpus"),
             guests_running: running.len(),
             guests_total: resources.iter().filter(|g| !truthy(g.get("template"))).count(),

@@ -88,7 +88,6 @@ pub struct Node {
     pub loadavg: Vec<f64>,
     pub uptime: Option<f64>,
     pub pveversion: Option<String>,
-    pub cores: Option<u64>,
     pub cpus: Option<u64>,
     pub guests_running: usize,
     pub guests_total: usize,

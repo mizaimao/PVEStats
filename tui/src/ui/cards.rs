@@ -4,7 +4,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::draw::{bar, big_width, Card, Chart, Col, Meter, Part, Spark, Table, Trace};
+use super::draw::{bar, Big, Card, Chart, Col, Meter, Part, Spark, Table, Trace};
 use super::theme::Look;
 use crate::config::{Host, View};
 use crate::format::{self as fmt, MIB, TIB};
@@ -133,12 +133,13 @@ fn disk_line(look: &Look, guest: Option<&Guest>) -> Part {
 pub fn host(look: &Look, node: &Node, pve: &Source<PveData>, status: &Status) -> Card {
     // Trim pve-manager's build hash: it is noise at a glance.
     let version = node.pveversion.as_deref().unwrap_or("").split('/').take(2).collect::<Vec<_>>().join(" ");
-    let mut info = Vec::new();
-    if let (Some(cores), Some(threads)) = (node.cores, node.cpus) {
-        info.push(format!("{cores} cores / {threads} threads"));
-    }
+    // The node leads: the card shares its title with the status line.
+    let mut info = vec![node.name.clone()];
     info.push(format!("up {}", fmt::uptime(node.uptime)));
     info.push(format!("guests {} / {}", node.guests_running, node.guests_total));
+    if let Some(threads) = node.cpus {
+        info.push(format!("{threads} threads"));
+    }
     let load = node.loadavg.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>().join(" / ");
     Card {
         title: format!("Proxmox host · {}", node.name),
@@ -197,7 +198,13 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
     let round = |v: Option<f64>, unit: &str| v.map_or(fmt::DASH.into(), |v| format!("{}{unit}", v.round() as i64));
 
     let util = get(|g| g.util);
-    let big = util.map_or(fmt::DASH.to_string(), |u| format!("{}", u.round() as i64));
+    let digits = Big {
+        value: util.map_or(fmt::DASH.to_string(), |u| format!("{}", u.round() as i64)),
+        unit: "%".into(),
+        slots: 3,
+        small: false,
+        style: bold(p.s1),
+    };
     // VRAM filling up is the failure that actually bites on this box: a model
     // that no longer fits gets evicted or spills to host memory.
     let vram_ratio = ratio(get(|g| g.vram_used), get(|g| g.vram_total));
@@ -211,7 +218,7 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         .unwrap_or_else(|| fmt::DASH.into());
 
     let headline = Part::Row(vec![
-        (big_width(look, 3, "%"), Part::Big(big, "%".into(), 3, bold(p.s1))),
+        (digits.width(look), Part::Big(digits)),
         (
             0,
             Part::Stack(vec![
@@ -663,5 +670,33 @@ pub fn tour(look: &Look, names: &[&str], index: usize, next_in: u64) -> Card {
         stale: false,
         error: None,
         body,
+    }
+}
+
+// ------------------------------------------------------- digits preview
+
+/// The GPU figure in both sizes of big digits, live, for choosing one.
+pub fn digits_preview(look: &Look, util: Option<f64>) -> Card {
+    let p = look.p;
+    let value = util.map_or(fmt::DASH.to_string(), |u| format!("{}", u.round() as i64));
+    let digits = |small: bool| Big {
+        value: value.clone(),
+        unit: "%".into(),
+        slots: 3,
+        small: small && !look.console_glyphs,
+        style: bold(p.s1),
+    };
+    Card {
+        title: "Big digits: pick one".into(),
+        right: String::new(),
+        stale: false,
+        error: None,
+        body: vec![
+            Part::Text(Line::styled("5 rows, as on the ml60 card", style(p.muted))),
+            Part::Big(digits(false)),
+            Part::Text(Line::raw("")),
+            Part::Text(Line::styled("3 rows", style(p.muted))),
+            Part::Big(digits(true)),
+        ],
     }
 }
