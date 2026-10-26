@@ -20,7 +20,11 @@ use crate::config::{clean_ui, Config};
 use crate::net;
 use crate::sources::{lock, PVE_TIMEOUT};
 
-const MAX_CONNECTIONS: usize = 32;
+/// High enough that a web page holding idle sockets to 127.0.0.1 cannot
+/// crowd the dashboard out; each costs a parked thread at most.
+const MAX_CONNECTIONS: usize = 256;
+/// For the first byte of a request: a connection that says nothing goes.
+const FIRST_BYTE: Duration = Duration::from_secs(2);
 const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 const HEAD_LIMIT: usize = 16 * 1024;
 const BODY_LIMIT: usize = 64 * 1024;
@@ -143,11 +147,13 @@ pub fn serve(listener: TcpListener, collector: Arc<Collector>) -> ! {
 }
 
 fn read_request(stream: &mut TcpStream) -> Option<Request> {
-    let deadline = Instant::now() + REQUEST_DEADLINE;
+    let started = Instant::now();
+    let deadline = started + REQUEST_DEADLINE;
     let mut buf: Vec<u8> = Vec::with_capacity(2048);
     let mut chunk = [0u8; 4096];
-    let read = |stream: &mut TcpStream, chunk: &mut [u8]| -> Option<usize> {
-        let left = deadline.saturating_duration_since(Instant::now());
+    let read = |stream: &mut TcpStream, chunk: &mut [u8], first: bool| -> Option<usize> {
+        let until = if first { started + FIRST_BYTE } else { deadline };
+        let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return None;
         }
@@ -158,7 +164,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
         }
     };
     let (head_len, body_at) = loop {
-        let n = read(stream, &mut chunk)?;
+        let n = read(stream, &mut chunk, buf.is_empty())?;
         let from = buf.len().saturating_sub(3);
         buf.extend_from_slice(&chunk[..n]);
         if let Some(i) = buf[from..].windows(4).position(|w| w == b"\r\n\r\n") {
@@ -186,7 +192,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
     body.truncate(length);
     while body.len() < length {
         let want = (length - body.len()).min(chunk.len());
-        let n = read(stream, &mut chunk[..want])?;
+        let n = read(stream, &mut chunk[..want], false)?;
         body.extend_from_slice(&chunk[..n]);
     }
     Some(Request { method, path: path.to_string(), query: query.to_string(), headers, body })

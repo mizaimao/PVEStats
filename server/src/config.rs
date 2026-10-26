@@ -95,9 +95,16 @@ fn read_env(path: &Path) -> HashMap<String, String> {
     out
 }
 
-fn yaml_to_json(y: &Yaml) -> Value {
-    serde_json::to_value(y).unwrap_or(Value::Null)
+/// config.yaml as JSON values; an error, not an empty file, for YAML that
+/// JSON cannot hold (a mapping key that is neither text nor a number).
+fn yaml_to_json(y: &Yaml) -> Result<Value, String> {
+    serde_json::to_value(y).map_err(|e| format!("config.yaml: {e}"))
 }
+
+/// One settings save at a time, from reading ui.json to moving the new one
+/// into place: requests run on threads of their own, and two at once could
+/// lose a change or write over each other's temporary file.
+static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl Config {
     pub fn load(root: &Path) -> Result<Config, String> {
@@ -110,7 +117,7 @@ impl Config {
         };
         let text = std::fs::read_to_string(root.join("config.yaml")).map_err(|e| format!("config.yaml: {e}"))?;
         let raw: Yaml = serde_yaml::from_str(&text).map_err(|e| format!("config.yaml: {e}"))?;
-        let raw = yaml_to_json(&raw);
+        let raw = yaml_to_json(&raw)?;
         let mut hosts = Vec::new();
         for h in raw.get("hosts").and_then(Value::as_array).cloned().unwrap_or_default() {
             let Some(entry) = h.as_object() else { continue };
@@ -162,6 +169,7 @@ impl Config {
     /// written to a temporary file and moved into place so a crash cannot
     /// leave half a file. ui.json holds only what was changed here.
     pub fn save_ui(&self, changes: &Value) -> std::io::Result<Map<String, Value>> {
+        let _one_at_a_time = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         let saved = merge(&self.saved_ui(), &clean_ui(changes));
         let temporary = self.root.join(format!(".ui.{}.tmp", std::process::id()));
         let text = serde_json::to_string_pretty(&Value::Object(saved.clone())).unwrap_or_else(|_| "{}".into());

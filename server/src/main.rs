@@ -72,6 +72,18 @@ fn main() {
             exit(1);
         }
     };
+    // Gone with whatever started it: app.py's window, or a terminal. A
+    // force-quit app never runs its own clean-up, and a server left behind
+    // would go on polling every source with no window, on a fanless Mac.
+    // Its parent changing (to launchd) means that one is gone.
+    // SAFETY: getppid has no preconditions and cannot fail.
+    let parent = unsafe { libc::getppid() };
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        if unsafe { libc::getppid() } != parent {
+            exit(0);
+        }
+    });
     let collector = Arc::new(Collector::new(Arc::clone(&config)));
     collector.start();
     eprintln!("dashboard  http://{address}");
