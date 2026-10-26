@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from aiohttp import web
 
@@ -30,6 +31,12 @@ from pvestats.server import build_app
 
 HOST = "127.0.0.1"
 STARTUP_TIMEOUT = 15
+
+ROOT = Path(__file__).resolve().parent
+# The Rust collector and server (server/, built with server/build). When it
+# is there, the window shows its page instead of starting the Python one in
+# this process: it does the same work for a fraction of the CPU.
+SERVER = ROOT / "server" / "bin" / "pvestats-server"
 
 
 def die(message):
@@ -101,6 +108,45 @@ class Backend:
             await self.collector.stop()
 
 
+class ServerProcess:
+    """pvestats-server (server/, Rust) as a child process, with Backend's
+    start/stop/ready/error, so main() runs either the same way. It exits with
+    the window: stop() ends it, and so does the window closing."""
+
+    def __init__(self, config):
+        self.config = config
+        self.process = None
+        self.ready = threading.Event()
+        self.error = None
+
+    def start(self):
+        try:
+            # stderr carries one line at start, or why it could not start.
+            self.process = subprocess.Popen(
+                [str(SERVER), "--root", str(ROOT)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE, text=True)
+        except OSError as exc:
+            self.error = exc
+        self.ready.set()
+
+    def failure(self):
+        """Why it stopped, if it has: its last words on stderr."""
+        if self.process is None or self.process.poll() is None:
+            return None
+        said = (self.process.stderr.read() or "").strip()
+        return said or f"pvestats-server exited with {self.process.returncode}"
+
+    def stop(self):
+        if self.process is None or self.process.poll() is not None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+
+
 def wait_for_server(url, deadline):
     """Block until the server answers, so the window never opens on an error.
 
@@ -170,7 +216,7 @@ def main():
             f"{type(exc).__name__}: {exc}")
     # Held for the process lifetime; dropping it re-enables App Nap.
     activity = keep_awake()      # noqa: F841
-    backend = Backend(config)
+    backend = ServerProcess(config) if SERVER.is_file() else Backend(config)
     backend.start()
 
     url = f"http://{HOST}:{config.port}/"
@@ -182,8 +228,9 @@ def main():
     if error is not None:
         die(f"The collector failed to start: {type(error).__name__}: {error}")
     if not wait_for_server(url, time.monotonic() + STARTUP_TIMEOUT):
+        reason = backend.failure() if isinstance(backend, ServerProcess) else None
         backend.stop()
-        die(f"The dashboard server did not come up on {url}")
+        die(reason or f"The dashboard server did not come up on {url}")
 
     # Measured: the full layout is ~1160px tall between 1280 and 1500px wide,
     # and grows to ~1280px below that as columns collapse. Open large enough to
