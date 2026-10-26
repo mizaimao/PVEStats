@@ -74,6 +74,8 @@ pub enum Part {
     Text(Line<'static>),
     Meter(Meter),
     Chart(Chart),
+    /// A label, a short graph and the figure, btop's per-core style.
+    Spark(Spark),
     /// Two graphs on one axis, one up and one down, btop's network style.
     Mirror(Mirror),
     /// A value in big digits.
@@ -101,6 +103,7 @@ impl Part {
         match self {
             Part::Gap | Part::Text(_) | Part::Meter(_) => 1,
             Part::Chart(c) => c.min_rows,
+            Part::Spark(s) => s.rows,
             Part::Mirror(m) => m.rows,
             Part::Big(b) => b.height(),
             Part::Tile(..) => 2,
@@ -154,6 +157,7 @@ impl Part {
             }
             Part::Meter(m) => m.render(pen, area),
             Part::Chart(c) => c.render(pen, area),
+            Part::Spark(s) => s.render(pen, area),
             Part::Mirror(m) => m.render(pen, area),
             Part::Big(b) => b.render(pen, area),
             Part::Tile(label, value) => {
@@ -453,6 +457,37 @@ impl Chart {
         }
         pen.line(left, x, y, &Line::from(legend));
         pen.text(area, now_x, y, "now", muted);
+    }
+}
+
+/// btop's per-core row: a label, a short graph of the recent past on a fixed
+/// scale, and the figure now, across `rows` rows.
+pub struct Spark {
+    pub label: Line<'static>,
+    pub label_w: u16,
+    pub trace: Trace,
+    pub capacity: usize,
+    pub top: f64,
+    pub value: Line<'static>,
+    pub value_w: u16,
+    pub rows: u16,
+    /// As on a chart: cells per sample, or None to fit the buffer across.
+    pub sample_width: Option<f64>,
+}
+
+impl Spark {
+    fn render(&self, pen: &mut Pen, area: Rect) {
+        // Label and figure sit on the graph's foot, where the bars stand.
+        let y = area.bottom() - 1;
+        pen.line(area, area.x, y, &self.label);
+        let vw = (self.value.width() as u16).min(self.value_w);
+        pen.line(area, area.right().saturating_sub(vw), y, &self.value);
+        let graph = Rect {
+            x: area.x + self.label_w,
+            width: area.width.saturating_sub(self.label_w + self.value_w + 1),
+            ..area
+        };
+        plot(pen, graph, std::slice::from_ref(&self.trace), self.capacity, self.top, false, self.sample_width);
     }
 }
 
