@@ -1,0 +1,5 @@
+# The dashboard kiosk shows no mouse pointer: libinput ignores mice and
+# touchpads on this machine, so cage never draws a cursor. Keyboards and
+# the text consoles are unaffected. Install steps are in tui/README.md.
+ACTION=="add|change", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+ACTION=="add|change", SUBSYSTEM=="input", ENV{ID_INPUT_TOUCHPAD}=="1", ENV{LIBINPUT_IGNORE_DEVICE}="1"

@@ -250,7 +250,7 @@ pub fn gpu(look: &Look, slot: &Slot, agent: &Source<AgentData>, status: &Status,
         seconds_per_sample: agent.interval,
         caption: String::new(),
         min_rows: 5,
-        max_rows: 10,
+        max_rows: 11,
         weight: 3,
     });
 
