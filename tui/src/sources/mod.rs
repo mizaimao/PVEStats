@@ -155,6 +155,9 @@ pub struct Ram {
     pub available: f64,
     /// Buffers, page cache and reclaimable slab, as `free` counts it.
     pub cache: f64,
+    /// clock() when it was read, since the agent still sends it while its
+    /// GPU reading fails.
+    pub at: f64,
 }
 
 #[derive(Clone, Debug, Default)]

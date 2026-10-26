@@ -24,6 +24,14 @@ router's is the second.
 the same replies (field for field, so the app and the dashboard need no
 change) and these differences:
 
+- **It also reports ml60's own memory**, as `"ram": {"total", "available",
+  "cache"}` in bytes from `/proc/meminfo` (null if unreadable), the way
+  `free` counts it: used is total minus available, and cache is buffers,
+  page cache and reclaimable slab. PVE counts a VM's disk cache as used,
+  so it showed ml60 at 95% while its programs used about 12%. The
+  terminal dashboard shows this figure; clients that don't know the field
+  ignore it.
+
 - **The GPU is read by one thread**, about once a second and only while
   someone has asked in the last 15 s; requests are served its latest
   reading. No client sets how often NVML is read, and the PCIe counters'
