@@ -457,13 +457,14 @@ export function nasCard(guest) {
     el: shell.el,
     update(g, history, status) {
       setTitle(shell, g.name);
-      markPve([row], status);
-      cpu.set((g.cpu_pct || 0) / 100, fmt.pctText(g.cpu_pct));
-      mem.set(g.maxmem ? g.mem / g.maxmem : 0,
-              fmt.pctText(g.maxmem ? (g.mem / g.maxmem) * 100 : null),
-              null, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
-      setSub(shell, [`vmid ${g.vmid}`, "NAS", (g.addresses || [])[0],
-                     `up ${fmt.uptime(g.uptime)}`]);
+      // Everything on the card comes from TrueNAS's own agent, never PVE.
+      const inside = (g.nas && g.nas.inside) || {};
+      cpu.set((inside.cpu_pct || 0) / 100, fmt.pctText(inside.cpu_pct));
+      const memPct = inside.mem_total ? (inside.mem_used / inside.mem_total) * 100 : null;
+      mem.set(memPct == null ? 0 : memPct / 100, fmt.pctText(memPct),
+              null, `${fmt.gib(inside.mem_used)} / ${fmt.gib(inside.mem_total)} GiB`);
+      setSub(shell, [`vmid ${g.vmid}`, "NAS", inside.ip,
+                     `up ${fmt.uptime(inside.uptime)}`]);
 
       const nas = g.nas;
       if (nas) {
@@ -479,8 +480,9 @@ export function nasCard(guest) {
           ];
           const spark = new Spark(series, {
             format: fmt.rate, unit: " MiB/s", height: 96, axis: true,
-            xTicks: true, secondsPerSample: 5, minScale: 2 * MiB,
-            caption: `${name} · ${nic.label || nic.role || "?"}`,
+            // One sample a poll: every 2 s from TrueNAS's agent.
+            xTicks: true, secondsPerSample: (g.nas_status && g.nas_status.interval) || 2,
+            minScale: 2 * MiB, caption: `${name} · ${nic.label || nic.role || "?"}`,
           });
           sparks.set(name, spark);
           ifSpark.append(spark.el, legend(series));
@@ -521,17 +523,13 @@ export function nasCard(guest) {
           }
           entry.dot.style.background = p.healthy ? "var(--good)" : "var(--critical)";
           entry.label.nodeValue = p.status || "?";
-          // Usable space where TrueNAS gave it: the raw zpool size counts
-          // parity, about twice what a RAIDZ2 pool can hold. Raw, and said so,
-          // only as a fallback.
-          const usable = p.usable && p.used_bytes != null;
-          const used = usable ? p.used_bytes : p.allocated;
-          const total = usable ? p.usable : p.size;
+          // Usable space, from the root dataset: the raw zpool size counts
+          // parity, about twice what a RAIDZ2 pool can hold.
+          const used = p.used_bytes, total = p.usable;
           entry.bar.set(used, total, "");
-          const pct = total ? Math.round((used / total) * 100) : null;
+          const pct = total && used != null ? Math.round((used / total) * 100) : null;
           return [p.name, entry.badge, entry.bar.el,
-            pct == null ? "–"
-              : `${pct}% of ${(total / 1024 ** 4).toFixed(1)} TiB${usable ? "" : " raw"}`];
+            pct == null ? "–" : `${pct}% of ${(total / 1024 ** 4).toFixed(1)} TiB`];
         }), poolKeys);
       } else {
         ifTable.set([]);

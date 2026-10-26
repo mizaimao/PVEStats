@@ -25,8 +25,11 @@ Explicit design constraints, in priority order:
    reads only, logs nothing and writes nothing to flash. Both dashboards poll
    it once a second when `ROUTER_AGENT_URL` is set, and turn its counters into
    rates themselves.
+   *Update 2026-10-26 (later):* and one on TrueNAS (`nas/`), installed with
+   Frank's go-ahead in place of its API: it runs as an unprivileged user,
+   reads only, writes nothing, and costs a sixtieth of the API a request.
    Every agent's README ends with how to remove it completely: `router/`,
-   `agent/` (ml60), `pve/`.
+   `agent/` (ml60), `pve/`, `nas/`.
 
 ## 2. Architecture
 
@@ -217,6 +220,12 @@ goes over the Proxmox bridge on a virtio NIC, so PVE's `netin`/`netout` are
 valid for it again. This source still earns its place: per-disk I/O and pool
 health exist only inside TrueNAS.
 
+*Update 2026-10-26:* TrueNAS's API is retired. Both dashboards read TrueNAS's
+own agent (`nas/` in this repo, `NAS_AGENT_URL`), which serves CPU, memory,
+address, uptime, NICs, disks and pools from the kernel and ZFS, every 2 s.
+The API cost TrueNAS 25 ms of CPU a request; the agent costs 0.41 ms
+(`nas/README.md`). The rest of this section is the API's history.
+
 **Endpoint discovery is required.** TrueNAS's reporting endpoints have moved
 between releases. Do not hardcode a path from memory. Fetch the interactive API
 documentation at `https://<truenas-host>/api/docs`, find the current reporting
@@ -258,6 +267,9 @@ for the slow poll.
 - Per-interface RX/TX throughput (TrueNAS API, 5s)
 - Per-disk read/write (TrueNAS API, 5s)
 - Pool health and capacity (TrueNAS API, 5s)
+
+*Update 2026-10-26:* all of these, CPU and RAM included, come from TrueNAS's
+own agent every 2 s (see 3.3); PVE is not asked for this card.
 
 Do not display PVE's `netin`/`netout` on this card — see 3.3. (Since
 2026-10-14 they would be valid, but the card reads throughput from inside
@@ -315,7 +327,8 @@ pveum user token add dash@pve web --privsep 0
 `PVEAuditor` is read-only. `--privsep 0` makes the token inherit exactly that
 and nothing more.
 
-**TrueNAS:** generate an API key in the UI under the account's API Keys page.
+**TrueNAS:** no credentials since 2026-10-26: its own agent answers on the
+LAN without one (`nas/README.md`).
 
 **Credentials** go in a `.env` file on the Mac, git-ignored, read by the
 collector at startup. Never in the served page, never in the repo.

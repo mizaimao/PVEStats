@@ -12,12 +12,14 @@ import aiohttp
 
 PVE_INTERVAL = 10.0
 AGENT_INTERVAL = 1.0
-TRUENAS_INTERVAL = 5.0
+# TrueNAS's own agent reads the kernel as it is asked: 0.41 ms of its CPU a
+# poll (nas/README.md).
+NAS_AGENT_INTERVAL = 2.0
 ROUTER_INTERVAL = 1.0
 
 PVE_TIMEOUT = aiohttp.ClientTimeout(total=5)
 AGENT_TIMEOUT = aiohttp.ClientTimeout(total=2)
-TRUENAS_TIMEOUT = aiohttp.ClientTimeout(total=5)
+NAS_AGENT_TIMEOUT = aiohttp.ClientTimeout(total=2)
 ROUTER_TIMEOUT = aiohttp.ClientTimeout(total=2)
 
 
@@ -34,10 +36,9 @@ async def run_poller(source, interval, poll):
             raise
         except asyncio.TimeoutError:
             # How long the poll actually waited. The limit that fired is a
-            # request's own timeout (5s per PVE request, 2s for the agent, 5s
-            # per TrueNAS step: the connect or one call's reply), never the
-            # poll interval. A poll makes several requests in turn, so the
-            # total can be more than one limit.
+            # request's own timeout (5s per PVE request, 2s for each agent),
+            # never the poll interval. A poll makes several requests in turn,
+            # so the total can be more than one limit.
             source.fail(f"timed out after {time.monotonic() - started:.0f}s")
         except Exception as exc:
             source.fail(f"{type(exc).__name__}: {exc}")

@@ -7,13 +7,14 @@ use std::thread;
 use serde_json::{json, Map, Value};
 
 use crate::config::Config;
-use crate::sources::{self, agent::Agent, lock, pve::Pve, router::Router, run_poller, truenas::TrueNas};
+use crate::sources::{self, agent::Agent, lock, nas_agent::NasAgent, pve::Pve, router::Router, run_poller};
 use crate::state::{clock, Source};
 
 pub struct Collector {
     pub config: Arc<Config>,
     pub pve: Mutex<Source>,
     pub agent: Mutex<Source>,
+    /// TrueNAS, from its own agent.
     pub truenas: Mutex<Source>,
     /// Optional: only a configured router gets a source, a status dot and a
     /// card.
@@ -28,7 +29,7 @@ impl Collector {
             config,
             pve: Mutex::new(Source::new(sources::PVE_INTERVAL, 600.0)),
             agent: Mutex::new(Source::new(sources::AGENT_INTERVAL, 600.0)),
-            truenas: Mutex::new(Source::new(sources::TRUENAS_INTERVAL, 600.0)),
+            truenas: Mutex::new(Source::new(sources::NAS_AGENT_INTERVAL, 600.0)),
             router,
         };
         collector.set_history_window(window);
@@ -50,9 +51,9 @@ impl Collector {
         } else {
             lock(&self.agent).fail(missing());
         }
-        if self.config.truenas_configured() {
-            let (c, mut nas) = (Arc::clone(self), TrueNas::new(Arc::clone(&self.config)));
-            thread::spawn(move || run_poller(&c.truenas, sources::TRUENAS_INTERVAL, || nas.poll(&c.truenas)));
+        if self.config.nas_agent_configured() {
+            let (c, mut nas) = (Arc::clone(self), NasAgent::new(Arc::clone(&self.config)));
+            thread::spawn(move || run_poller(&c.truenas, sources::NAS_AGENT_INTERVAL, || nas.poll(&c.truenas)));
         } else {
             lock(&self.truenas).fail(missing());
         }
