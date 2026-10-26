@@ -12,8 +12,9 @@ use nvml_wrapper::error::NvmlError;
 use nvml_wrapper::Nvml;
 use serde_json::{json, Value};
 
-/// After NVML fails, it is shut down and tried again no sooner than this.
-const RETRY_AFTER: Duration = Duration::from_secs(30);
+/// After NVML fails, it is shut down and tried again after a second, then
+/// after twice as long each time it fails again, up to this.
+const RETRY_MOST: Duration = Duration::from_secs(30);
 
 /// NVML, initialised once and kept: initialising it costs far more than
 /// keeping it. Shut down (dropped) only after a device-level failure.
@@ -21,17 +22,23 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 pub struct Gpu {
     nvml: Option<Nvml>,
     retry_at: Option<Instant>,
+    /// The wait before the next try, after the next failure.
+    backoff: Duration,
     error: String,
 }
 
 /// The driver installs the versioned name; the bare one comes only with
-/// development packages.
+/// development packages. Only a library that will not load is tried under
+/// the other name: an NVML that loads but will not start says why itself.
 fn init() -> Result<Nvml, NvmlError> {
-    Nvml::builder().lib_path(OsStr::new("libnvidia-ml.so.1")).init().or_else(|_| Nvml::init())
+    match Nvml::builder().lib_path(OsStr::new("libnvidia-ml.so.1")).init() {
+        Err(NvmlError::LibloadingError(_)) => Nvml::init(),
+        other => other,
+    }
 }
 
 impl Gpu {
-    /// Initialises NVML now, for the startup message.
+    /// Initialises NVML now.
     pub fn start(&mut self) -> Result<(), String> {
         match init() {
             Ok(nvml) => {
@@ -48,7 +55,8 @@ impl Gpu {
     fn fail(&mut self, error: String) {
         // Dropping it shuts NVML down; the next reading starts afresh.
         self.nvml = None;
-        self.retry_at = Some(Instant::now() + RETRY_AFTER);
+        self.backoff = (self.backoff * 2).clamp(Duration::from_secs(1), RETRY_MOST);
+        self.retry_at = Some(Instant::now() + self.backoff);
         self.error = error;
     }
 
@@ -62,7 +70,10 @@ impl Gpu {
         }
         let nvml = self.nvml.as_ref().expect("set just above");
         match sample(nvml, index) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                self.backoff = Duration::ZERO;
+                Ok(value)
+            }
             Err(e) => {
                 self.fail(format!("NVML: {e}"));
                 Err(self.error.clone())
@@ -107,18 +118,20 @@ fn watts(milliwatts: u32) -> f64 {
     (milliwatts as f64 / 100.0).round() / 10.0
 }
 
+/// The device, utilisation and memory say whether the GPU can be read at
+/// all: their errors (beyond `metric`'s) fail the reading. Any error from
+/// the rest is that one figure missing this time, so a passing glitch in a
+/// fan or PCIe reading does not blank the card.
 fn sample(nvml: &Nvml, index: u32) -> Result<Value, NvmlError> {
     let d = nvml.device_by_index(index)?;
     let util = metric(d.utilization_rates())?;
     let mem = metric(d.memory_info())?;
-    let power = metric(d.power_usage())?;
-    let limit = match metric(d.enforced_power_limit())? {
-        Some(v) => Some(v),
-        None => metric(d.power_management_limit())?,
-    };
+    let power = d.power_usage().ok();
+    let limit = d.enforced_power_limit().or_else(|_| d.power_management_limit()).ok();
     // Needs to run as Ollama's user (or root) to see its processes;
     // otherwise NVML quietly lists none.
-    let procs: Vec<Value> = metric(d.running_compute_processes())?
+    let procs: Vec<Value> = d
+        .running_compute_processes()
         .unwrap_or_default()
         .iter()
         .map(|p| {
@@ -131,12 +144,12 @@ fn sample(nvml: &Nvml, index: u32) -> Result<Value, NvmlError> {
         .collect();
     // KB/s over NVML's last ~20 ms window, not cumulative: no rate maths.
     let pcie = json!({
-        "gen": metric(d.current_pcie_link_gen())?,
-        "width": metric(d.current_pcie_link_width())?,
-        "max_gen": metric(d.max_pcie_link_gen())?,
-        "max_width": metric(d.max_pcie_link_width())?,
-        "tx_kbps": metric(d.pcie_throughput(PcieUtilCounter::Send))?,
-        "rx_kbps": metric(d.pcie_throughput(PcieUtilCounter::Receive))?,
+        "gen": d.current_pcie_link_gen().ok(),
+        "width": d.current_pcie_link_width().ok(),
+        "max_gen": d.max_pcie_link_gen().ok(),
+        "max_width": d.max_pcie_link_width().ok(),
+        "tx_kbps": d.pcie_throughput(PcieUtilCounter::Send).ok(),
+        "rx_kbps": d.pcie_throughput(PcieUtilCounter::Receive).ok(),
     });
     Ok(json!({
         "util": util.as_ref().map(|u| u.gpu),
@@ -146,11 +159,11 @@ fn sample(nvml: &Nvml, index: u32) -> Result<Value, NvmlError> {
         // included: total less free, as the agent has always reported.
         "vram_used": mem.as_ref().map(|m| m.total.saturating_sub(m.free)),
         "vram_total": mem.as_ref().map(|m| m.total),
-        "temp": metric(d.temperature(TemperatureSensor::Gpu))?,
+        "temp": d.temperature(TemperatureSensor::Gpu).ok(),
         "power": power.map(watts),
         "power_limit": limit.map(watts),
-        "clock_sm": metric(d.clock_info(Clock::SM))?,
-        "fan": metric(d.fan_speed(0))?,
+        "clock_sm": d.clock_info(Clock::SM).ok(),
+        "fan": d.fan_speed(0).ok(),
         "procs": procs,
     }))
 }
@@ -183,5 +196,12 @@ mod tests {
         let started = Instant::now();
         assert_eq!(gpu.read(0).unwrap_err(), first);
         assert!(started.elapsed() < Duration::from_millis(50), "no second init within the retry wait");
+        // The wait doubles with each failure, up to 30 s.
+        assert_eq!(gpu.backoff, Duration::from_secs(1));
+        for _ in 0..8 {
+            gpu.retry_at = None;
+            let _ = gpu.read(0);
+        }
+        assert_eq!(gpu.backoff, RETRY_MOST);
     }
 }

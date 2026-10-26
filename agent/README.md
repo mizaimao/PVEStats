@@ -37,9 +37,18 @@ change) and these differences:
 - **At most 16 connections**, more closed at once; each request read with a
   2 s deadline and a 16 KiB cap on its head, one request per connection.
 - **Unload**: the same checks in the same order and with the same answers,
-  then three more: one unload at a time (409), not the same model again
-  within 10 s (429), and only a model that is loaded (404). A 200 that did
-  not unload now says why in `error`, and a 502 carries Ollama's own reason.
+  then more: one unload at a time (409), not the same model again within
+  10 s of stopping it (429), only a model that is loaded (404, from the
+  cached list while it is fresh, so a loop of such requests never reaches
+  Ollama), and at most one request a second sent on to Ollama (429). A 200
+  that did not unload now says why in `error`, and a 502 carries Ollama's
+  own reason.
+- **NVML trouble** shows as such: a reading that has not come for 2.5 s is
+  served as `gpu: null` with the reason, never as the last good one. A
+  passing error in a minor figure (fan, clock, PCIe, power, processes)
+  leaves that figure null for one reading; NVML is shut down only when the
+  device, its utilisation or its memory cannot be read, and tried again
+  after 1 s, then twice as long each time, up to 30 s.
 - `procs[].name` is the last part of the path, as the dashboard shows it.
 - The `error` text reads `NVML: <reason>`.
 
@@ -68,6 +77,7 @@ Then on ml60:
     sudo cp /tmp/pvestats-agent.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl restart pvestats-agent
+    sleep 1
     systemctl status pvestats-agent --no-pager | head -5
     curl -s http://127.0.0.1:9836/ | head -c 300; echo
     rm /tmp/pvestats-agent /tmp/pvestats-agent.service
