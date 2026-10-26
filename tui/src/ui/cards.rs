@@ -759,8 +759,8 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
         cols: vec![
             Col { title: "Link", width: 0, right: false, tint: None },
             Col { title: "Devices", width: 9, right: true, tint: None },
-            Col { title: "download", width: 11, right: true, tint: Some(0) },
-            Col { title: "upload", width: 11, right: true, tint: Some(1) },
+            Col { title: "download", width: 12, right: true, tint: Some(0) },
+            Col { title: "upload", width: 12, right: true, tint: Some(1) },
         ],
         rows,
         empty: "no links",
