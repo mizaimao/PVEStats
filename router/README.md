@@ -89,6 +89,13 @@ ships with Rust, so no cross compiler is needed.
 
 ## Installing (only with Frank's go-ahead)
 
+Installed on Frank's router on 2026-10-26, from these steps; the dashboard
+polls it once a second (measured there: 1.2 ms of the router's CPU a
+request, 0.05% of the router at that pace, 0.4 MB of memory). Every SSH
+login writes three lines to the router's log, which is on flash, so keep
+them few. To update it: `router/build`, then `service.sh stop`, copy the
+program over, `service.sh start`.
+
 Needs SSH and "Enable JFFS custom scripts and configs" (Administration ›
 System), both already on for AdGuard Home. From the repo, after
 `router/build`:

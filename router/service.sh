@@ -26,7 +26,8 @@ LOCK=/tmp/pvestats-keeper.lock
 # that was given the same id. cmdline's arguments are NUL-separated.
 keeper_alive() {
     pid=$(cat "$PIDFILE" 2>/dev/null)
-    [ -n "$pid" ] && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q 'service.sh keep'
+    # The braces carry the redirect's own error (a process gone) to /dev/null.
+    [ -n "$pid" ] && { tr '\0' ' ' <"/proc/$pid/cmdline"; } 2>/dev/null | grep -q 'service.sh keep'
 }
 
 case "$1" in
