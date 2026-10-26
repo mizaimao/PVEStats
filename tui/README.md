@@ -49,10 +49,8 @@ days Open-Meteo's outlook, dimmer; elsewhere Open-Meteo's. Both are free, with
 no key. Where it is for goes in .env, so it stays off GitHub: `WEATHER_PLACE`
 (a place name, looked up once) or `WEATHER_LATITUDE` and `WEATHER_LONGITUDE`;
 `WEATHER_UNITS=imperial` for °F, mph and inches. It refreshes every 15
-minutes. `tui: weather_layout` in config.yaml picks its layout: `a` (a
-strip every two hours from the next, the week as a table), `b` (the hours
-a line each), `c` (hourly and three-hourly strips, the week as tiles with
-ASCII icons), or `tour` for each in turn.
+minutes. The card shows a strip every two hours from the next, then the
+week as a table.
 `tui: theme_tour: <seconds>` in config.yaml tours all twelve themes, naming
 each on screen, for picking one. `tui: screen_off: "03:00-05:00"` switches the
 display off for those hours every day, through `wlr-randr`, when it runs in

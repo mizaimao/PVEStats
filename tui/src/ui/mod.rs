@@ -164,14 +164,7 @@ impl Screen {
             let below = Rect { y: body.y + top_h, width: left, height: body.height - top_h, ..body };
             column(&mut pen, below, &nas_cards, None, false);
             column(&mut pen, Rect { x: body.x + left + 1, width: mid, ..body }, &gpu_cards, None, true);
-            // "tour" shows each layout for 20 seconds in turn, for choosing.
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            let (layout, touring) = match config.weather_layout.as_str() {
-                "tour" => (['a', 'b', 'c'][(secs / 20 % 3) as usize], true),
-                other => (other.chars().next().unwrap_or('a'), false),
-            };
-            let forecast_card =
-                weather::card(look, &forecast, &forecast.status(), config.weather_configured(), layout, touring);
+            let forecast_card = weather::card(look, &forecast, &forecast.status(), config.weather_configured());
             // The guests keep a set height at the foot of the column, short
             // of squeezing the forecast; the forecast takes every row above
             // them, for more days.

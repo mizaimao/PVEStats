@@ -1,9 +1,5 @@
 //! The forecast card: the weather now in big figures beside an ASCII icon,
-//! then the coming hours and the week, in one of three layouts:
-//!
-//!   A  an hourly strip, then the week as a table
-//!   B  the hours a line each, as many as fit, then the week as a table
-//!   C  an hourly strip, a three-hourly strip after it, the week as tiles
+//! then a strip of the coming hours and the week as a table.
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -135,7 +131,7 @@ fn words(look: &Look, text: &Option<String>, code: Option<u64>, day: bool) -> St
     text.clone().unwrap_or_else(|| sky(look, code, day).0.to_string())
 }
 
-pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configured: bool, layout: char, touring: bool) -> Card {
+pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configured: bool) -> Card {
     let p = look.p;
     let note = |text: &str| Card {
         title: "Weather".into(),
@@ -156,34 +152,15 @@ pub fn card(look: &Look, weather: &Source<WeatherData>, status: &Status, configu
 
     let mut body = banner(look, &w.alerts);
     body.extend([now(look, w, units), sun(look, w, units), Part::Gap]);
-    // The forecaster's own days, without the longer outlook.
-    let week: Vec<Day> = w.days.iter().filter(|d| !d.outlook).cloned().collect();
-    match layout {
-        'b' => {
-            // No gap after the list: with none below it, it runs down to the
-            // week rather than leaving rows blank.
-            body.push(Part::HourList(HourList { hours: w.hours.clone(), wind: units.1 }));
-            body.push(Part::Table(week_table(look, &week, units)));
-        }
-        'c' => {
-            body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 1, skip: 0 }));
-            body.push(Part::Gap);
-            body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 3, skip: 12 }));
-            body.push(Part::Gap);
-            body.push(Part::Week(WeekTiles { days: week }));
-        }
-        _ => {
-            // Every two hours from the next one: the next 22 hours in a row.
-            body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 2, skip: 1 }));
-            body.push(Part::Gap);
-            // The week at least; the outlook's later days as rows allow.
-            body.push(Part::Growing(week_table(look, &w.days, units), week.len().max(1)));
-        }
-    }
-    // While the layouts take turns, the title says which this is.
-    let tour = if touring { format!(" · layout {}", layout.to_ascii_uppercase()) } else { String::new() };
+    // Every two hours from the next one: the next 22 hours in a row.
+    body.push(Part::Hours(HourStrip { hours: w.hours.clone(), step: 2, skip: 1 }));
+    body.push(Part::Gap);
+    // The forecaster's own week at least; the outlook's later days as rows
+    // allow.
+    let week = w.days.iter().filter(|d| !d.outlook).count();
+    body.push(Part::Growing(week_table(look, &w.days, units), week.max(1)));
     Card {
-        title: format!("Weather · {}{tour}", w.place),
+        title: format!("Weather · {}", w.place),
         right: format!("{} · as of {}", w.source, clock(&w.now.time)),
         stale: !status.ok,
         error: status.error.clone(),
@@ -367,88 +344,6 @@ impl HourStrip {
                 let clip = Rect { x, y: area.y + r as u16, width: COLUMN, height: 1 }.intersection(area);
                 pen.line(clip, x + COLUMN.saturating_sub(w) / 2, area.y + r as u16, cell);
             }
-        }
-    }
-}
-
-/// The coming hours a line each, as many as there are rows for: the hour,
-/// the sky, the temperature, the chance of rain, the wind and the
-/// forecaster's words. A line at each midnight names the day.
-pub struct HourList {
-    pub hours: Vec<Hour>,
-    pub wind: &'static str,
-}
-
-impl HourList {
-    pub const MIN_ROWS: u16 = 6;
-    pub const MAX_ROWS: u16 = 99;
-
-    pub fn render(&self, pen: &mut Pen, area: Rect) {
-        let p = pen.look.p;
-        let mut y = area.y;
-        for (i, hour) in self.hours.iter().enumerate() {
-            if y >= area.bottom() {
-                break;
-            }
-            if i > 0 && hour.time.get(11..13) == Some("00") {
-                let name = weekday(&hour.time);
-                let rule = format!("── {name} {}", "─".repeat(area.width.saturating_sub(name.len() as u16 + 4) as usize));
-                pen.text(area, area.x, y, &rule, style(p.grid));
-                y += 1;
-                if y >= area.bottom() {
-                    break;
-                }
-            }
-            let (_, symbol, color) = sky(pen.look, hour.code, hour.day);
-            let wind = hour.wind.map_or(String::new(), |v| format!("{} {} {}", hour.wind_from, v.round() as i64, self.wind));
-            let line = Line::from(vec![
-                Span::styled(fmt::left(&if i == 0 { "now".to_string() } else { hour_label(&hour.time) }, 5), style(p.muted)),
-                Span::styled(symbol, style(color)),
-                Span::raw("  "),
-                Span::styled(fmt::right(&degrees(hour.temp), 4), bold(p.ink)),
-                Span::raw("  "),
-                Span::styled(fmt::right(&fmt::pct(hour.rain_chance), 4), rain_chance(pen.look, hour.rain_chance).spans[0].style),
-                Span::raw("  "),
-                Span::styled(fmt::left(&wind, 11), style(p.ink2)),
-                Span::raw(" "),
-                Span::styled(words(pen.look, &hour.text, hour.code, hour.day), style(p.ink2)),
-            ]);
-            pen.line(area, area.x, y, &line);
-            y += 1;
-        }
-    }
-}
-
-/// The week as tiles side by side: the day, its icon in ASCII, high and
-/// low, and the chance of rain.
-pub struct WeekTiles {
-    pub days: Vec<Day>,
-}
-
-impl WeekTiles {
-    pub const ROWS: u16 = 6;
-
-    pub fn render(&self, pen: &mut Pen, area: Rect) {
-        let p = pen.look.p;
-        let n = self.days.len().max(1) as u16;
-        let tile = (area.width / n).max(7);
-        for (i, d) in self.days.iter().enumerate() {
-            let x = area.x + i as u16 * tile;
-            let column = Rect { x, width: tile, ..area }.intersection(area);
-            let centre = |line: &Line| x + tile.saturating_sub(line.width() as u16) / 2;
-            let name = Line::styled(if i == 0 { "Today".to_string() } else { weekday(&d.date).to_string() }, bold(p.ink));
-            pen.line(column, centre(&name), area.y, &name);
-            for (r, art) in icon_lines(pen.look, d.code, true).iter().enumerate() {
-                pen.line(column, centre(art), area.y + 1 + r as u16, art);
-            }
-            let temps = Line::from(vec![
-                Span::styled(degrees(d.high), bold(p.ink)),
-                Span::styled("/", style(p.muted)),
-                Span::styled(degrees(d.low), style(p.ink2)),
-            ]);
-            pen.line(column, centre(&temps), area.y + 4, &temps);
-            let rain = rain_chance(pen.look, d.rain_chance);
-            pen.line(column, centre(&rain), area.y + 5, &rain);
         }
     }
 }
