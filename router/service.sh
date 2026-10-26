@@ -1,19 +1,19 @@
 #!/bin/sh
-# Starts, stops or reports the PVEStats router agent: socat listening on the
-# router's LAN address only, port 9837, running stats.sh once per request,
-# at most four at a time.
+# Starts, stops or reports the PVEStats router agent, pvestats-router,
+# listening on the router's LAN address only, port 9837.
 #
 #   service.sh start     what /jffs/scripts/services-start runs at boot
 #   service.sh stop
 #   service.sh status
 #
-# `start` leaves one keeper behind, which runs socat and starts it again half
-# a minute after it ever exits; a second `start` finds the keeper and does
-# nothing. Nothing here logs, since the router keeps its log on flash, and the
-# only files written are the keeper's process id and lock, in /tmp, which is
-# memory.
+# `start` leaves one keeper behind, which runs the agent and starts it again
+# half a minute after it ever exits; a second `start` finds the keeper and
+# does nothing. Nothing here logs, since the router keeps its log on flash,
+# and the only files written are the keeper's process id and lock, in /tmp,
+# which is memory.
 
-# The firmware's own tools, never Entware's from the USB drive.
+# The firmware's own tools, never Entware's from the USB drive. The agent
+# runs `nvram` and `wl` from this PATH too.
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH
 
@@ -27,11 +27,6 @@ LOCK=/tmp/pvestats-keeper.lock
 keeper_alive() {
     pid=$(cat "$PIDFILE" 2>/dev/null)
     [ -n "$pid" ] && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q 'service.sh keep'
-}
-
-# The listening socat and any copies it has forked.
-listeners() {
-    ps w | awk -v want="TCP4-LISTEN:$PORT," 'index($0, want) && !/awk/ { print $1 }'
 }
 
 case "$1" in
@@ -48,18 +43,17 @@ case "$1" in
         while :; do
             ip=$(nvram get lan_ipaddr)
             if [ -n "$ip" ]; then
-                # 8>&-: socat and its children do not hold the keeper's lock.
-                # -T 15: a connection idle that long is closed.
-                socat -T 15 TCP4-LISTEN:$PORT,bind="$ip",reuseaddr,fork,max-children=4 EXEC:"$DIR/stats.sh" 8>&-
+                # 8>&-: the agent does not hold the keeper's lock.
+                "$DIR/pvestats-router" --listen "$ip:$PORT" 8>&-
             fi
             sleep 30
         done
         ;;
     stop)
-        # The keeper first, so it cannot start socat again.
+        # The keeper first, so it cannot start the agent again.
         keeper_alive && kill "$pid"
         rm -f "$PIDFILE"
-        for p in $(listeners); do kill "$p" 2>/dev/null; done
+        for p in $(pidof pvestats-router); do kill "$p" 2>/dev/null; done
         ;;
     status)
         if netstat -ltn | grep -q ":$PORT "; then echo running; else echo stopped; fi

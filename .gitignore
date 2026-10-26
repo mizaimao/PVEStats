@@ -36,3 +36,8 @@ tui/.cargo-home/
 tui/bin/
 tui/deploy.conf
 tui/shot/target/
+
+# The router agent's build output, its cargo cache and the built program
+router/agent/target/
+router/agent/.cargo-home/
+router/bin/
