@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Tests the ml60 agent (agent/rust) and builds it on the build machine named
+# in tui/deploy.conf, then copies the program to agent/bin/pvestats-agent.
+# Installing it on ml60 is a separate step with sudo, for Frank: see
+# agent/README.md.
+#
+# NVIDIA's library is loaded at run time, which needs a glibc build (a
+# static musl one cannot load it), so the program needs a glibc on ml60 at
+# least as new as the newest symbol version it uses; the last line says
+# which.
+set -euo pipefail
+. "$(dirname "$0")/../tui/machines.sh"
+
+echo "== test and build on $BUILD_HOST"
+on_build "mkdir -p \"$B\""
+pack ./agent/rust | on_build "tar -xf - -C \"$B\""
+on_build "cd \"$B/agent/rust\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
+    && cargo test --release --quiet && cargo build --release --quiet"
+
+mkdir -p "$repo/agent/bin"
+on_build "cat \"$B/agent/rust/target/release/pvestats-agent\"" >"$repo/agent/bin/pvestats-agent.new"
+chmod 755 "$repo/agent/bin/pvestats-agent.new"
+mv "$repo/agent/bin/pvestats-agent.new" "$repo/agent/bin/pvestats-agent"
+echo "== built agent/bin/pvestats-agent ($(wc -c <"$repo/agent/bin/pvestats-agent" | tr -d ' ') bytes)"
+echo "== needs glibc $(on_build "objdump -T \"$B/agent/rust/target/release/pvestats-agent\" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1") or newer"

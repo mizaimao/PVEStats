@@ -1,0 +1,18 @@
+[package]
+name = "pvestats-agent"
+version = "0.2.0"
+edition = "2021"
+description = "ml60's GPU and loaded-model agent for PVEStats: NVML and Ollama as JSON over HTTP"
+publish = false
+
+[dependencies]
+# NVIDIA's management library, loaded at run time from the driver.
+nvml-wrapper = "0.13"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
