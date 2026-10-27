@@ -43,14 +43,15 @@ if tar --version 2>/dev/null | grep -q bsdtar; then
     tar_flags=(--no-mac-metadata --no-xattrs)
 fi
 # The working tree, or the paths given, as a tar stream: without build
-# output, caches, the app's local settings (ui.json) or tui/deploy.conf.
+# output, caches, the app's local settings (ui.json), tui/deploy.conf or the
+# kiosk's own screen-off window (tui/screen_off.local).
 pack() {
     # The +-form keeps bash 3.2 (macOS) from calling an empty array unbound.
     (cd "$repo" && tar ${tar_flags[@]+"${tar_flags[@]}"} -cf - \
         --exclude ./.tools --exclude ./.venv --exclude ./PVEStats.app \
         --exclude ./captures --exclude ./ui.json --exclude ./icons \
         --exclude ./tui/target --exclude ./tui/.cargo-home --exclude ./tui/bin \
-        --exclude ./tui/shot/target --exclude ./tui/deploy.conf \
+        --exclude ./tui/shot/target --exclude ./tui/deploy.conf --exclude ./tui/screen_off.local \
         --exclude ./router/agent/target --exclude ./router/agent/.cargo-home --exclude ./router/bin \
         --exclude ./pve/agent/target --exclude ./pve/agent/.cargo-home --exclude ./pve/bin \
         --exclude ./nas/agent/target --exclude ./nas/agent/.cargo-home --exclude ./nas/bin \

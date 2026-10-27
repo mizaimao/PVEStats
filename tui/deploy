@@ -37,7 +37,8 @@ fi
 echo "== test and build on $BUILD_HOST"
 on_build "mkdir -p \"$B\""
 pack ./tui ./certs | on_build "tar -xf - -C \"$B\""
-on_build "cd \"$B/tui\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
+on_build "cd \"$B/tui\" && bash ./kiosk-remote.test \
+    && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
     && cargo test --release --quiet && cargo build --release --quiet"
 
 echo "== copy to $SCREEN_HOST"

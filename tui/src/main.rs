@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::process::exit;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -211,7 +211,7 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
 
 fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io::Result<()> {
     let mut terminal = ratatui::init();
-    let mut power = Power { window: config.screen_off, off: None };
+    let mut power = Power::new(config);
     let mut touring = Touring::new(config.tour);
     let result = (|| loop {
         power.tick();
@@ -279,17 +279,51 @@ impl Touring {
 /// session such as the kiosk: anywhere else there is no display of its own
 /// to switch. Each change is applied once, and the first tick applies the
 /// state the clock calls for, so a restart inside the window still ends it.
+///
+/// tui/screen_off.local, written by tui/kiosk-remote and left alone by
+/// deploys, wins over config.yaml: one line, "HH:MM-HH:MM" or "none". It is
+/// looked at once a minute and read again when it changed.
 struct Power {
+    configured: Option<(u32, u32)>,
     window: Option<(u32, u32)>,
+    local: PathBuf,
+    /// When the file was last looked at, and its modification time then.
+    looked: Option<(Instant, Option<SystemTime>)>,
     off: Option<bool>,
 }
 
 impl Power {
+    fn new(config: &Config) -> Self {
+        let local = config.root.join("tui").join("screen_off.local");
+        Power { configured: config.screen_off, window: config.screen_off, local, looked: None, off: None }
+    }
+
+    fn reread(&mut self) {
+        if self.looked.is_some_and(|(at, _)| at.elapsed() < Duration::from_secs(60)) {
+            return;
+        }
+        let modified = std::fs::metadata(&self.local).and_then(|m| m.modified()).ok();
+        let changed = self.looked.map_or(true, |(_, before)| before != modified);
+        self.looked = Some((Instant::now(), modified));
+        if changed {
+            let text = std::fs::read_to_string(&self.local).ok();
+            self.window = local_window(text.as_deref()).unwrap_or(self.configured);
+        }
+    }
+
     fn tick(&mut self) {
-        let Some((from, to)) = self.window else { return };
+        self.reread();
         if std::env::var_os("WAYLAND_DISPLAY").is_none() {
             return;
         }
+        let Some((from, to)) = self.window else {
+            // The window was cleared while the screen was off for it.
+            if self.off == Some(true) {
+                self.off = Some(false);
+                thread::spawn(|| switch_outputs(true));
+            }
+            return;
+        };
         let (h, m) = ui::local_hm();
         let now = h * 60 + m;
         let off = if from < to { now >= from && now < to } else { now >= from || now < to };
@@ -298,6 +332,17 @@ impl Power {
             thread::spawn(move || switch_outputs(!off));
         }
     }
+}
+
+/// What tui/screen_off.local says: a window, Some(None) for "none", and
+/// None when there is no such file or it says nothing usable, which leaves
+/// config.yaml's window in force.
+fn local_window(text: Option<&str>) -> Option<Option<(u32, u32)>> {
+    let text = text?.lines().next()?.trim();
+    if text == "none" {
+        return Some(None);
+    }
+    config::hours(text).map(Some)
 }
 
 /// Every output wlr-randr lists, on or off. Only outputs not already so are
@@ -336,6 +381,16 @@ fn outputs(text: &str) -> Vec<(&str, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_local_screen_off_window() {
+        assert_eq!(super::local_window(Some("03:00-05:00\n")), Some(Some((180, 300))));
+        assert_eq!(super::local_window(Some("none\n")), Some(None));
+        // Nothing usable, or no file: config.yaml's window stands.
+        assert_eq!(super::local_window(Some("garbage")), None);
+        assert_eq!(super::local_window(Some("")), None);
+        assert_eq!(super::local_window(None), None);
+    }
+
     #[test]
     fn wlr_randr_listing() {
         let text = "HDMI-A-2 \"Monitor (HDMI-A-2)\"\n  Make: X\n  Enabled: no\n  Modes:\n    1920x1080 px\nDP-1 \"Other\"\n  Enabled: yes\n";

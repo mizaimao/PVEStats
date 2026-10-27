@@ -23,6 +23,8 @@ pub struct Host {
 }
 
 pub struct Config {
+    /// The repo root, where config.yaml and .env are.
+    pub root: PathBuf,
     pub pve_host: String,
     pub pve_node: Option<String>,
     pub pve_token_id: String,
@@ -106,6 +108,7 @@ impl Config {
             .clamp(30.0, 3600.0);
 
         Ok(Config {
+            root: root.to_path_buf(),
             pve_host: var("PVE_HOST"),
             pve_node: Some(var("PVE_NODE")).filter(|n| !n.is_empty()),
             pve_token_id: var("PVE_TOKEN_ID"),
@@ -258,7 +261,7 @@ fn read_env(path: &Path) -> HashMap<String, String> {
 }
 
 /// "03:00-05:00" as minutes past midnight, start and end.
-fn hours(text: &str) -> Option<(u32, u32)> {
+pub fn hours(text: &str) -> Option<(u32, u32)> {
     let minutes = |t: &str| {
         let (h, m) = t.trim().split_once(':')?;
         let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);

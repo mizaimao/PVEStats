@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Tests for tui/kiosk-remote's gate: what it lets through, what it refuses,
+# and that a refusal is one line of JSON and exit 2. Changes nothing: only
+# the parsing is run. tui/deploy runs it on the build machine.
+
+. "$(cd "$(dirname "$0")" && pwd)/kiosk-remote"
+failures=0
+
+expect() {
+    local want_rc=$1 want_out=$2 request=$3 out rc
+    out=$(parse "$request"); rc=$?
+    if [ "$rc" != "$want_rc" ] || [ "$out" != "$want_out" ]; then
+        printf 'FAIL %q: got %s %q, wanted %s %q\n' "$request" "$rc" "$out" "$want_rc" "$want_out"
+        failures=$((failures + 1))
+    fi
+}
+allowed() { expect 0 "${2:-$1}" "$1"; }
+refused() { expect 2 "{\"error\":\"refused: ${2:-not a kiosk command}\"}" "$1"; }
+
+for c in status "dashboard pause" "dashboard resume" "monitor off" "monitor on" \
+    "kiosk off" "kiosk on" "schedule show" "schedule clear"; do
+    allowed "$c"
+done
+allowed "  monitor   off " "monitor off"
+allowed "schedule set 03:00-05:00"
+allowed "schedule set 23:30-06:00"
+allowed "schedule set 00:00-23:59"
+
+# Anything a shell could act on never gets as far as the word match.
+for r in "" " " "status;reboot" "status && reboot" 'status $(reboot)' 'status `id`' \
+    "status | sh" "status > /tmp/x" "STATUS" "monitor off
+reboot" "monitor	off" "status #" "../status" "monitor off --on" \
+    "status ................................................"; do
+    refused "$r"
+done
+refused "monitor"
+refused "monitor brightness"
+refused "dashboard stop"
+refused "kiosk restart"
+refused "status now"
+refused "reboot"
+refused "systemctl stop pvestats-kiosk"
+refused "schedule"
+refused "schedule set"
+refused "schedule set 24:00-05:00" "the window is HH:MM-HH:MM"
+refused "schedule set 03:60-05:00" "the window is HH:MM-HH:MM"
+refused "schedule set 3:00-05:00" "the window is HH:MM-HH:MM"
+refused "schedule set 03:00" "the window is HH:MM-HH:MM"
+refused "schedule set 03:00-05:00-07:00" "the window is HH:MM-HH:MM"
+refused "schedule set 05:00-05:00" "the window starts and ends at the same time"
+refused "schedule set 03:00-05:00 07:00-08:00" "schedule set takes one window"
+refused "schedule set 03:00 - 05:00" "schedule set takes one window"
+
+if [ "$failures" -eq 0 ]; then echo "kiosk-remote: all passed"; else exit 1; fi

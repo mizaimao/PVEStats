@@ -6,37 +6,21 @@
 #                      drawn, and no machine is asked for anything
 #   tui/kiosk on       monitor on and the dashboard running again
 #   tui/kiosk status   which it is now
+#   tui/kiosk <command>  any other of tui/kiosk-remote's commands, e.g.
+#                      "schedule set 03:00-05:00"
 #
-# "off" lasts until "on", a deploy (tui/deploy restarts the dashboard) or a
-# restart of the screen machine, each of which brings it back on.
+# It runs tui/kiosk-remote on the screen machine, the same controls
+# moose-mcp uses. "off" lasts until "on", a deploy (tui/deploy restarts the
+# dashboard) or a restart of the screen machine, each of which brings it
+# back on.
 
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/machines.sh"
 
-# On the screen machine, inside the kiosk's Wayland session: every output
-# wlr-randr lists, and the dashboard's process.
-session='export WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/$(id -u)
-    outputs() { wlr-randr | awk "/^[^ ]/ {print \$1}"; }
-    pid=$(pgrep -x pvestats-tui) || { echo "the dashboard is not running"; exit 1; }'
-
 case "${1:-status}" in
-    off)
-        on_screen "$session"'
-            kill -STOP $pid
-            for o in $(outputs); do wlr-randr --output $o --off; done
-            echo "off: monitor off, dashboard paused"' ;;
-    on)
-        # The monitor first, so the dashboard's next frame is seen.
-        on_screen "$session"'
-            for o in $(outputs); do wlr-randr --output $o --on; done
-            kill -CONT $pid
-            echo "on: monitor on, dashboard running"' ;;
-    status)
-        on_screen "$session"'
-            case $(ps -o stat= -p $pid) in T*) d=paused ;; *) d=running ;; esac
-            m=$(wlr-randr | awk "/Enabled:/ {print \$2}" | sort -u | tr "\n" " ")
-            echo "dashboard $d; monitor enabled: $m"' ;;
-    *)
-        echo "usage: tui/kiosk off | on | status" >&2
-        exit 2 ;;
+    off | on) command="kiosk $1" ;;
+    *) command="$*" ;;
 esac
+command=${command:-status}
+# Quoted for the remote shell: kiosk-remote checks it word by word.
+on_screen "$S/tui/kiosk-remote $(printf '%q ' $command)"

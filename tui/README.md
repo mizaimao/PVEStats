@@ -59,7 +59,11 @@ small square every four minutes, against burn-in; it is off by default.
 `tui/kiosk off` switches the kiosk's monitor off and pauses the dashboard,
 so no machine is asked for anything; `tui/kiosk on` undoes it, and
 `tui/kiosk status` says which it is. No sudo; a deploy or a restart of the
-screen machine turns it back on.
+screen machine turns it back on. It runs `tui/kiosk-remote` there, which
+also takes `schedule show`, `schedule clear` and `schedule set HH:MM-HH:MM`:
+the daily screen-off window, kept in `tui/screen_off.local` on the screen
+machine (deploys leave it alone, and it wins over config.yaml). moose-mcp's
+key may run only that script (MOO-200).
 
 ## Build
 
