@@ -1,8 +1,10 @@
 #!/bin/bash
 # The kiosk's remote controls, and the only program moose-mcp's key may run
-# on the screen machine: its authorized_keys line names this file as the
-# command, so whatever the client asks for arrives in SSH_ORIGINAL_COMMAND
-# and nothing else runs. Linear MOO-200.
+# on the screen machine: its authorized_keys line names a root-owned copy
+# of this file, /usr/local/libexec/kiosk-remote, installed by Frank from a
+# reviewed commit, so whatever the client asks for arrives in
+# SSH_ORIGINAL_COMMAND and nothing else runs. The repo's own copy is what
+# tui/kiosk runs. Linear MOO-200.
 #
 #   status                      the state, changing nothing
 #   dashboard pause | resume    stop or continue the dashboard: no drawing,
@@ -38,9 +40,13 @@ set -uo pipefail
 # in other locales [a-z] and [0-9] can match more than ASCII.
 export LC_ALL=C
 export PATH=/usr/bin:/bin
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-OVERRIDE="$here/screen_off.local"
-CONFIG="$(dirname "$here")/config.yaml"
+# The dashboard's copy of the repo, wherever this script itself lives (the
+# key runs a root-owned copy in /usr/local/libexec): ~/Projects/PVEStats of
+# the user it runs as, home taken from the user database, not from the
+# environment.
+ROOT="$(getent passwd "$(id -u)" | cut -d: -f6)/Projects/PVEStats"
+OVERRIDE="$ROOT/tui/screen_off.local"
+CONFIG="$ROOT/config.yaml"
 WINDOW='^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$'
 # Lower-case letters, digits, colons, dashes and spaces only, and short.
 REQUEST='^[a-z0-9: -]{1,40}$'
@@ -159,8 +165,9 @@ main() {
     rc=$?
     # A refusal: parse printed why, in place of the command.
     if [ "$rc" -ne 0 ]; then say "$cmd"; exit "$rc"; fi
-    # One at a time: the lock is on this file, held until the script ends.
-    exec 9< "${BASH_SOURCE[0]}"
+    # One at a time, whichever copy runs: the lock is on the repo's tui
+    # folder, held until the script ends.
+    exec 9< "$ROOT/tui" || fail "the kiosk's repo is not there"
     flock -n 9 || fail "busy: another kiosk command is running"
     case "$cmd" in
         "dashboard pause") dashboard pause || fail "the dashboard is not running" ;;
