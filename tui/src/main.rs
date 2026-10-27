@@ -333,9 +333,10 @@ impl Power {
         };
         if self.off != Some(off) {
             self.off = Some(off);
-            // Just resumed after a pause: what the screen should be is
-            // noted, not applied, so "kiosk on" inside a window stays on.
-            if !resumed {
+            // Just resumed after a pause, a switch off is noted, not applied,
+            // so "kiosk on" inside a window stays on; a switch on (the window
+            // ended while paused or stalled) always is.
+            if !resumed || !off {
                 thread::spawn(move || switch_outputs(!off));
             }
         }

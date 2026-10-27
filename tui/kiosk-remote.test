@@ -77,4 +77,46 @@ unusable "03:00"
 unusable "none"
 unusable ""
 
+# The script makes matching byte-wise itself, whatever locale it starts in.
+[ "$LC_ALL" = C ] || { echo "FAIL LC_ALL is $LC_ALL after sourcing"; failures=$((failures + 1)); }
+
+# main's own paths, with the machine left out: a repo folder of its own, no
+# display, and the dashboard stood in for.
+tmp=$(mktemp -d)
+mkdir "$tmp/tui"
+ROOT=$tmp OVERRIDE=$tmp/tui/screen_off.local CONFIG=$tmp/config.yaml
+printf 'ui:\n  screen_off: "01:00-02:00"\ntui:\n  screen_off: "03:00-05:00"  # nightly\n' > "$CONFIG"
+randr() { return 1; }
+check() {
+    local out rc
+    out=$(SSH_ORIGINAL_COMMAND="$1" main); rc=$?
+    if [ "$rc $out" != "$2" ]; then
+        printf 'FAIL main %q: got %s\n     wanted %s\n' "$1" "$rc $out" "$2"
+        failures=$((failures + 1))
+    fi
+}
+state_json() { printf '{"dashboard":"%s","monitor":"unknown","schedule":%s,"schedule_from":"%s"}' "$@"; }
+
+dashboard_pid() { return 0; }   # not running
+check status "0 $(state_json stopped '"03:00-05:00"' config.yaml)"
+check "dashboard pause" '1 {"error":"the dashboard is not running"}'
+check "kiosk off" '1 {"error":"the dashboard is not running"}'
+check "monitor off" '1 {"error":"could not switch the monitor off; it is now unknown"}'
+check "schedule set 22:00-06:30" "0 $(state_json stopped '"22:00-06:30"' override)"
+check "schedule clear" "0 $(state_json stopped null override)"
+check "status; id" '2 {"error":"refused: not a kiosk command"}'
+
+dashboard_pid() { return 3; }   # two running: nothing done to either
+check status "0 $(state_json unknown null override)"
+check "dashboard resume" '1 {"error":"more than one dashboard is running"}'
+check "kiosk on" '1 {"error":"more than one dashboard is running"}'
+
+exec 8< "$tmp/tui"; flock -n 8   # another command holds the lock
+check status '1 {"error":"busy: another kiosk command is running"}'
+exec 8<&-
+
+ROOT=$tmp/missing
+check status "1 {\"error\":\"the kiosk's repo is not there\"}"
+rm -rf "$tmp"
+
 if [ "$failures" -eq 0 ]; then echo "kiosk-remote: all passed"; else exit 1; fi
