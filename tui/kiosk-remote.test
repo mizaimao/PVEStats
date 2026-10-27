@@ -25,6 +25,7 @@ allowed "  monitor   off " "monitor off"
 allowed "schedule set 03:00-05:00"
 allowed "schedule set 23:30-06:00"
 allowed "schedule set 00:00-23:59"
+allowed "report"
 
 # Anything a shell could act on never gets as far as the word match.
 for r in "" " " "status;reboot" "status && reboot" 'status $(reboot)' 'status `id`' \
@@ -35,6 +36,8 @@ reboot" "monitor	off" "status #" "../status" "monitor off --on" \
 done
 refused "monitor"
 refused "monitor brightness"
+refused "report now"
+refused "reports"
 refused "dashboard stop"
 refused "kiosk restart"
 refused "status now"
@@ -110,6 +113,14 @@ dashboard_pid() { return 3; }   # two running: nothing done to either
 check status "0 $(state_json unknown null override)"
 check "dashboard resume" '1 {"error":"more than one dashboard is running"}'
 check "kiosk on" '1 {"error":"more than one dashboard is running"}'
+
+# The report: run as is, with the session bus set, and needing no lock.
+REPORT=$tmp/none
+check report '1 {"error":"the report is not installed"}'
+REPORT=$tmp/report
+printf '#!/bin/bash\nprintf "{\\"bus\\":\\"%%s\\"}\\n" "$DBUS_SESSION_BUS_ADDRESS"\n' > "$REPORT"
+chmod 755 "$REPORT"
+check report "0 {\"bus\":\"unix:path=/run/user/$(id -u)/bus\"}"
 
 exec 8< "$tmp/tui"; flock -n 8   # another command holds the lock
 check status '1 {"error":"busy: another kiosk command is running"}'

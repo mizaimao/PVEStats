@@ -15,6 +15,10 @@
 #                               was if the dashboard cannot then be signalled
 #   schedule show | clear       the daily screen-off window
 #   schedule set HH:MM-HH:MM    HH 00-23, MM 00-59, start and end different
+#   report                      the machine's update report: runs the
+#                               root-owned, read-only moose-mcp-report Frank
+#                               installs from the infrastructure repo, and
+#                               answers with its JSON line instead
 #
 # Every command answers with one line of JSON, the state after it:
 #   {"dashboard":"running|paused|stopped|unknown","monitor":"on|off|mixed|unknown",
@@ -51,6 +55,9 @@ CONFIG="$ROOT/config.yaml"
 WINDOW='^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$'
 # Lower-case letters, digits, colons, dashes and spaces only, and short.
 REQUEST='^[a-z0-9: -]{1,40}$'
+# moose-mcp's morning report, the same on every machine (infrastructure repo,
+# moose-mcp/gates/report).
+REPORT=/usr/local/libexec/moose-mcp-report
 
 say() { printf '%s\n' "$1"; }
 refuse() { say "{\"error\":\"refused: $1\"}"; exit 2; }
@@ -66,7 +73,7 @@ parse() {
     read -r -a words <<< "$raw"
     case "${words[*]}" in
         "status" | "dashboard pause" | "dashboard resume" | "monitor off" | "monitor on" | \
-        "kiosk off" | "kiosk on" | "schedule show" | "schedule clear")
+        "kiosk off" | "kiosk on" | "schedule show" | "schedule clear" | "report")
             say "${words[*]}" ;;
         "schedule set "*)
             [ "${#words[@]}" -eq 3 ] || refuse "schedule set takes one window"
@@ -180,6 +187,14 @@ main() {
         [ -n "$cmd" ] || cmd='{"error":"refused: not a kiosk command"}'
         say "$cmd"
         exit 2
+    fi
+    # The report needs no lock and nothing from here but the user's session
+    # bus, for its `systemctl --user --failed`.
+    if [ "$cmd" = report ]; then
+        [ -x "$REPORT" ] || fail "the report is not installed"
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+        exec "$REPORT"
     fi
     # One at a time, whichever copy runs: the lock is on the repo's tui
     # folder, held until the script ends.
