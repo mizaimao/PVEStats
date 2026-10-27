@@ -17,7 +17,7 @@
 #   schedule set HH:MM-HH:MM    HH 00-23, MM 00-59, start and end different
 #
 # Every command answers with one line of JSON, the state after it:
-#   {"dashboard":"running|paused|stopped","monitor":"on|off|mixed|unknown",
+#   {"dashboard":"running|paused|stopped|unknown","monitor":"on|off|mixed|unknown",
 #    "schedule":"03:00-05:00"|null,"schedule_from":"override|config.yaml|none"}
 # or {"error":"..."}. Exit 0 done, 1 failed, 2 refused.
 #
@@ -92,7 +92,7 @@ usable_window() {
 
 # The kiosk's Wayland session, and wlr-randr inside it, cut off after 5 s and
 # killed a second later if it ignores that: it holds the lock's descriptor.
-randr() { WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="/run/user/$(id -u)" timeout -k 1 5 wlr-randr "$@"; }
+randr() { WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="/run/user/$(id -u)" timeout -k 1 5 wlr-randr "$@" 9<&-; }
 
 # The dashboard's process: this user's own. Nothing when it is not running;
 # exit 3 when there is more than one, which the callers refuse to act on.
@@ -157,8 +157,9 @@ schedule_state() {
 
 state() {
     local pid d m s
-    pid=$(dashboard_pid) || one_dashboard
-    if [ -z "$pid" ]; then d=stopped
+    # Two dashboards: said so, rather than failing a command already done.
+    if ! pid=$(dashboard_pid); then d=unknown
+    elif [ -z "$pid" ]; then d=stopped
     else case $(ps -o stat= -p "$pid") in T*) d=paused ;; *) d=running ;; esac
     fi
     m=$(monitor_state)
@@ -175,10 +176,14 @@ main() {
     fi
     rc=$?
     # A refusal: parse printed why, in place of the command.
-    if [ "$rc" -ne 0 ]; then say "$cmd"; exit "$rc"; fi
+    if [ "$rc" -ne 0 ]; then
+        [ -n "$cmd" ] || cmd='{"error":"refused: not a kiosk command"}'
+        say "$cmd"
+        exit 2
+    fi
     # One at a time, whichever copy runs: the lock is on the repo's tui
     # folder, held until the script ends.
-    exec 9< "$ROOT/tui" || fail "the kiosk's repo is not there"
+    { exec 9< "$ROOT/tui"; } 2> /dev/null || fail "the kiosk's repo is not there"
     flock -n 9 || fail "busy: another kiosk command is running"
     local before
     case "$cmd" in
@@ -197,7 +202,7 @@ main() {
             monitor "$to" || monitor_failed "$to"
             if ! signal "$sig"; then
                 case "$before" in on | off) monitor "$before" ;; esac
-                fail "the dashboard stopped before it could be signalled"
+                fail "the dashboard stopped before it could be signalled; the monitor is now $(monitor_state)"
             fi ;;
         "schedule clear") schedule_write none ;;
         "schedule set "*) schedule_write "${cmd#schedule set }" ;;
