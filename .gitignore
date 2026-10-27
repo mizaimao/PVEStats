@@ -61,3 +61,7 @@ agent/bin/
 server/target/
 server/.cargo-home/
 server/bin/
+
+# The kiosk's screen-off window set from afar (tui/kiosk-remote), kept on the
+# screen machine across deploys
+tui/screen_off.local

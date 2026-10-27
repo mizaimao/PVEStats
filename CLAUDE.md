@@ -35,7 +35,10 @@ Frank's rules for this project are in his knowledgebase
   shows, pointer included, and says whether the kiosk has a pointing
   device. Check visual changes with it rather than asking Frank to look.
 - `tui/kiosk off | on | status` switches the kiosk's monitor off and
-  pauses the dashboard (no machine is polled), or back on. A deploy turns
+  pauses the dashboard (no machine is polled), or back on. It runs
+  `tui/kiosk-remote` on the screen machine, the gatekeeper moose-mcp's key
+  is limited to (MOO-200); keep the two in step, and run
+  `tui/kiosk-remote.test` (deploy does) after changing it. A deploy turns
   it back on, so check `tui/kiosk status` before deploying while Frank has
   it off, and ask him (Frank, 2026-10-26: he turns it off to measure power).
 - `tui: demo: true` in the screen machine's copy of config.yaml puts
