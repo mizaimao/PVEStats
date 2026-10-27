@@ -10,8 +10,9 @@
 #   dashboard pause | resume    stop or continue the dashboard: no drawing,
 #                               and no machine is polled
 #   monitor off | on            every output, through wlr-randr
-#   kiosk off | on              both; if the second step fails, the first is
-#                               undone
+#   kiosk off | on              both: nothing changes unless the dashboard
+#                               is found, and the monitor is put back as it
+#                               was if the dashboard cannot then be signalled
 #   schedule show | clear       the daily screen-off window
 #   schedule set HH:MM-HH:MM    HH 00-23, MM 00-59, start and end different
 #
@@ -89,8 +90,9 @@ usable_window() {
     [ "$a" -ne "$b" ]
 }
 
-# The kiosk's Wayland session, and wlr-randr inside it, cut off after 5 s.
-randr() { WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="/run/user/$(id -u)" timeout 5 wlr-randr "$@"; }
+# The kiosk's Wayland session, and wlr-randr inside it, cut off after 5 s and
+# killed a second later if it ignores that: it holds the lock's descriptor.
+randr() { WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="/run/user/$(id -u)" timeout -k 1 5 wlr-randr "$@"; }
 
 # The dashboard's process: this user's own. Nothing when it is not running;
 # exit 3 when there is more than one, which the callers refuse to act on.
@@ -102,12 +104,13 @@ dashboard_pid() {
 }
 one_dashboard() { fail "more than one dashboard is running"; }
 
-dashboard() {
-    local pid
-    pid=$(dashboard_pid) || one_dashboard
-    [ -n "$pid" ] || return 1
-    if [ "$1" = pause ]; then kill -STOP "$pid"; else kill -CONT "$pid"; fi
+# The dashboard to signal, in PID, found before anything is changed: fails
+# when it is not running or there is more than one.
+find_dashboard() {
+    PID=$(dashboard_pid) || one_dashboard
+    [ -n "$PID" ] || fail "the dashboard is not running"
 }
+signal() { kill "-$1" "$PID" 2> /dev/null; }
 
 monitor() {
     local list o
@@ -116,6 +119,15 @@ monitor() {
         randr --output "$o" "--$1" > /dev/null 2>&1 || return 1
     done < <(awk '/^[^ ]/ {print $1}' <<< "$list")
 }
+
+# The outputs taken together: on, off, mixed, or unknown when wlr-randr
+# cannot reach the display.
+monitor_state() {
+    local m
+    m=$(randr 2> /dev/null | awk "/Enabled:/ {print \$2}" | sort -u | tr "\n" " ")
+    case "$m" in "yes ") say on ;; "no ") say off ;; "") say unknown ;; *) say mixed ;; esac
+}
+monitor_failed() { fail "could not switch the monitor $1; it is now $(monitor_state)"; }
 
 schedule_write() {
     local tmp
@@ -149,8 +161,7 @@ state() {
     if [ -z "$pid" ]; then d=stopped
     else case $(ps -o stat= -p "$pid") in T*) d=paused ;; *) d=running ;; esac
     fi
-    m=$(randr 2>/dev/null | awk '/Enabled:/ {print $2}' | sort -u | tr '\n' ' ')
-    case "$m" in "yes ") m=on ;; "no ") m=off ;; "") m=unknown ;; *) m=mixed ;; esac
+    m=$(monitor_state)
     s=$(schedule_state)
     say "{\"dashboard\":\"$d\",\"monitor\":\"$m\",\"schedule\":${s% *},\"schedule_from\":\"${s##* }\"}"
 }
@@ -169,19 +180,25 @@ main() {
     # folder, held until the script ends.
     exec 9< "$ROOT/tui" || fail "the kiosk's repo is not there"
     flock -n 9 || fail "busy: another kiosk command is running"
+    local before
     case "$cmd" in
-        "dashboard pause") dashboard pause || fail "the dashboard is not running" ;;
-        "dashboard resume") dashboard resume || fail "the dashboard is not running" ;;
-        "monitor off") monitor off || fail "could not switch the monitor off" ;;
-        "monitor on") monitor on || fail "could not switch the monitor on" ;;
-        # The monitor first; if the dashboard then cannot follow, the
-        # monitor goes back, so nothing is left half done.
-        "kiosk off")
-            monitor off || fail "could not switch the monitor off"
-            dashboard pause || { monitor on; fail "the dashboard is not running"; } ;;
-        "kiosk on")
-            monitor on || fail "could not switch the monitor on"
-            dashboard resume || { monitor off; fail "the dashboard is not running"; } ;;
+        "dashboard pause") find_dashboard; signal STOP || fail "could not pause the dashboard" ;;
+        "dashboard resume") find_dashboard; signal CONT || fail "could not resume the dashboard" ;;
+        "monitor off") monitor off || monitor_failed off ;;
+        "monitor on") monitor on || monitor_failed on ;;
+        # The dashboard is found before anything changes, then the monitor
+        # is switched, then the dashboard signalled. If that last step still
+        # fails (it exited in between), the monitor goes back to how it was.
+        "kiosk off" | "kiosk on")
+            local to=${cmd#kiosk } sig=STOP
+            [ "$to" = on ] && sig=CONT
+            find_dashboard
+            before=$(monitor_state)
+            monitor "$to" || monitor_failed "$to"
+            if ! signal "$sig"; then
+                case "$before" in on | off) monitor "$before" ;; esac
+                fail "the dashboard stopped before it could be signalled"
+            fi ;;
         "schedule clear") schedule_write none ;;
         "schedule set "*) schedule_write "${cmd#schedule set }" ;;
     esac
