@@ -63,7 +63,9 @@ screen machine turns it back on. It runs `tui/kiosk-remote` there, which
 also takes `schedule show`, `schedule clear` and `schedule set HH:MM-HH:MM`:
 the daily screen-off window, kept in `tui/screen_off.local` on the screen
 machine (deploys leave it alone, and it wins over config.yaml). moose-mcp's
-key may run only that script (MOO-200).
+key may run only that script (MOO-200), so deploys never copy it: after a
+reviewed change is committed, `tui/deploy --gatekeeper` tests it and puts
+that file alone on the screen machine.
 
 ## Build
 

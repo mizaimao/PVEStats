@@ -290,12 +290,15 @@ struct Power {
     /// When the file was last looked at, and its modification time then.
     looked: Option<(Instant, Option<SystemTime>)>,
     off: Option<bool>,
+    /// The last tick: a long gap since means the dashboard was paused
+    /// (tui/kiosk-remote), and the screen is left as whoever resumed it set it.
+    ticked: Option<Instant>,
 }
 
 impl Power {
     fn new(config: &Config) -> Self {
         let local = config.root.join("tui").join("screen_off.local");
-        Power { configured: config.screen_off, window: config.screen_off, local, looked: None, off: None }
+        Power { configured: config.screen_off, window: config.screen_off, local, looked: None, off: None, ticked: None }
     }
 
     fn reread(&mut self) {
@@ -313,23 +316,28 @@ impl Power {
 
     fn tick(&mut self) {
         self.reread();
+        let resumed = self.ticked.is_some_and(|t| t.elapsed() > Duration::from_secs(5));
+        self.ticked = Some(Instant::now());
         if std::env::var_os("WAYLAND_DISPLAY").is_none() {
             return;
         }
-        let Some((from, to)) = self.window else {
-            // The window was cleared while the screen was off for it.
-            if self.off == Some(true) {
-                self.off = Some(false);
-                thread::spawn(|| switch_outputs(true));
+        let off = match self.window {
+            Some((from, to)) => {
+                let (h, m) = ui::local_hm();
+                let now = h * 60 + m;
+                if from < to { now >= from && now < to } else { now >= from || now < to }
             }
-            return;
+            // No window; on again only if the screen was off for one.
+            None if self.off == Some(true) => false,
+            None => return,
         };
-        let (h, m) = ui::local_hm();
-        let now = h * 60 + m;
-        let off = if from < to { now >= from && now < to } else { now >= from || now < to };
         if self.off != Some(off) {
             self.off = Some(off);
-            thread::spawn(move || switch_outputs(!off));
+            // Just resumed after a pause: what the screen should be is
+            // noted, not applied, so "kiosk on" inside a window stays on.
+            if !resumed {
+                thread::spawn(move || switch_outputs(!off));
+            }
         }
     }
 }

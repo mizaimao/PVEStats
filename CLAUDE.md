@@ -37,8 +37,9 @@ Frank's rules for this project are in his knowledgebase
 - `tui/kiosk off | on | status` switches the kiosk's monitor off and
   pauses the dashboard (no machine is polled), or back on. It runs
   `tui/kiosk-remote` on the screen machine, the gatekeeper moose-mcp's key
-  is limited to (MOO-200); keep the two in step, and run
-  `tui/kiosk-remote.test` (deploy does) after changing it. A deploy turns
+  is limited to (MOO-200). A deploy never copies `tui/kiosk-remote` and
+  warns when the kiosk's copy differs; after a change is reviewed and
+  committed, `tui/deploy --gatekeeper` tests it and puts it there. A deploy turns
   it back on, so check `tui/kiosk status` before deploying while Frank has
   it off, and ask him (Frank, 2026-10-26: he turns it off to measure power).
 - `tui: demo: true` in the screen machine's copy of config.yaml puts

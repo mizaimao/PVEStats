@@ -26,6 +26,25 @@
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/machines.sh"
 
+# The gatekeeper moose-mcp's key runs (tui/kiosk-remote, MOO-200) changes
+# only on purpose: a deploy never copies it, and says when the screen
+# machine's copy differs. --gatekeeper tests it under a UTF-8 locale and
+# copies that file alone, and only as committed.
+gatekeeper_test="cd \"$B/tui\" && LANG=C.UTF-8 LC_ALL=C.UTF-8 bash ./kiosk-remote.test"
+if [ "${1:-}" = "--gatekeeper" ]; then
+    if ! git -C "$repo" diff --quiet HEAD -- tui/kiosk-remote; then
+        echo "tui/kiosk-remote has uncommitted changes: commit them (after review) first" >&2
+        exit 1
+    fi
+    on_build "mkdir -p \"$B\""
+    pack ./tui/kiosk-remote ./tui/kiosk-remote.test | on_build "tar -xf - -C \"$B\""
+    on_build "$gatekeeper_test"
+    git -C "$repo" show HEAD:tui/kiosk-remote \
+        | on_screen "cd \"$S/tui\" && cat > kiosk-remote.new && chmod 755 kiosk-remote.new \
+            && mv -fT kiosk-remote.new kiosk-remote && sha256sum kiosk-remote"
+    exit 0
+fi
+
 if [ "${1:-}" = "--check" ]; then
     echo "build:  $BUILD_HOST:$BUILD_DIR"
     echo "screen: $SCREEN_HOST:$SCREEN_DIR"
@@ -37,13 +56,19 @@ fi
 echo "== test and build on $BUILD_HOST"
 on_build "mkdir -p \"$B\""
 pack ./tui ./certs | on_build "tar -xf - -C \"$B\""
-on_build "cd \"$B/tui\" && bash ./kiosk-remote.test \
+on_build "$gatekeeper_test \
     && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
     && cargo test --release --quiet && cargo build --release --quiet"
 
 echo "== copy to $SCREEN_HOST"
 on_screen "mkdir -p \"$S/tui/bin\""
-pack . | on_screen "tar -xf - -C \"$S\""
+pack --exclude ./tui/kiosk-remote . | on_screen "tar -xf - -C \"$S\""
+mine=$(git -C "$repo" show HEAD:tui/kiosk-remote | shasum -a 256 | cut -c1-64)
+theirs=$(on_screen "sha256sum \"$S/tui/kiosk-remote\" 2>/dev/null | cut -c1-64" || true)
+if [ "$mine" != "$theirs" ]; then
+    echo "== note: tui/kiosk-remote (moose-mcp's gatekeeper) differs on $SCREEN_HOST and was not copied;" >&2
+    echo "   after review, tui/deploy --gatekeeper puts the committed one there" >&2
+fi
 on_build "cat \"$B/tui/target/release/pvestats-tui\"" \
     | on_screen "cd \"$S/tui/bin\" && cat > pvestats-tui.new && chmod 755 pvestats-tui.new \
         && mv pvestats-tui.new pvestats-tui"

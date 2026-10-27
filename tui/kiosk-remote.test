@@ -51,4 +51,30 @@ refused "schedule set 05:00-05:00" "the window starts and ends at the same time"
 refused "schedule set 03:00-05:00 07:00-08:00" "schedule set takes one window"
 refused "schedule set 03:00 - 05:00" "schedule set takes one window"
 
+# Other scripts' digits and letters: the script matches byte-wise whatever
+# locale the client sets (this file is run under a UTF-8 one by deploy).
+refused "schedule set ٠٣:٠٠-٠٥:٠٠"
+refused "monitor öff"
+refused $'status\xc2\xa0'  # a non-breaking space
+
+# Windows as the dashboard's config.rs hours() reads them.
+usable() {
+    if ! usable_window "$1"; then printf 'FAIL usable %q\n' "$1"; failures=$((failures + 1)); fi
+}
+unusable() {
+    if usable_window "$1"; then printf 'FAIL unusable %q\n' "$1"; failures=$((failures + 1)); fi
+}
+usable "03:00-05:00"
+usable "3:00-5:00"
+usable " 03:00 - 05:00 "
+usable "08:09-09:08"
+usable "23:30-06:00"
+unusable "05:00-05:00"
+unusable "5:00-05:00"
+unusable "24:00-01:00"
+unusable "03:60-05:00"
+unusable "03:00"
+unusable "none"
+unusable ""
+
 if [ "$failures" -eq 0 ]; then echo "kiosk-remote: all passed"; else exit 1; fi

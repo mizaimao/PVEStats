@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # The kiosk's remote controls, and the only program moose-mcp's key may run
 # on the screen machine: its authorized_keys line names this file as the
 # command, so whatever the client asks for arrives in SSH_ORIGINAL_COMMAND
@@ -8,7 +8,8 @@
 #   dashboard pause | resume    stop or continue the dashboard: no drawing,
 #                               and no machine is polled
 #   monitor off | on            every output, through wlr-randr
-#   kiosk off | on              both
+#   kiosk off | on              both; if the second step fails, the first is
+#                               undone
 #   schedule show | clear       the daily screen-off window
 #   schedule set HH:MM-HH:MM    HH 00-23, MM 00-59, start and end different
 #
@@ -20,13 +21,22 @@
 # Without SSH_ORIGINAL_COMMAND (run by hand, or by tui/kiosk) the command is
 # its arguments. Anything not on the list above is refused: the request is
 # matched whole against fixed words, never evaluated, and the one argument,
-# the window, against a fixed pattern. No sudo. A pause lasts until
-# "resume", a deploy or a restart; "monitor off" until "on", the end of the
-# next window, or a restart of the kiosk. The window is kept in
-# tui/screen_off.local, which deploys leave alone and which wins over
-# config.yaml's `tui: screen_off`; the dashboard reads it within a minute.
+# the window, against a fixed pattern. No sudo. One command at a time; a
+# second while one runs fails as busy. Every wlr-randr call is cut off
+# after 5 s.
+#
+# How long each lasts: a pause until "resume", a deploy or a restart of the
+# kiosk. "monitor off" until "on", a restart of the kiosk, or the
+# dashboard's schedule switching the screen: at the end of a window, or
+# when the window is changed or cleared while it has the screen off. The
+# window is kept in tui/screen_off.local, which deploys leave alone and
+# which wins over config.yaml's `tui: screen_off`; the dashboard reads it
+# within a minute.
 
 set -uo pipefail
+# Byte-wise matching: a client may set LANG and LC_* (sshd's AcceptEnv), and
+# in other locales [a-z] and [0-9] can match more than ASCII.
+export LC_ALL=C
 export PATH=/usr/bin:/bin
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OVERRIDE="$here/screen_off.local"
@@ -61,51 +71,79 @@ parse() {
     esac
 }
 
-# The kiosk's Wayland session and the dashboard's process.
-session() { export WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="/run/user/$(id -u)"; }
-dashboard_pid() { pgrep -x pvestats-tui | head -n 1; }
+# A window as the dashboard reads one (config.rs, hours): H:M-H:M, each
+# part one or two digits, hours under 24, minutes under 60, start and end
+# different. Spaces around the parts are allowed.
+usable_window() {
+    local w=${1//[[:space:]]/} a b
+    [[ $w =~ ^([0-9]{1,2}):([0-9]{1,2})-([0-9]{1,2}):([0-9]{1,2})$ ]] || return 1
+    local -a p=("${BASH_REMATCH[@]:1}")
+    ((10#${p[0]} < 24 && 10#${p[1]} < 60 && 10#${p[2]} < 24 && 10#${p[3]} < 60)) || return 1
+    a=$((10#${p[0]} * 60 + 10#${p[1]})); b=$((10#${p[2]} * 60 + 10#${p[3]}))
+    [ "$a" -ne "$b" ]
+}
+
+# The kiosk's Wayland session, and wlr-randr inside it, cut off after 5 s.
+randr() { WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="/run/user/$(id -u)" timeout 5 wlr-randr "$@"; }
+
+# The dashboard's process: this user's own. Nothing when it is not running;
+# exit 3 when there is more than one, which the callers refuse to act on.
+dashboard_pid() {
+    local pids
+    pids=$(pgrep -u "$(id -u)" -x pvestats-tui) || return 0
+    [ "$(wc -l <<< "$pids")" -eq 1 ] || return 3
+    say "$pids"
+}
+one_dashboard() { fail "more than one dashboard is running"; }
 
 dashboard() {
     local pid
-    pid=$(dashboard_pid) || true
-    [ -n "$pid" ] || fail "the dashboard is not running"
-    if [ "$1" = pause ]; then kill -STOP "$pid"; else kill -CONT "$pid"; fi || fail "could not signal the dashboard"
+    pid=$(dashboard_pid) || one_dashboard
+    [ -n "$pid" ] || return 1
+    if [ "$1" = pause ]; then kill -STOP "$pid"; else kill -CONT "$pid"; fi
 }
 
 monitor() {
-    session
     local list o
-    list=$(wlr-randr 2>/dev/null) || fail "the kiosk's display is not running"
-    for o in $(awk '/^[^ ]/ {print $1}' <<< "$list"); do
-        wlr-randr --output "$o" "--$1" || fail "wlr-randr could not switch $o $1"
-    done
+    list=$(randr 2>/dev/null) || return 1
+    while read -r o; do
+        randr --output "$o" "--$1" > /dev/null 2>&1 || return 1
+    done < <(awk '/^[^ ]/ {print $1}' <<< "$list")
 }
 
 schedule_write() {
-    printf '%s\n' "$1" > "$OVERRIDE.new" && mv "$OVERRIDE.new" "$OVERRIDE" || fail "could not save the schedule"
+    local tmp
+    tmp=$(mktemp "$OVERRIDE.XXXXXX") || fail "could not save the schedule"
+    if ! { printf '%s\n' "$1" > "$tmp" && mv -fT "$tmp" "$OVERRIDE"; }; then
+        rm -f "$tmp"
+        fail "could not save the schedule"
+    fi
 }
 
-# The effective window and where it comes from.
+# The effective window and where it comes from, as the dashboard decides.
 schedule_state() {
     local w=""
     if [ -f "$OVERRIDE" ]; then
-        w=$(head -n 1 "$OVERRIDE" | tr -d ' \r')
-        if [ "$w" = none ]; then say "null override"; return; fi
-        if [[ $w =~ $WINDOW ]]; then say "\"$w\" override"; return; fi
-        # Unreadable: the dashboard falls back to config.yaml, and so does this.
+        w=$(head -n 1 "$OVERRIDE" | tr -d '\r')
+        if [ "${w//[[:space:]]/}" = none ]; then say "null override"; return; fi
+        if usable_window "$w"; then say "\"${w//[[:space:]]/}\" override"; return; fi
+        # Not usable: the dashboard falls back to config.yaml, and so does this.
     fi
-    w=$(awk '/^[[:space:]]+screen_off:/ {gsub(/["'"'"'[:space:]]/, "", $2); print $2; exit}' "$CONFIG" 2>/dev/null)
-    if [[ $w =~ $WINDOW ]]; then say "\"$w\" config.yaml"; else say "null none"; fi
+    # `screen_off:` inside the top-level `tui:` block only.
+    w=$(awk '/^tui:/ {t = 1; next} /^[^[:space:]#]/ {t = 0}
+             t && /^[[:space:]]+screen_off:/ {sub(/^[^:]*:/, ""); gsub(/["'"'"']/, ""); print; exit}' \
+        "$CONFIG" 2>/dev/null)
+    w=${w%%#*}
+    if usable_window "$w"; then say "\"${w//[[:space:]]/}\" config.yaml"; else say "null none"; fi
 }
 
 state() {
     local pid d m s
-    pid=$(dashboard_pid) || true
+    pid=$(dashboard_pid) || one_dashboard
     if [ -z "$pid" ]; then d=stopped
     else case $(ps -o stat= -p "$pid") in T*) d=paused ;; *) d=running ;; esac
     fi
-    session
-    m=$(wlr-randr 2>/dev/null | awk '/Enabled:/ {print $2}' | sort -u | tr '\n' ' ')
+    m=$(randr 2>/dev/null | awk '/Enabled:/ {print $2}' | sort -u | tr '\n' ' ')
     case "$m" in "yes ") m=on ;; "no ") m=off ;; "") m=unknown ;; *) m=mixed ;; esac
     s=$(schedule_state)
     say "{\"dashboard\":\"$d\",\"monitor\":\"$m\",\"schedule\":${s% *},\"schedule_from\":\"${s##* }\"}"
@@ -121,22 +159,29 @@ main() {
     rc=$?
     # A refusal: parse printed why, in place of the command.
     if [ "$rc" -ne 0 ]; then say "$cmd"; exit "$rc"; fi
+    # One at a time: the lock is on this file, held until the script ends.
+    exec 9< "${BASH_SOURCE[0]}"
+    flock -n 9 || fail "busy: another kiosk command is running"
     case "$cmd" in
-        "dashboard pause") dashboard pause ;;
-        "dashboard resume") dashboard resume ;;
-        "monitor off") monitor off ;;
-        "monitor on") monitor on ;;
-        # Paused before the monitor goes off, as tui/kiosk did; on again the
-        # monitor first, so the dashboard's next frame is seen.
-        "kiosk off") dashboard pause; monitor off ;;
-        "kiosk on") monitor on; dashboard resume ;;
+        "dashboard pause") dashboard pause || fail "the dashboard is not running" ;;
+        "dashboard resume") dashboard resume || fail "the dashboard is not running" ;;
+        "monitor off") monitor off || fail "could not switch the monitor off" ;;
+        "monitor on") monitor on || fail "could not switch the monitor on" ;;
+        # The monitor first; if the dashboard then cannot follow, the
+        # monitor goes back, so nothing is left half done.
+        "kiosk off")
+            monitor off || fail "could not switch the monitor off"
+            dashboard pause || { monitor on; fail "the dashboard is not running"; } ;;
+        "kiosk on")
+            monitor on || fail "could not switch the monitor on"
+            dashboard resume || { monitor off; fail "the dashboard is not running"; } ;;
         "schedule clear") schedule_write none ;;
         "schedule set "*) schedule_write "${cmd#schedule set }" ;;
     esac
     state
 }
 
-# Sourced by its tests, which call parse on its own.
+# Sourced by its tests, which call parse and usable_window on their own.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     main "$@"
 fi
