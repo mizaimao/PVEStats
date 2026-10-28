@@ -17,6 +17,9 @@ use crate::state::Series;
 pub struct Pen<'a> {
     pub buf: &'a mut Buffer,
     pub look: &'a Look,
+    /// Columns at the left of the top row that a window's buttons sit on
+    /// (`--titlebar`); 0 elsewhere.
+    pub corner: u16,
 }
 
 impl Pen<'_> {
@@ -955,15 +958,19 @@ impl Card {
         let title_style = Style::default()
             .fg(if self.stale { p.muted } else { p.ink })
             .add_modifier(Modifier::BOLD);
+        // The card in the top-left corner, under a window's buttons
+        // (--titlebar), has its title after them.
+        let corner = if (area.x, area.y) == (pen.buf.area.x, pen.buf.area.y) { pen.corner as usize } else { 0 };
         // A title too long for the border beside the right-hand one is cut
         // with an ellipsis, rather than run under it.
         let right_w = if self.right.is_empty() { 0 } else { self.right.chars().count() + 2 };
-        let room = (area.width as usize).saturating_sub(5 + right_w);
+        let room = (area.width as usize).saturating_sub(5 + right_w + corner);
         let title = crate::format::fit(&self.title, room);
-        let mut block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(border)
-            .title(Line::styled(format!(" {title} "), title_style));
+        let title = Line::from(vec![
+            Span::styled("─".repeat(corner), border),
+            Span::styled(format!(" {title} "), title_style),
+        ]);
+        let mut block = Block::bordered().border_type(BorderType::Rounded).border_style(border).title(title);
         if !self.right.is_empty() {
             let right = Line::styled(format!(" {} ", self.right), Style::default().fg(p.muted));
             block = block.title_top(right.right_aligned());
@@ -1014,7 +1021,7 @@ mod tests {
         let look = super::super::theme::Look::new("ice", super::super::theme::Colors::Rgb, false);
         let area = Rect::new(0, 0, 30, 7);
         let mut buf = Buffer::empty(area);
-        let mut pen = Pen { buf: &mut buf, look: &look };
+        let mut pen = Pen { buf: &mut buf, look: &look, corner: 0 };
         Chart {
             traces: Vec::new(),
             capacity: 10,
@@ -1033,6 +1040,20 @@ mod tests {
         assert_eq!(at(10, 0), "⠉", "100: the top dot row");
         assert_eq!(at(10, 2), "⣀", "50: the foot of the third row of six");
         assert_eq!(at(10, 1), " ");
+    }
+
+    /// Under a window's buttons (--titlebar) only the top-left card moves
+    /// its title, past them.
+    #[test]
+    fn the_corner_card_titles_after_the_window_buttons() {
+        let look = super::super::theme::Look::new("ice", super::super::theme::Colors::Rgb, false);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 6));
+        let mut pen = Pen { buf: &mut buf, look: &look, corner: 5 };
+        let card = |title: &str| Card { title: title.into(), right: String::new(), stale: false, error: None, body: Vec::new() };
+        card("PVEStats").render(&mut pen, Rect::new(0, 0, 20, 3));
+        card("GPU").render(&mut pen, Rect::new(20, 0, 20, 3));
+        let row: String = (0..40).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+        assert_eq!(row, "╭───── PVEStats ───╮╭ GPU ─────────────╮");
     }
 
     #[test]

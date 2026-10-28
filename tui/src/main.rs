@@ -42,6 +42,9 @@ Reads .env and config.yaml from the PVEStats folder.
                       ml60 card, for checking how a busy GPU lays out
   --orbit             step the screen around one cell every 4 minutes, against burn-in
   --themes            list the themes, the one in use marked *, and exit
+  --titlebar COLUMNS  under a see-through title bar: leave the top row's first
+                      COLUMNS bare for the window's buttons, and give the
+                      terminal the theme's background (OSC 11) for the bar
 
 keys: f  GPU card alone / everything     up, down, j, k  scroll a narrow column
       q  quit";
@@ -56,10 +59,11 @@ struct Args {
     demo: bool,
     orbit: bool,
     themes: bool,
+    titlebar: u16,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false, themes: false };
+    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false, themes: false, titlebar: 0 };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or(format!("{arg} needs a value"));
@@ -86,6 +90,7 @@ fn parse_args() -> Result<Args, String> {
             "--demo" => args.demo = true,
             "--orbit" => args.orbit = true,
             "--themes" => args.themes = true,
+            "--titlebar" => args.titlebar = value()?.parse().map_err(|_| "bad --titlebar")?,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 exit(0);
@@ -137,6 +142,7 @@ fn main() {
     screen.focus = args.focus;
     // A snapshot is for checking a layout, which a step would shift.
     screen.orbit = args.orbit && args.snapshot.is_none();
+    screen.corner = args.titlebar;
 
     if let Some((w, h)) = args.snapshot {
         thread::sleep(Duration::from_secs_f64(args.after.max(0.0)));
@@ -226,12 +232,21 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io
     let mut touring = Touring::new(config.tour);
     let mut theme_file = ThemeFile::new(&config.root);
     let mut chosen: Option<Look> = None;
+    // Under a see-through title bar, the bar shows the terminal's own
+    // background: set to the theme's, and back to the terminal's on the way out.
+    let mut background: Option<String> = None;
     let result = (|| loop {
         power.tick();
         if let Some(name) = theme_file.changed() {
             chosen = Some(base.retheme(&name));
         }
         let look = touring.look(chosen.as_ref().unwrap_or(base), screen);
+        let wanted = set_background(look.p.plane).filter(|code| screen.corner > 0 && background.as_ref() != Some(code));
+        if let Some(code) = wanted {
+            terminal.backend_mut().write_all(code.as_bytes())?;
+            terminal.backend_mut().flush()?;
+            background = Some(code);
+        }
         terminal.draw(|frame| {
             let area = frame.area();
             screen.draw(frame.buffer_mut(), area, shared, config, look);
@@ -257,8 +272,21 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io
             _ => {}
         }
     })();
+    if background.is_some() {
+        print!("\x1b]111\x1b\\");
+        let _ = io::stdout().flush();
+    }
     ratatui::restore();
     result
+}
+
+/// OSC 11, which sets a terminal's default background, for a theme's
+/// background in true colour; None for any other.
+fn set_background(plane: Option<ratatui::style::Color>) -> Option<String> {
+    match plane? {
+        ratatui::style::Color::Rgb(r, g, b) => Some(format!("\x1b]11;rgb:{r:02x}/{g:02x}/{b:02x}\x1b\\")),
+        _ => None,
+    }
 }
 
 /// While `tui: theme_tour` is set in config.yaml, every theme in turn, so
@@ -435,6 +463,14 @@ fn outputs(text: &str) -> Vec<(&str, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_title_bar_background() {
+        use ratatui::style::Color;
+        assert_eq!(super::set_background(Some(Color::Rgb(0x1b, 0x1f, 0x27))).as_deref(), Some("\x1b]11;rgb:1b/1f/27\x1b\\"));
+        assert_eq!(super::set_background(Some(Color::Indexed(234))), None);
+        assert_eq!(super::set_background(None), None);
+    }
+
     #[test]
     fn a_theme_saved_while_running() {
         let dir = std::env::temp_dir().join(format!("pvestats-theme-{}", std::process::id()));
