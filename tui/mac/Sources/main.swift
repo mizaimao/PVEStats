@@ -2,7 +2,9 @@
 // this program in the app's Resources, on the repo the app was built from
 // (Info.plist, PVEStatsRoot). The dashboard redraws itself whenever the
 // window is resized; quitting it (q or Esc) quits the app, and quitting the
-// app (Cmd-Q, or closing the window) ends the dashboard.
+// app (Cmd-Q, or closing the window) ends the dashboard. The Theme menu
+// saves the chosen theme in the repo's ui.json, where the dashboard takes
+// it up within a second.
 
 import AppKit
 import SwiftTerm
@@ -14,11 +16,12 @@ let openRows = 50
 final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
     private var window: NSWindow!
     private var terminal: LocalProcessTerminalView!
+    private let dashboard = (Bundle.main.resourceURL ?? URL(fileURLWithPath: "."))
+        .appendingPathComponent("pvestats-tui").path
+    private let root = Bundle.main.object(forInfoDictionaryKey: "PVEStatsRoot") as? String ?? ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let resources = Bundle.main.resourceURL ?? URL(fileURLWithPath: ".")
-        let dashboard = resources.appendingPathComponent("pvestats-tui").path
-        let root = Bundle.main.object(forInfoDictionaryKey: "PVEStatsRoot") as? String ?? ""
+        NSApp.mainMenu = mainMenu(themes: themeMenu())
 
         terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -67,11 +70,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+
+    // ---------------------------------------------------------------- themes
+
+    /// The dashboard's themes and which is in use, from the dashboard itself
+    /// (pvestats-tui --themes), so the menu never lists one it lacks.
+    private func themes() -> [(name: String, current: Bool)] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: dashboard)
+        process.arguments = ["--root", root, "--themes"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: output, as: UTF8.self).split(separator: "\n").compactMap { line in
+            let name = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
+            return name.isEmpty ? nil : (name, line.hasPrefix("*"))
+        }
+    }
+
+    private func themeMenu() -> NSMenu {
+        let menu = NSMenu(title: "Theme")
+        for theme in themes() {
+            let item = NSMenuItem(title: theme.name, action: #selector(chooseTheme(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = theme.name
+            item.state = theme.current ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// Saves the theme in ui.json, keeping whatever else is there (the
+    /// browser app's settings); the dashboard takes it up within a second.
+    @objc private func chooseTheme(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        let file = URL(fileURLWithPath: root).appendingPathComponent("ui.json")
+        var saved: [String: Any] = [:]
+        if let data = try? Data(contentsOf: file),
+           let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            saved = object
+        }
+        saved["theme"] = name
+        guard let data = try? JSONSerialization.data(withJSONObject: saved, options: [.prettyPrinted, .sortedKeys]),
+              (try? data.write(to: file, options: .atomic)) != nil
+        else {
+            NSSound.beep()
+            return
+        }
+        for item in sender.menu?.items ?? [] {
+            item.state = item === sender ? .on : .off
+        }
+    }
 }
 
-/// The app menu, so Cmd-Q and Cmd-W work, named after the app.
+/// The app menu, so Cmd-Q and Cmd-W work, named after the app, then the
+/// themes and the window.
 @MainActor
-func mainMenu() -> NSMenu {
+func mainMenu(themes: NSMenu) -> NSMenu {
     let menu = NSMenu()
     let appItem = NSMenuItem()
     menu.addItem(appItem)
@@ -80,6 +138,9 @@ func mainMenu() -> NSMenu {
     appMenu.addItem(.separator())
     appMenu.addItem(withTitle: "Quit PVEStats", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     appItem.submenu = appMenu
+    let themeItem = NSMenuItem()
+    menu.addItem(themeItem)
+    themeItem.submenu = themes
     let windowItem = NSMenuItem()
     menu.addItem(windowItem)
     let windowMenu = NSMenu(title: "Window")
@@ -94,6 +155,5 @@ MainActor.assumeIsolated {
     let delegate = AppDelegate()
     app.delegate = delegate
     app.setActivationPolicy(.regular)
-    app.mainMenu = mainMenu()
     app.run()
 }
