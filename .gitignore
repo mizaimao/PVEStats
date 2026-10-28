@@ -67,3 +67,7 @@ server/bin/
 # The kiosk's screen-off window set from afar (tui/kiosk-remote), kept on the
 # screen machine across deploys
 tui/screen_off.local*
+
+# The Mac app's window (tui/mac): swift's build output and caches
+tui/mac/.build/
+tui/mac/.swiftpm/
