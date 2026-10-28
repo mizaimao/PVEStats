@@ -30,6 +30,26 @@ final class DashboardView: LocalProcessTerminalView {
     }
 }
 
+/// Over the dashboard where a title bar would be: a press there moves the
+/// window, and a double click does what a title bar's does, rather than
+/// selecting the text under it.
+final class TitleStrip: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        guard event.clickCount == 2 else {
+            window.performDrag(with: event)
+            return
+        }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window.performMiniaturize(nil)
+        case "None": break
+        default: window.performZoom(nil)
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
     private var window: NSWindow!
     private var terminal: DashboardView!
@@ -71,6 +91,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         terminal.frame = NSRect(x: 0, y: 0, width: grid.width, height: grid.height)
         terminal.autoresizingMask = [.width, .height]
         content.addSubview(terminal)
+        // The title bar's height, or at least the top row's, kept for moving
+        // the window.
+        let bar = max(window.frame.height - window.contentLayoutRect.height, top + cell.height)
+        let strip = TitleStrip(frame: NSRect(x: 0, y: content.frame.height - bar, width: grid.width, height: bar))
+        strip.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(strip)
         window.contentView = content
         window.backgroundColor = terminal.nativeBackgroundColor
         terminal.onBackground = { [weak self] color in self?.window.backgroundColor = color }
