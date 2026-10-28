@@ -13,6 +13,8 @@ venv/
 
 # Generated app bundle — build it with make-app.command
 PVEStats.app/
+# The terminal dashboard as a Mac app — build it with tui/make-mac-app
+PVEStats Terminal.app/
 
 # Appearance settings written by the settings panel
 ui.json
