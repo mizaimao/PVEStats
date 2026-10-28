@@ -50,16 +50,32 @@ pub struct Screen {
     pub orbit: bool,
     /// The theme tour, while one is on: which theme, and seconds to the next.
     pub tour: Option<Tour>,
+    /// Columns at the left of the top row left bare for a window's buttons,
+    /// when the window's title bar is see-through (--titlebar).
+    pub corner: u16,
     started: f64,
     standby_done: bool,
 }
 
 impl Screen {
     pub fn new() -> Self {
-        Screen { focus: false, scroll: 0, orbit: false, tour: None, started: clock(), standby_done: false }
+        Screen { focus: false, scroll: 0, orbit: false, tour: None, corner: 0, started: clock(), standby_done: false }
     }
 
     pub fn draw(&mut self, buf: &mut Buffer, area: Rect, shared: &Shared, config: &Config, look: &Look) {
+        self.draw_all(buf, area, shared, config, look);
+        // Bare cells under the window's buttons, in the background the title
+        // bar above them takes too.
+        let corner = area.x..area.x.saturating_add(self.corner).min(area.right());
+        for x in corner {
+            if let Some(cell) = buf.cell_mut((x, area.y)) {
+                cell.reset();
+                cell.set_bg(look.p.plane.unwrap_or(Color::Reset));
+            }
+        }
+    }
+
+    fn draw_all(&mut self, buf: &mut Buffer, area: Rect, shared: &Shared, config: &Config, look: &Look) {
         let pve = lock(&shared.pve);
         let host_agent = lock(&shared.host);
         let agent = lock(&shared.agent);
@@ -73,7 +89,7 @@ impl Screen {
         let live = config.host_configured() && sh.ok && !sh.stale;
         let data: Option<PveData> = pve.data.as_ref().map(|d| if live { overlay(d, host_agent.data.as_ref()) } else { d.clone() });
         let history: &dyn History = if live { &*host_agent } else { &*pve };
-        let mut pen = Pen { buf, look };
+        let mut pen = Pen { buf, look, corner: self.corner };
         pen.fill_bg(area, look.p.plane);
         let body = if self.orbit && area.width > 1 && area.height > 1 {
             let now = std::time::SystemTime::now()
@@ -236,7 +252,7 @@ impl Screen {
         self.scroll = self.scroll.min(height - area.height);
         let full = Rect { x: area.x, y: 0, width: w, height };
         let mut off = Buffer::empty(full);
-        let mut off_pen = Pen { buf: &mut off, look: pen.look };
+        let mut off_pen = Pen { buf: &mut off, look: pen.look, corner: pen.corner };
         off_pen.fill_bg(full, pen.look.p.plane);
         column(&mut off_pen, full, cards, Some(guests), true);
         for row in 0..area.height {

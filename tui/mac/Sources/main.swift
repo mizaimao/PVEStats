@@ -2,9 +2,10 @@
 // this program in the app's Resources, on the repo the app was built from
 // (Info.plist, PVEStatsRoot). The dashboard redraws itself whenever the
 // window is resized; quitting it (q or Esc) quits the app, and quitting the
-// app (Cmd-Q, or closing the window) ends the dashboard. The Theme menu
-// saves the chosen theme in the repo's ui.json, where the dashboard takes
-// it up within a second.
+// app (Cmd-Q, or closing the window) ends the dashboard. The window has no
+// title bar of its own: the dashboard's top row runs through it, beside the
+// window's buttons. The Theme menu saves the chosen theme in the repo's
+// ui.json, where the dashboard takes it up within a second.
 
 import AppKit
 import SwiftTerm
@@ -13,9 +14,25 @@ import SwiftTerm
 let openCols = 190
 let openRows = 50
 
+/// The terminal, saying when the dashboard gives it a background colour
+/// (OSC 11), so the window around the grid can take it too.
+final class DashboardView: LocalProcessTerminalView {
+    var onBackground: ((NSColor) -> Void)?
+    private var shown: NSColor?
+
+    override func viewWillDraw() {
+        super.viewWillDraw()
+        let color = nativeBackgroundColor
+        if color != shown {
+            shown = color
+            onBackground?(color)
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
     private var window: NSWindow!
-    private var terminal: LocalProcessTerminalView!
+    private var terminal: DashboardView!
     private let dashboard = (Bundle.main.resourceURL ?? URL(fileURLWithPath: "."))
         .appendingPathComponent("pvestats-tui").path
     private let root = Bundle.main.object(forInfoDictionaryKey: "PVEStatsRoot") as? String ?? ""
@@ -23,20 +40,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = mainMenu(themes: themeMenu())
 
-        terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        terminal = DashboardView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminal.processDelegate = self
+        // One cell's size, from the grid's at two widths.
+        terminal.resize(cols: openCols + 10, rows: openRows)
+        let wider = terminal.getOptimalFrameSize().size
         terminal.resize(cols: openCols, rows: openRows)
-        let size = terminal.getOptimalFrameSize().size
+        let grid = terminal.getOptimalFrameSize().size
+        let cell = NSSize(width: (wider.width - grid.width) / 10, height: grid.height / CGFloat(openRows))
 
+        // No title bar of its own: the dashboard's top row runs through it,
+        // beside the window's buttons.
         window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(origin: .zero, size: grid),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "PVEStats"
-        window.contentView = terminal
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        let (top, corner) = buttonRoom(cell: cell)
+
+        // The grid starts low enough for its top row to sit level with the
+        // buttons; the strip above it shows the window's background, which
+        // follows the dashboard's.
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: grid.width, height: top + grid.height))
+        terminal.frame = NSRect(x: 0, y: 0, width: grid.width, height: grid.height)
+        terminal.autoresizingMask = [.width, .height]
+        content.addSubview(terminal)
+        window.contentView = content
+        window.backgroundColor = terminal.nativeBackgroundColor
+        terminal.onBackground = { [weak self] color in self?.window.backgroundColor = color }
+        window.setFrame(NSRect(origin: .zero, size: content.frame.size), display: false)
         window.center()
         window.setFrameAutosaveName("PVEStats dashboard")
         window.makeKeyAndOrderFront(nil)
@@ -48,11 +86,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         environment.append("COLORTERM=truecolor")
         terminal.startProcess(
             executable: dashboard,
-            args: ["--root", root],
+            args: ["--root", root, "--titlebar", String(corner)],
             environment: environment,
             execName: "pvestats-tui"
         )
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// How far down the grid starts, for its top row to be level with the
+    /// window's buttons, and how many of that row's columns the buttons cover.
+    private func buttonRoom(cell: NSSize) -> (top: CGFloat, corner: Int) {
+        window.layoutIfNeeded()
+        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+            .compactMap { window.standardWindowButton($0) }
+            .map { $0.convert($0.bounds, to: nil) }
+        guard let first = buttons.first, let right = buttons.map(\.maxX).max(), right > 0 else {
+            return (0, 0)
+        }
+        let middle = window.frame.height - first.midY
+        let top = max(0, (middle - cell.height / 2).rounded())
+        // A little space after the last button.
+        return (top, Int(((right + 6) / cell.width).rounded(.up)))
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
