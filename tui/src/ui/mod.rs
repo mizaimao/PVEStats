@@ -444,11 +444,6 @@ fn column(pen: &mut Pen, area: Rect, cards: &[Card], guests: Option<&Guests>, gr
     }
 }
 
-/// The dashboard's name and its sources, each a dot and an age, on top of
-/// the host card: one panel rather than two leaves the cards below three
-/// more rows. The host's readings dim on their own when PVE is not
-/// answering, with the reason on the border; the source dots never do.
-/// During a theme tour the corner names the theme.
 /// One machine on the status line, and how its feed is doing.
 struct Dot {
     name: &'static str,
@@ -509,6 +504,11 @@ fn pair_dot(look: &Look, name: &'static str, agent: &Status, api: &Status) -> Do
     }
 }
 
+/// The dashboard's name and a dot for each machine, on top of the host card:
+/// one panel rather than two leaves the cards below three more rows. The
+/// host's readings dim on their own when PVE is not answering, with the
+/// reason on the border; the dots never do. During a theme tour the corner
+/// names the theme.
 fn with_status(look: &Look, dots: &[Dot], theme_now: Option<&str>, host: Card) -> Card {
     let p = look.p;
     let mut spans = Vec::new();

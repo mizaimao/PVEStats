@@ -724,10 +724,10 @@ pub fn router(look: &Look, router: &Source<RouterData>, status: &Status) -> Card
         floor: 125_000.0,
         scale: None,
         format: fmt::bits_auto,
-        // Rows the left column has spare at its foot, the router being
-        // its last card.
+        // Every row the left column has spare at its foot, the router being
+        // its last card, however tall the window: none is left blank.
         rows: 4,
-        max_rows: 6,
+        max_rows: 60,
     });
 
     // With their units, in the size that suits: 12 kbit/s, 3.2 Mbit/s.
