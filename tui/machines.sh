@@ -51,6 +51,7 @@ pack() {
         --exclude ./.tools --exclude ./.venv --exclude ./PVEStats.app --exclude "./PVEStats Terminal.app" \
         --exclude ./captures --exclude ./ui.json --exclude ./icons \
         --exclude ./tui/target --exclude ./tui/.cargo-home --exclude ./tui/bin \
+        --exclude ./tui/mac/.build --exclude ./tui/mac/.swiftpm \
         --exclude ./tui/shot/target --exclude ./tui/deploy.conf --exclude "./tui/screen_off.local*" \
         --exclude ./router/agent/target --exclude ./router/agent/.cargo-home --exclude ./router/bin \
         --exclude ./pve/agent/target --exclude ./pve/agent/.cargo-home --exclude ./pve/bin \

@@ -1,81 +1,65 @@
 #!/usr/bin/env bash
 # Builds "PVEStats Terminal.app" in the repo root: the terminal dashboard in
-# a window of its own on the Mac, with the app's icon. Click it and Ghostty
-# (Terminal where there is no Ghostty) opens on the dashboard, which redraws
-# to fit whenever the window is resized. q or Esc closes it.
+# a window of its own on the Mac. The app is the window, a SwiftTerm
+# terminal (tui/mac) running the dashboard, so the Dock, the app switcher
+# and the menu bar all say PVEStats, with its icon. The dashboard redraws to
+# fit whenever the window is resized; q, Esc or Cmd-Q closes it.
 #
-#   tui/make-mac-app [pvestats-tui]
+#   tui/make-mac-app
 #
-# The argument is the dashboard built for macOS; by default the one in
-# tui/target/release (cargo build --release in tui/, on a Mac: macserver,
-# not Frank's laptop, except when he says so). It is copied into the app,
-# which reads .env and config.yaml from this repo, like the app in the
-# browser. The app writes nothing anywhere else; drag it to the Dock from
-# here to keep it there.
+# Builds both programs for macOS first, at low priority: the dashboard
+# (cargo, in tui/) and the window (swift, in tui/mac), with their caches
+# inside the repo. That takes a Mac: macserver, not Frank's laptop, except
+# when he says so. The app reads .env and config.yaml from this repo; it
+# writes nothing anywhere else. Drag it to the Dock from here to keep it.
+# The first time it runs, macOS asks to let it reach the local network,
+# where the agents are.
 
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-binary=${1:-$repo/tui/target/release/pvestats-tui}
 app="$repo/PVEStats Terminal.app"
 
-[ -x "$binary" ] || { echo "no dashboard at $binary: build it first (see above)" >&2; exit 1; }
-case "$(file -b "$binary")" in
-    *Mach-O*) ;;
-    *) echo "$binary is not a macOS program" >&2; exit 1 ;;
-esac
+echo "== the dashboard"
+(cd "$repo/tui" && CARGO_HOME="$PWD/.cargo-home" nice -n 15 cargo build --release -j 4 --quiet)
+echo "== the window"
+(cd "$repo/tui/mac" && CLANG_MODULE_CACHE_PATH="$PWD/.build/module-cache" nice -n 15 swift build -c release -j 4 \
+    --scratch-path .build --cache-path .swiftpm/cache --config-path .swiftpm/config \
+    --security-path .swiftpm/security --manifest-cache local --quiet)
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$repo/tui/mac/.build/release/PVEStatsTerminal" "$app/Contents/MacOS/PVEStatsTerminal"
+cp "$repo/tui/target/release/pvestats-tui" "$app/Contents/Resources/pvestats-tui"
 cp "$repo/assets/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
-cp "$binary" "$app/Contents/Resources/pvestats-tui"
 
+# PVEStatsRoot: the repo whose .env and config.yaml the dashboard reads.
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>PVEStats Terminal</string>
+  <key>CFBundleName</key><string>PVEStats</string>
   <key>CFBundleDisplayName</key><string>PVEStats Terminal</string>
   <key>CFBundleIdentifier</key><string>net.local.pvestats.terminal</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>PVEStats Terminal</string>
+  <key>CFBundleExecutable</key><string>PVEStatsTerminal</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <!-- Only a launcher: it hands the dashboard to Terminal and quits, so it
-       needs no Dock icon of its own. -->
-  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <!-- App Nap would stall the dashboard's polling while the window is in
+       the background. -->
+  <key>LSAppNapIsDisabled</key><true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>PVEStats reads its agents on the Proxmox host, ml60, TrueNAS and the router.</string>
+  <key>PVEStatsRoot</key><string>$repo</string>
 </dict>
 </plist>
 PLIST
 
-# The launcher runs the dashboard in Ghostty, in a window of its own that
-# closes, Ghostty with it, when the dashboard does; in Terminal, through a
-# .command file, where there is no Ghostty. Through `open` either way, not
-# AppleScript, so macOS never asks for permission to control either.
-cat > "$app/Contents/MacOS/PVEStats Terminal" <<'LAUNCHER'
-#!/bin/bash
-resources="$(cd "$(dirname "$0")/../Resources" && pwd)"
-if [ -d /Applications/Ghostty.app ] || [ -d "$HOME/Applications/Ghostty.app" ]; then
-    # Ghostty's own icon: its macos-icon setting changes the icon of the
-    # installed Ghostty.app too, not just this window's.
-    exec open -na Ghostty --args --title=PVEStats --window-width=190 --window-height=50 \
-        --quit-after-last-window-closed=true --confirm-close-surface=false \
-        --window-save-state=never -e "$resources/dashboard.command"
-fi
-exec open -a Terminal "$resources/dashboard.command"
-LAUNCHER
-
-# In the window: a title, a size that fits the full layout (the dashboard
-# adjusts to any other), then the dashboard on this repo's settings.
-cat > "$app/Contents/Resources/dashboard.command" <<COMMAND
-#!/bin/bash
-printf '\033]0;PVEStats\007\033[8;50;190t'
-exec "\$(dirname "\$0")/pvestats-tui" --root "$repo"
-COMMAND
-
-chmod 755 "$app/Contents/MacOS/PVEStats Terminal" "$app/Contents/Resources/dashboard.command" \
-    "$app/Contents/Resources/pvestats-tui"
+chmod 755 "$app/Contents/MacOS/PVEStatsTerminal" "$app/Contents/Resources/pvestats-tui"
+# Signed ad hoc as a whole, so macOS treats the bundle as one app.
+codesign --force --deep --sign - "$app" 2>/dev/null
 echo "built $app"
