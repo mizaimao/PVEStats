@@ -66,6 +66,17 @@ machine (deploys leave it alone, and it wins over config.yaml). moose-mcp's
 key runs only a root-owned copy of it, `/usr/local/libexec/kiosk-remote`,
 which Frank installs with sudo from a reviewed commit (MOO-200).
 
+## On the Mac
+
+`tui/make-mac-app` builds `PVEStats Terminal.app` in the repo root, with the
+app's icon: click it and Terminal opens on the dashboard, which redraws to
+fit when the window is resized; q or Esc closes it. It reads this repo's
+.env and config.yaml. Build the dashboard for macOS first (`cargo build
+--release` in tui/, with `CARGO_HOME=tui/.cargo-home`) on macserver; the
+app is then copied into Frank's repo. Run from Terminal, the dashboard may
+reach the LAN; run from elsewhere, macOS's local-network permission can
+block it ("Connection Failed: Connect error").
+
 ## Build
 
 On dev.lan, with cargo's cache inside the folder:

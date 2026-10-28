@@ -48,7 +48,7 @@ fi
 pack() {
     # The +-form keeps bash 3.2 (macOS) from calling an empty array unbound.
     (cd "$repo" && tar ${tar_flags[@]+"${tar_flags[@]}"} -cf - \
-        --exclude ./.tools --exclude ./.venv --exclude ./PVEStats.app \
+        --exclude ./.tools --exclude ./.venv --exclude ./PVEStats.app --exclude "./PVEStats Terminal.app" \
         --exclude ./captures --exclude ./ui.json --exclude ./icons \
         --exclude ./tui/target --exclude ./tui/.cargo-home --exclude ./tui/bin \
         --exclude ./tui/shot/target --exclude ./tui/deploy.conf --exclude "./tui/screen_off.local*" \
