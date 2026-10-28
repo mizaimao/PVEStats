@@ -59,10 +59,9 @@ cat > "$app/Contents/MacOS/PVEStats Terminal" <<'LAUNCHER'
 #!/bin/bash
 resources="$(cd "$(dirname "$0")/../Resources" && pwd)"
 if [ -d /Applications/Ghostty.app ] || [ -d "$HOME/Applications/Ghostty.app" ]; then
-    # Its own Ghostty, with the PVEStats icon in the Dock and the app
-    # switcher (Ghostty's macos-icon, for this one process only).
+    # Ghostty's own icon: its macos-icon setting changes the icon of the
+    # installed Ghostty.app too, not just this window's.
     exec open -na Ghostty --args --title=PVEStats --window-width=190 --window-height=50 \
-        --macos-icon=custom "--macos-custom-icon=$resources/AppIcon.icns" \
         --quit-after-last-window-closed=true --confirm-close-surface=false \
         --window-save-state=never -e "$resources/dashboard.command"
 fi
