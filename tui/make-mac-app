@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds "PVEStats Terminal.app" in the repo root: the terminal dashboard in
-# a Terminal window on the Mac, with the app's own icon. Click it and
-# Terminal opens on the dashboard, which redraws to fit whenever the window
-# is resized. q or Esc closes it.
+# a window of its own on the Mac, with the app's icon. Click it and Ghostty
+# (Terminal where there is no Ghostty) opens on the dashboard, which redraws
+# to fit whenever the window is resized. q or Esc closes it.
 #
 #   tui/make-mac-app [pvestats-tui]
 #
@@ -51,12 +51,19 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# The launcher opens a .command file in Terminal, which runs it in a new
-# window. Through `open`, not AppleScript, so macOS never asks for
-# permission to control Terminal.
+# The launcher runs the dashboard in Ghostty, in a window of its own that
+# closes, Ghostty with it, when the dashboard does; in Terminal, through a
+# .command file, where there is no Ghostty. Through `open` either way, not
+# AppleScript, so macOS never asks for permission to control either.
 cat > "$app/Contents/MacOS/PVEStats Terminal" <<'LAUNCHER'
 #!/bin/bash
-exec open -a Terminal "$(dirname "$0")/../Resources/dashboard.command"
+resources="$(cd "$(dirname "$0")/../Resources" && pwd)"
+if [ -d /Applications/Ghostty.app ] || [ -d "$HOME/Applications/Ghostty.app" ]; then
+    exec open -na Ghostty --args --title=PVEStats --window-width=190 --window-height=50 \
+        --quit-after-last-window-closed=true --confirm-close-surface=false \
+        --window-save-state=never -e "$resources/dashboard.command"
+fi
+exec open -a Terminal "$resources/dashboard.command"
 LAUNCHER
 
 # In the window: a title, a size that fits the full layout (the dashboard
