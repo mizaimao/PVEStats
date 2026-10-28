@@ -11,7 +11,7 @@ mod state;
 mod ui;
 
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::Arc;
 use std::thread;
@@ -41,6 +41,7 @@ Reads .env and config.yaml from the PVEStats folder.
   --demo              made-up models and GPU processes on the
                       ml60 card, for checking how a busy GPU lays out
   --orbit             step the screen around one cell every 4 minutes, against burn-in
+  --themes            list the themes, the one in use marked *, and exit
 
 keys: f  GPU card alone / everything     up, down, j, k  scroll a narrow column
       q  quit";
@@ -54,10 +55,11 @@ struct Args {
     focus: bool,
     demo: bool,
     orbit: bool,
+    themes: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false };
+    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false, themes: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or(format!("{arg} needs a value"));
@@ -83,6 +85,7 @@ fn parse_args() -> Result<Args, String> {
             "--focus" => args.focus = true,
             "--demo" => args.demo = true,
             "--orbit" => args.orbit = true,
+            "--themes" => args.themes = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 exit(0);
@@ -104,6 +107,14 @@ fn main() {
         exit(1);
     });
     config.demo |= args.demo;
+    // For the Mac app's Theme menu (tui/mac): every theme, the one in use
+    // marked.
+    if args.themes {
+        for name in ui::theme::names() {
+            println!("{} {name}", if name == config.theme { "*" } else { " " });
+        }
+        return;
+    }
     let config = Arc::new(config);
     let shared =
         Arc::new(Shared::new(config.window, config.pve_interval(), config.pve_agent_every, config.nas_agent_every));
@@ -213,9 +224,14 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io
     let mut terminal = ratatui::init();
     let mut power = Power::new(config);
     let mut touring = Touring::new(config.tour);
+    let mut theme_file = ThemeFile::new(&config.root);
+    let mut chosen: Option<Look> = None;
     let result = (|| loop {
         power.tick();
-        let look = touring.look(base, screen);
+        if let Some(name) = theme_file.changed() {
+            chosen = Some(base.retheme(&name));
+        }
+        let look = touring.look(chosen.as_ref().unwrap_or(base), screen);
         terminal.draw(|frame| {
             let area = frame.area();
             screen.draw(frame.buffer_mut(), area, shared, config, look);
@@ -271,6 +287,35 @@ impl Touring {
             self.current = Some((index, base.retheme(names[index])));
         }
         self.current.as_ref().map_or(base, |(_, look)| look)
+    }
+}
+
+/// The theme in ui.json, which the Mac app's Theme menu (tui/mac) and the
+/// browser app's settings panel write: looked at once a second, and taken
+/// up when the file changes, without a restart. The kiosk has no ui.json
+/// (deploys leave it behind), so there it never changes.
+struct ThemeFile {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+}
+
+impl ThemeFile {
+    fn new(root: &Path) -> Self {
+        let path = root.join("ui.json");
+        let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        ThemeFile { path, modified }
+    }
+
+    /// A theme newly saved, if one is and it is a known name.
+    fn changed(&mut self) -> Option<String> {
+        let modified = std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
+        if modified == self.modified {
+            return None;
+        }
+        self.modified = modified;
+        let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&self.path).ok()?).ok()?;
+        let name = saved.get("theme")?.as_str()?;
+        ui::theme::names().any(|n| n == name).then(|| name.to_string())
     }
 }
 
@@ -390,6 +435,28 @@ fn outputs(text: &str) -> Vec<(&str, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_theme_saved_while_running() {
+        let dir = std::env::temp_dir().join(format!("pvestats-theme-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("ui.json");
+        std::fs::write(&file, r#"{"theme": "ice"}"#).unwrap();
+        let mut watch = super::ThemeFile::new(&dir);
+        assert_eq!(watch.changed(), None, "as it was at start");
+        // A file system's times can be coarse: make the change visible.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        let save = |text: &str, at: std::time::SystemTime| {
+            std::fs::write(&file, text).unwrap();
+            std::fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
+        };
+        save(r#"{"glow": 1, "theme": "vista"}"#, later);
+        assert_eq!(watch.changed().as_deref(), Some("vista"));
+        assert_eq!(watch.changed(), None, "once");
+        save(r#"{"theme": "no-such-theme"}"#, later + std::time::Duration::from_secs(5));
+        assert_eq!(watch.changed(), None, "an unknown name is not taken up");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn the_local_screen_off_window() {
         assert_eq!(super::local_window(Some("03:00-05:00\n")), Some(Some((180, 300))));
