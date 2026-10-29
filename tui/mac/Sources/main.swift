@@ -14,22 +14,6 @@ import SwiftTerm
 let openCols = 190
 let openRows = 50
 
-/// The terminal, saying when the dashboard gives it a background colour
-/// (OSC 11), so the window around the grid can take it too.
-final class DashboardView: LocalProcessTerminalView {
-    var onBackground: ((NSColor) -> Void)?
-    private var shown: NSColor?
-
-    override func viewWillDraw() {
-        super.viewWillDraw()
-        let color = nativeBackgroundColor
-        if color != shown {
-            shown = color
-            onBackground?(color)
-        }
-    }
-}
-
 /// Over the whole dashboard, which takes no mouse input: its text is never
 /// selected, the pointer stays an arrow rather than a text cursor, and a
 /// press anywhere moves the window.
@@ -61,7 +45,8 @@ final class TitleStrip: Cover {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
     private var window: NSWindow!
-    private var terminal: DashboardView!
+    private var terminal: LocalProcessTerminalView!
+    private var background: NSColor?
     private let dashboard = (Bundle.main.resourceURL ?? URL(fileURLWithPath: "."))
         .appendingPathComponent("pvestats-tui").path
     private let root = Bundle.main.object(forInfoDictionaryKey: "PVEStatsRoot") as? String ?? ""
@@ -69,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = mainMenu(themes: themeMenu())
 
-        terminal = DashboardView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminal.processDelegate = self
         // One cell's size, from the grid's at two widths.
@@ -110,16 +95,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         strip.autoresizingMask = [.width, .minYMargin]
         content.addSubview(strip)
         window.contentView = content
-        window.backgroundColor = terminal.nativeBackgroundColor
-        terminal.onBackground = { [weak self] color in self?.window.backgroundColor = color }
+        // The strip takes the dashboard's background colour (OSC 11).
+        // SwiftTerm doesn't say when that changes under the GPU renderer, so
+        // it is looked at twice a second.
+        followBackground()
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.followBackground() }
+        }
         window.setFrame(NSRect(origin: .zero, size: content.frame.size), display: false)
         window.center()
         window.setFrameAutosaveName("PVEStats dashboard")
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(terminal)
-        // The GPU (Metal) draws the grid when launched with
-        // `--args -GPURendering YES`; the CPU does otherwise, or if Metal
+        // The GPU (Metal) draws the grid: half the CPU's load (MOO-205). The
+        // CPU does when launched with `--args -GPURendering NO`, or if Metal
         // can't start. Stderr says which.
+        UserDefaults.standard.register(defaults: ["GPURendering": true])
         if UserDefaults.standard.bool(forKey: "GPURendering") {
             do { try terminal.setUseMetal(true) } catch { FileHandle.standardError.write(Data("metal: \(error)\n".utf8)) }
         }
@@ -136,6 +127,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
             execName: "pvestats-tui"
         )
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func followBackground() {
+        let color = terminal.nativeBackgroundColor
+        guard color != background else { return }
+        background = color
+        window.backgroundColor = color
     }
 
     /// How far down the grid starts, for its top row to be level with the
