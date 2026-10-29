@@ -166,10 +166,10 @@ impl<T> Source<T> {
 
     /// True while a source that has never answered is on its first retry.
     ///
-    /// A first failure right after launch is usually transient, and PVE
-    /// retries only every 10s, so the error is held back until the retry
-    /// fails too. A source that never polls (not configured) is never
-    /// waiting: its error is final.
+    /// A first failure right after launch is usually transient, so the
+    /// error is held back until the retry, 2 s later, fails too. A source
+    /// that never polls (not configured) is never waiting: its error is
+    /// final.
     pub fn waiting(&self) -> bool {
         self.updated_at.is_none() && self.failures == 1 && self.last_poll.is_some()
     }

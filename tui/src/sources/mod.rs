@@ -81,6 +81,21 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Until a source first answers, a failed poll is tried again sooner than
+/// its interval: after 2 s, then twice as long each time. A first request
+/// can fail for a moment after launch (on the Mac, while the system lets a
+/// newly started app onto the local network), and PVE's next poll would
+/// otherwise be 30 s away.
+const FIRST_RETRY: f64 = 2.0;
+
+/// Seconds from one poll's start to the next's.
+fn next_wait(interval: f64, answered: bool, failures: u32) -> f64 {
+    if answered || failures == 0 {
+        return interval;
+    }
+    (FIRST_RETRY * 2f64.powi(failures.min(16) as i32 - 1)).min(interval)
+}
+
 /// Call `poll` forever on a fixed interval, absorbing every failure.
 pub fn run_poller<T>(
     source: &Mutex<Source<T>>,
@@ -97,9 +112,13 @@ pub fn run_poller<T>(
         }
         // One slot per series per poll, so a failed poll is drawn as a gap.
         lock(source).end_poll();
+        let wait = {
+            let s = lock(source);
+            next_wait(interval, s.updated_at.is_some(), s.failures)
+        };
         // Drift-free: subtract however long the poll actually took.
         let spent = started.elapsed().as_secs_f64();
-        thread::sleep(Duration::from_secs_f64((interval - spent).max(0.0)));
+        thread::sleep(Duration::from_secs_f64((wait - spent).max(0.0)));
     }
 }
 
@@ -468,4 +487,20 @@ pub struct Alert {
     pub headline: Option<String>,
     /// Local, "2026-10-26T09:00", when it ends or, failing that, expires.
     pub until: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_wait;
+
+    #[test]
+    fn a_source_not_yet_answering_retries_soon() {
+        assert_eq!(next_wait(30.0, false, 0), 30.0, "the first poll is not a failure");
+        assert_eq!(next_wait(30.0, false, 1), 2.0);
+        assert_eq!(next_wait(30.0, false, 2), 4.0);
+        assert_eq!(next_wait(30.0, false, 5), 30.0, "never past its interval");
+        assert_eq!(next_wait(900.0, false, 40), 900.0);
+        assert_eq!(next_wait(30.0, true, 3), 30.0, "once it has answered, its own pace");
+        assert_eq!(next_wait(1.0, false, 1), 1.0);
+    }
 }
