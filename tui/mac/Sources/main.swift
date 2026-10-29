@@ -117,6 +117,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         window.setFrameAutosaveName("PVEStats dashboard")
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(terminal)
+        // The GPU (Metal) draws the grid when launched with
+        // `--args -GPURendering YES`; the CPU does otherwise, or if Metal
+        // can't start. Stderr says which.
+        if UserDefaults.standard.bool(forKey: "GPURendering") {
+            do { try terminal.setUseMetal(true) } catch { FileHandle.standardError.write(Data("metal: \(error)\n".utf8)) }
+        }
+        FileHandle.standardError.write(Data("renderer: \(terminal.isUsingMetalRenderer ? "gpu" : "cpu")\n".utf8))
 
         // 24-bit colour, which SwiftTerm draws: the dashboard picks its
         // full palette from COLORTERM.

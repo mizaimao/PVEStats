@@ -75,7 +75,10 @@ window has no title bar of its own: the dashboard's top row runs through
 it, level with the window's buttons, and leaves the columns under them bare
 (`--titlebar`). The dashboard takes no mouse input: no text selection,
 an arrow pointer, and a press anywhere moves the window. It redraws to
-fit when the window is resized; q, Esc or Cmd-Q closes it. It reads this
+fit when the window is resized; q, Esc or Cmd-Q closes it. The CPU draws
+the grid; `open "PVEStats Terminal.app" --args -GPURendering YES` has the
+GPU (Metal) draw it instead, which on 2026-10-29 took the window's CPU use
+from 2.7% to 1.2% of a core, at the same GPU use. It reads this
 repo's .env and config.yaml. The script builds both programs with their
 caches in the repo, on a Mac: macserver, not Frank's laptop unless he
 says so. The first run asks to let the app reach the local network, where
