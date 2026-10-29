@@ -31,16 +31,17 @@ final class DashboardView: LocalProcessTerminalView {
 }
 
 /// Over the whole dashboard, which takes no mouse input: its text is never
-/// selected, and the pointer stays an arrow rather than a text cursor.
+/// selected, the pointer stays an arrow rather than a text cursor, and a
+/// press anywhere moves the window.
 class Cover: NSView {
     override var mouseDownCanMoveWindow: Bool { false }
-    override func mouseDown(with event: NSEvent) {}
+    override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
     override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
 }
 
-/// Over the dashboard where a title bar would be: a press there moves the
-/// window, and a double click does what a title bar's does.
+/// Over the dashboard where a title bar would be: a double click there does
+/// what a title bar's does.
 final class TitleStrip: Cover {
     override var mouseDownCanMoveWindow: Bool { true }
 
