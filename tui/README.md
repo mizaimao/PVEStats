@@ -73,12 +73,13 @@ dashboard in a window of its own, a SwiftTerm terminal (tui/mac), so the
 Dock, the app switcher and the menu bar show PVEStats and its icon. The
 window has no title bar of its own: the dashboard's top row runs through
 it, level with the window's buttons, and leaves the columns under them bare
-(`--titlebar`); a press in that strip moves the window rather than
-selecting text. It redraws to fit when the window is resized; q, Esc or
-Cmd-Q closes it. It reads this repo's .env and config.yaml. The script
-builds both programs with their caches in the repo, on a Mac: macserver,
-not Frank's laptop unless he says so. The first run asks to let the app
-reach the local network, where the agents are.
+(`--titlebar`); a press in that strip moves the window. The dashboard
+takes no mouse input: no text selection, and an arrow pointer. It
+redraws to fit when the window is resized; q, Esc or Cmd-Q closes it. It
+reads this repo's .env and config.yaml. The script builds both programs
+with their caches in the repo, on a Mac: macserver, not Frank's laptop
+unless he says so. The first run asks to let the app reach the local
+network, where the agents are.
 
 ## Build
 

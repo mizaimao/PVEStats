@@ -30,10 +30,18 @@ final class DashboardView: LocalProcessTerminalView {
     }
 }
 
+/// Over the whole dashboard, which takes no mouse input: its text is never
+/// selected, and the pointer stays an arrow rather than a text cursor.
+class Cover: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func mouseDown(with event: NSEvent) {}
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
+}
+
 /// Over the dashboard where a title bar would be: a press there moves the
-/// window, and a double click does what a title bar's does, rather than
-/// selecting the text under it.
-final class TitleStrip: NSView {
+/// window, and a double click does what a title bar's does.
+final class TitleStrip: Cover {
     override var mouseDownCanMoveWindow: Bool { true }
 
     override func mouseDown(with event: NSEvent) {
@@ -91,6 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         terminal.frame = NSRect(x: 0, y: 0, width: grid.width, height: grid.height)
         terminal.autoresizingMask = [.width, .height]
         content.addSubview(terminal)
+        let cover = Cover(frame: content.bounds)
+        cover.autoresizingMask = [.width, .height]
+        content.addSubview(cover)
         // The title bar's height, or at least the top row's, kept for moving
         // the window.
         let bar = max(window.frame.height - window.contentLayoutRect.height, top + cell.height)
