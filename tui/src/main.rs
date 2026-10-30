@@ -1,6 +1,7 @@
 //! PVEStats in a terminal: the app's collector and cards, for an always-on
-//! screen such as a Linux text console. Display only; it changes nothing on
-//! any machine it watches.
+//! screen such as a Linux text console. With --serve, the same sources feed
+//! the web page instead (web/). Display only; it changes nothing on any
+//! machine it watches.
 
 mod config;
 mod format;
@@ -9,6 +10,7 @@ mod net;
 mod sources;
 mod state;
 mod ui;
+mod web;
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -45,6 +47,8 @@ Reads .env and config.yaml from the PVEStats folder.
   --titlebar COLUMNS  under a see-through title bar: leave the top row's first
                       COLUMNS bare for the window's buttons, and give the
                       terminal the theme's background (OSC 11) for the bar
+  --serve             serve the web page on 127.0.0.1 (DASHBOARD_PORT, 8080) from
+                      the same sources, instead of drawing here: the Mac app's window
 
 keys: f  GPU card alone / everything     up, down, j, k  scroll a narrow column
       q  quit";
@@ -60,10 +64,11 @@ struct Args {
     orbit: bool,
     themes: bool,
     titlebar: u16,
+    serve: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false, themes: false, titlebar: 0 };
+    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false, themes: false, titlebar: 0, serve: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or(format!("{arg} needs a value"));
@@ -91,6 +96,7 @@ fn parse_args() -> Result<Args, String> {
             "--orbit" => args.orbit = true,
             "--themes" => args.themes = true,
             "--titlebar" => args.titlebar = value()?.parse().map_err(|_| "bad --titlebar")?,
+            "--serve" => args.serve = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 exit(0);
@@ -123,7 +129,11 @@ fn main() {
     let config = Arc::new(config);
     let shared =
         Arc::new(Shared::new(config.window, config.pve_interval(), config.pve_agent_every, config.nas_agent_every));
-    start(&config, &shared);
+    if args.serve {
+        start(&config, &shared, false);
+        web::run(config, shared);
+    }
+    start(&config, &shared, true);
 
     let term = std::env::var("TERM").unwrap_or_default();
     let on_console = term == "linux" || term.starts_with("linux-");
@@ -179,8 +189,9 @@ fn main() {
     }
 }
 
-/// One thread per source, each on its own interval.
-fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
+/// One thread per source, each on its own interval. The web page has no
+/// forecast, so it goes without the weather.
+fn start(config: &Arc<Config>, shared: &Arc<Shared>, weather: bool) {
     let missing = || "not configured — see .env".to_string();
     if config.pve_configured() {
         // Whether the host agent answers now: PVE then skips the node
@@ -212,7 +223,7 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>) {
         let (mut router, s) = (Router::new(url), shared.clone());
         thread::spawn(move || run_poller(&s.router, sources::ROUTER_INTERVAL, || router.poll(&s.router)));
     }
-    if config.weather_configured() {
+    if weather && config.weather_configured() {
         let (mut weather, s) = (Weather::new(config.clone()), shared.clone());
         thread::spawn(move || run_poller(&s.weather, sources::WEATHER_INTERVAL, || weather.poll(&s.weather)));
     }

@@ -66,6 +66,7 @@ impl Agent {
             })
             .collect();
 
+        let can_unload = payload.get("can_unload").and_then(Value::as_bool).unwrap_or(false);
         let ram = ram(&payload);
         let ram = ram.filter(|r| r.total > 0.0);
         let (ram_used, ram_cached) = (ram.as_ref().map(Ram::used_pct), ram.as_ref().map(Ram::cached_pct));
@@ -81,7 +82,7 @@ impl Agent {
             source.push("ram.used", ram_used);
             source.push("ram.cached", ram_cached);
             source.push("host.cpu", cpu);
-            source.data = Some(AgentData { gpu: previous, models, ram, inside });
+            source.data = Some(AgentData { gpu: previous, models, can_unload, ram, inside });
             return Err(text(&payload, "error").unwrap_or("agent reported no GPU").to_string());
         };
 
@@ -133,7 +134,7 @@ impl Agent {
         // Programs and cache together: the line over the memory chart.
         source.push("ram.cached", ram_cached);
         source.push("host.cpu", cpu);
-        source.succeed(AgentData { gpu: Some(gpu), models, ram, inside });
+        source.succeed(AgentData { gpu: Some(gpu), models, can_unload, ram, inside });
         Ok(())
     }
 

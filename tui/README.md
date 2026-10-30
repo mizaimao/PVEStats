@@ -1,10 +1,10 @@
 # pvestats-tui
 
-The dashboard in a terminal, for an always-on screen. It is a Rust port of
-the app's collector (`pvestats/`) and cards (`static/js/cards.js`): the same
-sources, intervals, timeouts, stale and waiting rules, and the same `.env`
-and `config.yaml`. Display only; it has no Stop buttons and changes nothing
-on any machine it watches.
+The dashboard in a terminal, for an always-on screen, and the backend of the
+Mac app's window: with `--serve` it draws nothing and serves the page
+(`static/`) from the same sources instead (`src/web/`). It reads `.env` and
+`config.yaml`. Display only; it changes nothing on any machine it watches,
+except that the page's Stop buttons ask the ml60 agent to unload a model.
 
 One binary, about 3 MB. Running, it holds about 8 MB of memory and 0.1% of a
 CPU, and sends about 1.5 KB/s to the terminal.

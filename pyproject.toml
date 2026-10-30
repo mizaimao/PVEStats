@@ -1,8 +1,8 @@
-# The Mac side: collector, local server and window. Managed with tools/uv;
-# uv.lock pins every installed package by hash. One of them, proxy-tools
-# (via pywebview), exists only as a source release, so the first install
-# builds it, with the setuptools pinned below. The ml60 agent has its own
-# requirements in agent/, installed on ml60.
+# The Mac app's window (app.py); the dashboard program it shows is Rust
+# (tui/). Managed with tools/uv; uv.lock pins every installed package by
+# hash. One of them, proxy-tools (via pywebview), exists only as a source
+# release, so the first install builds it, with the setuptools pinned below.
+# The ml60 agent has its own requirements in agent/, installed on ml60.
 [project]
 name = "pvestats"
 version = "1.0"
@@ -10,9 +10,6 @@ description = "Read-only dashboard for a Proxmox VE host and its guests."
 # 3.11 or newer; .python-version picks 3.13.
 requires-python = ">=3.11"
 dependencies = [
-    "aiohttp>=3.9",
-    "PyYAML>=6.0",
-    "python-dotenv>=1.0",
     # Desktop window (app.py), in the OS's own webview: WKWebView on macOS,
     # WebView2 on Windows, WebKitGTK on Linux. Linux also needs system
     # packages; see README.
