@@ -18,8 +18,8 @@
 #      app's local settings (ui.json) stay behind.
 #   3. Streams the binary from the build machine to SCREEN_DIR/tui/bin and
 #      swaps it in with a rename, so the running copy is never overwritten.
-#   4. Stops the running dashboard. Its service (systemd, Restart=always)
-#      starts the new one two seconds later.
+#   4. Stops the running dashboard, paused or not. Its service (systemd,
+#      Restart=always) starts the new one two seconds later.
 #
 # It never uses sudo and never prints the contents of .env.
 
@@ -54,6 +54,8 @@ on_build "cat \"$B/tui/target/release/pvestats-tui\"" \
         && mv pvestats-tui.new pvestats-tui"
 
 echo "== restart"
-on_screen "pkill -x pvestats-tui || true; sleep 5; \
-    if pid=\$(pgrep -x pvestats-tui); then echo \"running again, pid \$pid\"; \
-    else echo 'not running: is its service installed? see tui/README.md'; exit 1; fi"
+# A dashboard paused by `tui/kiosk off` holds the TERM until it is continued,
+# so it gets a CONT too; and only a new process counts as restarted.
+on_screen "old=\$(pgrep -x pvestats-tui); pkill -x pvestats-tui; pkill -CONT -x pvestats-tui; sleep 5; \
+    if pid=\$(pgrep -x pvestats-tui) && [ \"\$pid\" != \"\$old\" ]; then echo \"running again, pid \$pid\"; \
+    else echo 'not restarted: is its service installed? see tui/README.md'; exit 1; fi"
