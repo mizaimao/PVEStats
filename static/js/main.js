@@ -119,7 +119,7 @@ function render(state) {
     seen.add(guest.vmid);
     let card = cards.get(guest.vmid);
     if (card && card.view !== guest.view) {
-      // Its view changed (config.yaml edited, server restarted under run.py):
+      // Its view changed (config.yaml edited, the dashboard program restarted):
       // a different kind of card.
       card.el.remove();
       card = null;

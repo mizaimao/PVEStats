@@ -59,11 +59,6 @@ agent/rust/target/
 agent/rust/.cargo-home/
 agent/bin/
 
-# The Rust server's build output, its cargo cache and the built program
-server/target/
-server/.cargo-home/
-server/bin/
-
 # The kiosk's screen-off window set from afar (tui/kiosk-remote), kept on the
 # screen machine across deploys
 tui/screen_off.local*

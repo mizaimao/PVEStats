@@ -1,6 +1,6 @@
-//! The local HTTP server, as pvestats/server.py. Binds 127.0.0.1 only; no
-//! authentication (spec §5). Serves the page and the collector's state;
-//! credentials stay in the collector and never reach the page.
+//! The web page's HTTP server. Binds 127.0.0.1 only; no authentication
+//! (spec §5). Serves the page and the sources' state; credentials stay in
+//! this process and never reach the page.
 //!
 //! One request per connection, then close; at most MAX_CONNECTIONS at once,
 //! each read with a deadline and a size cap.
@@ -15,10 +15,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::collector::Collector;
-use crate::config::{clean_ui, Config};
+use super::{page, settings, Web};
 use crate::net;
-use crate::sources::{lock, PVE_TIMEOUT};
 
 /// High enough that a web page holding idle sockets to 127.0.0.1 cannot
 /// crowd the dashboard out; each costs a parked thread at most.
@@ -30,14 +28,10 @@ const HEAD_LIMIT: usize = 16 * 1024;
 const BODY_LIMIT: usize = 64 * 1024;
 /// An unload waits for any generation in flight; the agent's own ceiling.
 const UNLOAD_TIMEOUT: Duration = Duration::from_secs(35);
-/// rrddata's timeframes, whitelisted so nothing from a query string reaches
-/// the PVE API unchecked.
-const TIMEFRAMES: [&str; 5] = ["day", "hour", "month", "week", "year"];
 
 struct Request {
     method: String,
     path: String,
-    query: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
@@ -51,16 +45,9 @@ impl Request {
     fn content_type(&self) -> String {
         self.header("content-type").and_then(|v| v.split(';').next()).unwrap_or("").trim().to_ascii_lowercase()
     }
-
-    fn query(&self, key: &str) -> Option<String> {
-        self.query.split('&').find_map(|pair| {
-            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            (decode(k) == key).then(|| decode(v))
-        })
-    }
 }
 
-/// %-decoding for query strings; `+` is a space.
+/// %-decoding for paths; `+` is a space.
 fn decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -122,7 +109,7 @@ fn reason(status: u16) -> &'static str {
     }
 }
 
-pub fn serve(listener: TcpListener, collector: Arc<Collector>) -> ! {
+pub fn serve(listener: TcpListener, web: Arc<Web>) -> ! {
     let active = Arc::new(AtomicUsize::new(0));
     loop {
         match listener.accept() {
@@ -131,7 +118,7 @@ pub fn serve(listener: TcpListener, collector: Arc<Collector>) -> ! {
                     continue; // closed at once, unread
                 }
                 active.fetch_add(1, Ordering::SeqCst);
-                let (c, a) = (Arc::clone(&collector), Arc::clone(&active));
+                let (c, a) = (Arc::clone(&web), Arc::clone(&active));
                 let spawned = thread::Builder::new().stack_size(512 * 1024).spawn(move || {
                     handle(&c, stream);
                     a.fetch_sub(1, Ordering::SeqCst);
@@ -179,14 +166,14 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
     let mut first = lines.next()?.split_whitespace();
     let method = first.next()?.to_string();
     let target = first.next()?;
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let path = target.split_once('?').map_or(target, |(path, _)| path);
     let headers: Vec<(String, String)> = lines
         .filter_map(|l| l.split_once(':'))
         .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
         .collect();
     let length: usize = headers.iter().find(|(k, _)| k == "content-length").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
     if length > BODY_LIMIT {
-        return Some(Request { method: "TOO-LARGE".into(), path: String::new(), query: String::new(), headers, body: Vec::new() });
+        return Some(Request { method: "TOO-LARGE".into(), path: String::new(), headers, body: Vec::new() });
     }
     let mut body = buf[body_at..].to_vec();
     body.truncate(length);
@@ -195,17 +182,17 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
         let n = read(stream, &mut chunk[..want], false)?;
         body.extend_from_slice(&chunk[..n]);
     }
-    Some(Request { method, path: path.to_string(), query: query.to_string(), headers, body })
+    Some(Request { method, path: path.to_string(), headers, body })
 }
 
-fn handle(collector: &Collector, mut stream: TcpStream) {
+fn handle(web: &Web, mut stream: TcpStream) {
     let Some(req) = read_request(&mut stream) else { return };
     let mut reply = if req.method == "TOO-LARGE" {
         Reply::text(413, "request too large")
     } else {
-        match own_page_only(&collector.config, &req) {
+        match own_page_only(web.config.port, &req) {
             Some(refusal) => refusal,
-            None => route(collector, &req),
+            None => route(web, &req),
         }
     };
     // Never inside another page: a hidden frame could turn two clicks on a
@@ -240,8 +227,7 @@ fn handle(collector: &Collector, mut stream: TcpStream) {
 /// Sec-Fetch-Site must say same-origin (or a top-level navigation to the
 /// page); writes must come from this origin and carry JSON. A request with
 /// neither header is a local process, which could reach anything here anyway.
-fn own_page_only(config: &Config, req: &Request) -> Option<Reply> {
-    let port = config.port;
+fn own_page_only(port: u16, req: &Request) -> Option<Reply> {
     let mut hosts = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     if port == 80 {
         // Browsers leave the default port out of Host and Origin.
@@ -272,16 +258,15 @@ fn own_page_only(config: &Config, req: &Request) -> Option<Reply> {
     None
 }
 
-fn route(c: &Collector, req: &Request) -> Reply {
+fn route(c: &Web, req: &Request) -> Reply {
     let get = matches!(req.method.as_str(), "GET" | "HEAD");
     let post = req.method == "POST";
     match req.path.as_str() {
         "/" if get => index(c),
-        "/api/state" if get => Reply::json(200, &c.snapshot()).no_store(),
-        "/api/ui" if get => Reply::json(200, &Value::Object(c.config.ui())).no_store(),
+        "/api/state" if get => Reply::json(200, &page::snapshot(&c.config, &c.shared)).no_store(),
+        "/api/ui" if get => Reply::json(200, &Value::Object(c.settings.current())).no_store(),
         "/api/ui" if post => save_ui(c, req),
         "/api/agent/unload" if post => unload(c, req),
-        p if get && p.starts_with("/api/history/") => history(c, req, &p["/api/history/".len()..]),
         p if get && p.starts_with("/static/") => static_file(&c.config.root.join("static"), &p["/static/".len()..]),
         "/" | "/api/state" | "/api/ui" | "/api/agent/unload" => Reply::text(405, "405: Method Not Allowed"),
         _ => Reply::text(404, "404: Not Found"),
@@ -291,8 +276,8 @@ fn route(c: &Collector, req: &Request) -> Reply {
 /// The page, with the saved appearance already on its <html> element, so
 /// the first paint is right with no client storage (pywebview's private
 /// mode wipes it at every launch).
-fn index(c: &Collector) -> Reply {
-    let ui = c.config.ui();
+fn index(c: &Web) -> Reply {
+    let ui = c.settings.current();
     let theme = ui.get("theme").and_then(Value::as_str).unwrap_or("ice");
     let glow = ui.get("glow").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.0, 3.0);
     let mut attrs = vec![format!("data-theme=\"{}\"", escape(theme)), format!("style=\"--glow-scale: {}\"", python_float(glow))];
@@ -324,19 +309,19 @@ fn escape(s: &str) -> String {
 
 /// Saves appearance settings: the one write the dashboard makes, and it
 /// lands on the Mac, never on a homelab disk (spec §3).
-fn save_ui(c: &Collector, req: &Request) -> Reply {
+fn save_ui(c: &Web, req: &Request) -> Reply {
     let Some(changes) = serde_json::from_slice::<Value>(&req.body).ok().filter(Value::is_object) else {
         return Reply::text(400, "expected a JSON object");
     };
     // Refused before anything is written: a bad window used to be saved and
     // then stop every later launch.
-    let clean = clean_ui(&changes);
-    let mut bad: Vec<&String> = changes.as_object().map_or(Vec::new(), |m| m.keys().filter(|k| Config::is_ui_key(k) && !clean.contains_key(*k)).collect());
+    let clean = settings::clean(&changes);
+    let mut bad: Vec<&String> = changes.as_object().map_or(Vec::new(), |m| m.keys().filter(|k| settings::is_key(k) && !clean.contains_key(*k)).collect());
     bad.sort();
     if !bad.is_empty() {
         return Reply::text(400, &format!("invalid value for {}", bad.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
     }
-    let saved = match c.config.save_ui(&changes) {
+    let saved = match c.settings.save(&changes) {
         Ok(s) => s,
         Err(e) => return Reply::text(500, &format!("could not save: {e}")),
     };
@@ -347,45 +332,10 @@ fn save_ui(c: &Collector, req: &Request) -> Reply {
     Reply::json(200, &Value::Object(saved))
 }
 
-/// PVE's rrddata for one guest, fetched when a card is expanded, never on
-/// the polling loop (spec §3.1).
-fn history(c: &Collector, req: &Request, vmid: &str) -> Reply {
-    let Ok(vmid) = vmid.parse::<u64>() else { return Reply::text(400, "vmid must be an integer") };
-    let timeframe = req.query("timeframe").unwrap_or_else(|| "hour".into());
-    if !TIMEFRAMES.contains(&timeframe.as_str()) {
-        return Reply::text(400, &format!("timeframe must be one of {}", TIMEFRAMES.join(", ")));
-    }
-    let (kind, node) = {
-        let pve = lock(&c.pve);
-        let kind = pve.data.get("guests").and_then(|g| g.get(vmid.to_string())).and_then(|g| g.get("type")).and_then(Value::as_str).map(str::to_string);
-        let node = pve.data.get("node").and_then(|n| n.get("name")).and_then(Value::as_str).filter(|n| !n.is_empty()).map(str::to_string);
-        (kind, node)
-    };
-    let (Some(kind), Some(node)) = (kind, node) else {
-        return Reply::text(404, &format!("vmid {vmid} is not a running guest"));
-    };
-    let url = format!("{}{}", c.config.pve_base(), crate::sources::pve::Pve::rrd_path(&node, &kind, vmid, &timeframe));
-    let started = Instant::now();
-    let http = net::http(net::self_signed_tls(), PVE_TIMEOUT);
-    let payload: Result<Value, String> = http
-        .get(&url)
-        .set("Authorization", &c.config.pve_auth_header())
-        .call()
-        .map_err(|e| net::describe(e, started))
-        .and_then(|r| r.into_json().map_err(|e| format!("unreadable reply: {e}")));
-    match payload {
-        Ok(p) => {
-            let data = p.get("data").filter(|d| !d.is_null()).cloned().unwrap_or_else(|| json!([]));
-            Reply::json(200, &json!({"vmid": vmid, "timeframe": timeframe, "data": data})).no_store()
-        }
-        Err(e) => Reply::text(502, &e),
-    }
-}
-
 /// Relays one "stop this model" request to the ml60 agent, which decides
 /// whether to honour it; only the model name crosses. Every answer is JSON
 /// in the agent's own shape, so the Stop button can read `error`.
-fn unload(c: &Collector, req: &Request) -> Reply {
+fn unload(c: &Web, req: &Request) -> Reply {
     let failed = |status: u16, message: &str| Reply::json(status, &json!({"ok": false, "error": message}));
     if !c.config.agent_configured() {
         return failed(503, "no ml60 agent configured");

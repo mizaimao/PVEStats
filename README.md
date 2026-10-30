@@ -12,6 +12,10 @@ hypervisor.
 
 ## Layout
 
+    tui/           the dashboard program (Rust): polls every source, and draws
+                   in a terminal or, with --serve, serves the page below
+    static/        the page: the Mac app's window shows it
+    app.py         the Mac app's window
     probe.py       dump raw source responses to captures/ (run this first)
     config.yaml    which guest gets which panel set
     .env           credentials, git-ignored
@@ -36,10 +40,14 @@ commit `uv.lock` with it. Never pip.
 
 ## Running it
 
+The window shows the page that the dashboard program serves, so build that
+first, on a Mac: `tui/make-mac-app` (macserver, or the laptop with Frank's OK).
+
     .venv/bin/python app.py
 
-Opens the dashboard in a native window and stops the collector when you close
-it. Not a launch agent, not a daemon — nothing runs when the window is shut.
+Opens the dashboard in a native window and stops the dashboard program when
+you close it. Not a launch agent, not a daemon: nothing runs when the window
+is shut.
 
 The window uses whatever webview the OS already provides — WKWebView on macOS,
 WebView2 on Windows, WebKitGTK on Linux. No browser engine is bundled and no
@@ -64,13 +72,13 @@ bindings, which no package index supplies:
 
 They belong to the system Python, where a uv-managed Python cannot see them,
 and `uv sync` here replaces any venv not built from a uv-managed Python. So
-on Linux serve to a browser with `run.py` (below), or build a venv by hand
+on Linux serve to a browser instead (below), or build a venv by hand
 from the system Python with `--system-site-packages` and install the
 dependencies into it yourself.
 
 To serve to an ordinary browser instead of a window:
 
-    .venv/bin/python run.py        # http://127.0.0.1:8080
+    tui/target/release/pvestats-tui --serve     # http://127.0.0.1:8080
 
 ## Probe first
 
@@ -80,8 +88,7 @@ the spec. Where they disagree, the live response wins.
     tools/uv run probe.py         # every source
     tools/uv run probe.py pve     # one source
 
-PVE and the agent need only the standard library; TrueNAS needs aiohttp,
-which the uv environment has.
+It needs only the standard library.
 
 ## In a terminal
 

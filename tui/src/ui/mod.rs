@@ -605,7 +605,7 @@ fn local_time() -> String {
 /// agent has them: the host's CPU, memory, load, uptime and threads, and
 /// each guest's CPU, network and uptime. Names, limits, guest memory,
 /// addresses and disk usage stay PVE's.
-fn overlay(pve: &PveData, host: Option<&HostData>) -> PveData {
+pub(crate) fn overlay(pve: &PveData, host: Option<&HostData>) -> PveData {
     let mut d = pve.clone();
     let Some(h) = host else { return d };
     d.node.cpu_pct = h.cpu_pct.or(d.node.cpu_pct);

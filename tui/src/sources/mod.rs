@@ -2,8 +2,8 @@
 //! interval. A source that fails sets its own error; the rest of the screen
 //! keeps working (spec §2). Every outbound call has a timeout (spec §7).
 //!
-//! Field handling follows the app's collector (pvestats/sources), which was
-//! written against captured responses.
+//! Field handling was written against captured responses. The terminal and
+//! the web page (web/) both draw from these sources.
 
 pub mod agent;
 pub mod host;
@@ -139,6 +139,7 @@ pub struct Node {
     pub loadavg: Vec<f64>,
     pub uptime: Option<f64>,
     pub pveversion: Option<String>,
+    pub cores: Option<u64>,
     pub cpus: Option<u64>,
     pub guests_running: usize,
     pub guests_total: usize,
@@ -205,6 +206,9 @@ pub struct AgentData {
     /// None while NVML is failing on ml60; the models still come through.
     pub gpu: Option<Gpu>,
     pub models: Vec<Model>,
+    /// Whether the agent stops a model on request: absent on an agent that
+    /// predates its unload endpoint, and then the page shows no Stop buttons.
+    pub can_unload: bool,
     /// ml60's memory as ml60 itself sees it; None from an agent that does
     /// not report it.
     pub ram: Option<Ram>,

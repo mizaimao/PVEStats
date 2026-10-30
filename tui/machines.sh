@@ -57,6 +57,5 @@ pack() {
         --exclude ./pve/agent/target --exclude ./pve/agent/.cargo-home --exclude ./pve/bin \
         --exclude ./nas/agent/target --exclude ./nas/agent/.cargo-home --exclude ./nas/bin \
         --exclude ./agent/rust/target --exclude ./agent/rust/.cargo-home --exclude ./agent/bin \
-        --exclude ./server/target --exclude ./server/.cargo-home --exclude ./server/bin \
         --exclude __pycache__ --exclude .DS_Store --exclude '*.jpg' "$@")
 }

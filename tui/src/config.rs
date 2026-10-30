@@ -64,6 +64,12 @@ pub struct Config {
     /// Made-up Ollama models and GPU processes on ml60's card, to see how
     /// a busy GPU lays out: config.yaml, `tui: demo: true`, or --demo.
     pub demo: bool,
+    /// The web page's port on 127.0.0.1 with --serve: DASHBOARD_PORT in
+    /// .env, 8080 when unset.
+    pub port: u16,
+    /// config.yaml's `ui:` block as written, for the web page's settings
+    /// (web/settings.rs), which ui.json overrides.
+    pub ui: serde_json::Value,
 }
 
 impl Config {
@@ -106,6 +112,10 @@ impl Config {
             .filter(|v| v.is_finite())
             .unwrap_or(180.0)
             .clamp(30.0, 3600.0);
+        let port = match var("DASHBOARD_PORT").as_str() {
+            "" => 8080,
+            p => p.parse().map_err(|_| format!("DASHBOARD_PORT is not a port: {p}"))?,
+        };
 
         Ok(Config {
             root: root.to_path_buf(),
@@ -137,6 +147,8 @@ impl Config {
                 .and_then(|v| v.as_f64())
                 .filter(|v| v.is_finite() && *v > 0.0)
                 .unwrap_or(0.0),
+            port,
+            ui: ui.and_then(|u| serde_json::to_value(u).ok()).unwrap_or_default(),
         })
     }
 

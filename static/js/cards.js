@@ -639,8 +639,9 @@ export const nodeCard = (() => {
       const spark = new Spark(
         [{ key: "node.cpu", color: "var(--series-1)", label: "CPU" }],
         { format: fmt.pct, unit: "%", domain: [0, 100], axis: true, height: 84,
-          // PVE polls every 10s; without this the caption and any time ticks
-          // would read the buffer as one sample per second.
+          // Set from the source on every update: the host agent every 2 s,
+          // or PVE's API every 10 s without it. Without it the caption and
+          // time ticks would read the buffer as one sample per second.
           xTicks: true, secondsPerSample: 10, caption: "Host CPU" });
 
       const error = el("div", "card-error");
@@ -657,6 +658,7 @@ export const nodeCard = (() => {
     built.mem.set(node.maxmem ? node.mem / node.maxmem : 0,
       fmt.pctText(node.maxmem ? (node.mem / node.maxmem) * 100 : null),
       null, `${fmt.gib(node.mem)} / ${fmt.gib(node.maxmem)} GiB`);
+    built.spark.secondsPerSample = (status && status.interval) || 10;
     built.spark.update(history, status && status.capacity);
     // The card has no CPU tile (spec §4.1 lists CPU % first), so the current
     // figure goes on the chart's caption line rather than only under hover.

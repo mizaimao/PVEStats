@@ -100,6 +100,23 @@ impl<T> Source<T> {
         self.series.get(key)
     }
 
+    /// Every series by name, for the web page's charts (web/page.rs).
+    pub fn all_series(&self) -> impl Iterator<Item = (&String, &Series)> {
+        self.series.iter()
+    }
+
+    /// Change how much history is kept, keeping the newest samples: the web
+    /// page's "window" setting.
+    pub fn resize(&mut self, history_seconds: f64) {
+        let maxlen = ((history_seconds / self.interval).round() as usize).max(2);
+        self.maxlen = maxlen;
+        for buf in self.series.values_mut() {
+            while buf.len() > maxlen {
+                buf.pop_front();
+            }
+        }
+    }
+
     /// Append one sample to a named ring buffer.
     ///
     /// None marks a gap in a series that already exists, so series drawn on
