@@ -4,7 +4,6 @@
     tools/uv run --group icon tools/render_icon.py --preview
     tools/uv run --group icon tools/render_icon.py --value 0.72 --size 1024 -o icon.png
     tools/uv run --group icon tools/render_icon.py --icns     # assets/AppIcon.icns
-    tools/uv run --group icon tools/render_icon.py --art      # assets/AppIcon.icon art
 
 Pillow lives in the `icon` dependency group, so the app's own .venv does not
 carry it; `--group icon` brings it in for the run. PNGs land in icons/
@@ -170,8 +169,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--icns", action="store_true",
                         help="write assets/AppIcon.icns")
-    parser.add_argument("--art", action="store_true",
-                        help="write the square artwork of assets/AppIcon.icon")
     parser.add_argument("--value", type=float, default=0.72)
     parser.add_argument("--size", type=int, default=1024)
     parser.add_argument("--ticks", type=int, default=9)
@@ -187,15 +184,6 @@ def main():
                          ticks=args.ticks)
         print(f"wrote {out.relative_to(ROOT)} "
               f"({out.stat().st_size // 1024} KB)")
-        return
-
-    # macOS 26 masks and sizes the artwork itself (tools/app-icon), so this
-    # is the full, opaque square, without the rounded corners or the inset.
-    if args.art:
-        out = ROOT / "assets" / "AppIcon.icon" / "Assets" / "gauge.png"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        draw_icon(1024, 0.28 if args.value == 0.72 else args.value, args.ticks).save(out)
-        print(f"wrote {out.relative_to(ROOT)}")
         return
 
     if args.preview:

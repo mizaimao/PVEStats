@@ -54,10 +54,6 @@ exec "$REPO/launch.command"
 LAUNCHER
 
 chmod +x "$APP/Contents/MacOS/PVEStats" "$REPO/launch.command"
-# The icon macOS 26 draws at full size, beside the .icns (tools/app-icon),
-# then signed ad hoc as a whole, so macOS treats the bundle as one app.
-"$REPO/tools/app-icon" "$APP" 11.0
-codesign --force --deep --sign - "$APP" 2>/dev/null
 
 echo "Built $APP"
 echo
