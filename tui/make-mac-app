@@ -60,6 +60,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 
 chmod 755 "$app/Contents/MacOS/PVEStatsTerminal" "$app/Contents/Resources/pvestats-tui"
+# The icon macOS 26 draws at full size, beside the .icns (tools/app-icon).
+"$repo/tools/app-icon" "$app" 13.0
 # Signed ad hoc as a whole, so macOS treats the bundle as one app.
 codesign --force --deep --sign - "$app" 2>/dev/null
 echo "built $app"
