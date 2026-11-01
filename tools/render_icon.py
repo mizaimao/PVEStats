@@ -3,7 +3,12 @@
 
     tools/uv run --group icon tools/render_icon.py --preview
     tools/uv run --group icon tools/render_icon.py --value 0.72 --size 1024 -o icon.png
-    tools/uv run --group icon tools/render_icon.py --icns     # assets/AppIcon.icns
+    tools/uv run --group icon tools/render_icon.py --icns     # icons/AppIcon.icns
+
+assets/AppIcon.icns no longer comes from here: since 2026-11-01 it is the
+moose-icons repo's (icons/pvestats; its ./build makes built/pvestats.icns),
+this gauge 60 px lower on Apple's macOS 26 grid, as Frank picked. --icns
+writes the old 856-tile version to icons/ (git-ignored), not over it.
 
 Pillow lives in the `icon` dependency group, so the app's own .venv does not
 carry it; `--group icon` brings it in for the run. PNGs land in icons/
@@ -168,7 +173,7 @@ def build_icns(out_path, value=0.28, ticks=9):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--icns", action="store_true",
-                        help="write assets/AppIcon.icns")
+                        help="write icons/AppIcon.icns (the old gauge; the app's icon is moose-icons')")
     parser.add_argument("--value", type=float, default=0.72)
     parser.add_argument("--size", type=int, default=1024)
     parser.add_argument("--ticks", type=int, default=9)
@@ -179,7 +184,7 @@ def main():
     args = parser.parse_args()
 
     if args.icns:
-        out = build_icns(ROOT / "assets" / "AppIcon.icns",
+        out = build_icns(ROOT / "icons" / "AppIcon.icns",
                          value=0.28 if args.value == 0.72 else args.value,
                          ticks=args.ticks)
         print(f"wrote {out.relative_to(ROOT)} "
