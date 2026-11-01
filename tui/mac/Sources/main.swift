@@ -1,120 +1,40 @@
 // The window: a SwiftTerm terminal running the dashboard that sits beside
 // this program in the app's Resources, on the repo the app was built from
-// (Info.plist, PVEStatsRoot). The dashboard redraws itself whenever the
-// window is resized; quitting it (q or Esc) quits the app, and quitting the
-// app (Cmd-Q, or closing the window) ends the dashboard. The window has no
-// title bar of its own: the dashboard's top row runs through it, beside the
-// window's buttons. The Theme menu saves the chosen theme in the repo's
+// (Info.plist, PVEStatsRoot). The window is TermKit's (moose-term), as in
+// every terminal app of Frank's. The dashboard's top row runs through the
+// title bar, level with the window's buttons; it takes no mouse input, so a
+// press anywhere moves the window. It redraws itself whenever the window is
+// resized and draws nothing while the window can't be seen; quitting it (q
+// or Esc) quits the app, and quitting the app (Cmd-Q, or closing the window)
+// ends the dashboard. The Theme menu saves the chosen theme in the repo's
 // ui.json, where the dashboard takes it up within a second.
 
 import AppKit
-import SwiftTerm
+import TermKit
 
 /// Columns and rows the window opens at: the dashboard's full layout.
 let openCols = 190
 let openRows = 50
 
-/// Over the whole dashboard, which takes no mouse input: its text is never
-/// selected, the pointer stays an arrow rather than a text cursor, and a
-/// press anywhere moves the window.
-class Cover: NSView {
-    override var mouseDownCanMoveWindow: Bool { false }
-    override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
-    override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
-}
-
-/// Over the dashboard where a title bar would be: a double click there does
-/// what a title bar's does.
-final class TitleStrip: Cover {
-    override var mouseDownCanMoveWindow: Bool { true }
-
-    override func mouseDown(with event: NSEvent) {
-        guard let window else { return }
-        guard event.clickCount == 2 else {
-            window.performDrag(with: event)
-            return
-        }
-        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
-        case "Minimize": window.performMiniaturize(nil)
-        case "None": break
-        default: window.performZoom(nil)
-        }
-    }
-}
-
 final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
-    private var window: NSWindow!
-    private var terminal: LocalProcessTerminalView!
-    private var background: NSColor?
+    private var term: TermWindow!
+    private var terminal: TermView!
     private let dashboard = (Bundle.main.resourceURL ?? URL(fileURLWithPath: "."))
         .appendingPathComponent("pvestats-tui").path
     private let root = Bundle.main.object(forInfoDictionaryKey: "PVEStatsRoot") as? String ?? ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.mainMenu = mainMenu(themes: themeMenu())
+        NSApp.mainMenu = mainMenu(app: "PVEStats", edit: [], menus: [themeMenu()])
 
-        terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        terminal = TermView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         terminal.processDelegate = self
-        // One cell's size, from the grid's at two widths.
-        terminal.resize(cols: openCols + 10, rows: openRows)
-        let wider = terminal.getOptimalFrameSize().size
-        terminal.resize(cols: openCols, rows: openRows)
-        let grid = terminal.getOptimalFrameSize().size
-        let cell = NSSize(width: (wider.width - grid.width) / 10, height: grid.height / CGFloat(openRows))
-
-        // No title bar of its own: the dashboard's top row runs through it,
-        // beside the window's buttons.
-        window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: grid),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "PVEStats"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.titlebarSeparatorStyle = .none
-        let (top, corner) = buttonRoom(cell: cell)
-
-        // The grid starts low enough for its top row to sit level with the
-        // buttons; the strip above it shows the window's background, which
-        // follows the dashboard's.
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: grid.width, height: top + grid.height))
-        terminal.frame = NSRect(x: 0, y: 0, width: grid.width, height: grid.height)
-        terminal.autoresizingMask = [.width, .height]
-        content.addSubview(terminal)
-        let cover = Cover(frame: content.bounds)
-        cover.autoresizingMask = [.width, .height]
-        content.addSubview(cover)
-        // The title bar's height, or at least the top row's, kept for moving
-        // the window.
-        let bar = max(window.frame.height - window.contentLayoutRect.height, top + cell.height)
-        let strip = TitleStrip(frame: NSRect(x: 0, y: content.frame.height - bar, width: grid.width, height: bar))
-        strip.autoresizingMask = [.width, .minYMargin]
-        content.addSubview(strip)
-        window.contentView = content
-        // The strip takes the dashboard's background colour (OSC 11).
-        // SwiftTerm doesn't say when that changes under the GPU renderer, so
-        // it is looked at twice a second.
-        followBackground()
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.followBackground() }
-        }
-        window.setFrame(NSRect(origin: .zero, size: content.frame.size), display: false)
-        window.center()
-        window.setFrameAutosaveName("PVEStats dashboard")
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(terminal)
-        // The GPU (Metal) draws the grid: half the CPU's load (MOO-205). The
-        // CPU does when launched with `--args -GPURendering NO`, or if Metal
-        // can't start. Stderr says which.
-        UserDefaults.standard.register(defaults: ["GPURendering": true])
-        if UserDefaults.standard.bool(forKey: "GPURendering") {
-            do { try terminal.setUseMetal(true) } catch { FileHandle.standardError.write(Data("metal: \(error)\n".utf8)) }
-        }
-        FileHandle.standardError.write(Data("renderer: \(terminal.isUsingMetalRenderer ? "gpu" : "cpu")\n".utf8))
+        // Its own font, the system's monospaced one; the dashboard paints
+        // every cell.
+        term = TermWindow(title: "PVEStats", terminal: terminal, look: GhosttyLook(), cols: openCols, rows: openRows,
+                          layout: .besideButtons)
+        term.dragsFromAnywhere = true
+        term.reportsShown = true
+        term.show(saveAs: "PVEStats dashboard")
 
         // 24-bit colour, which SwiftTerm draws: the dashboard picks its
         // full palette from COLORTERM.
@@ -122,34 +42,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         environment.append("COLORTERM=truecolor")
         terminal.startProcess(
             executable: dashboard,
-            args: ["--root", root, "--titlebar", String(corner)],
+            args: ["--root", root, "--titlebar", String(term.corner)],
             environment: environment,
             execName: "pvestats-tui"
         )
+        term.started()
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func followBackground() {
-        let color = terminal.nativeBackgroundColor
-        guard color != background else { return }
-        background = color
-        window.backgroundColor = color
-    }
-
-    /// How far down the grid starts, for its top row to be level with the
-    /// window's buttons, and how many of that row's columns the buttons cover.
-    private func buttonRoom(cell: NSSize) -> (top: CGFloat, corner: Int) {
-        window.layoutIfNeeded()
-        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
-            .compactMap { window.standardWindowButton($0) }
-            .map { $0.convert($0.bounds, to: nil) }
-        guard let first = buttons.first, let right = buttons.map(\.maxX).max(), right > 0 else {
-            return (0, 0)
-        }
-        let middle = window.frame.height - first.midY
-        let top = max(0, (middle - cell.height / 2).rounded())
-        // A little space after the last button.
-        return (top, Int(((right + 6) / cell.width).rounded(.up)))
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -201,7 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
     }
 
     /// Saves the theme in ui.json, keeping whatever else is there (the
-    /// browser app's settings); the dashboard takes it up within a second.
+    /// browser app's settings); the dashboard takes it up within a second,
+    /// and the strip above it follows.
     @objc private func chooseTheme(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
         let file = URL(fileURLWithPath: root).appendingPathComponent("ui.json")
@@ -220,31 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         for item in sender.menu?.items ?? [] {
             item.state = item === sender ? .on : .off
         }
+        term.followBackgroundSoon()
     }
-}
-
-/// The app menu, so Cmd-Q and Cmd-W work, named after the app, then the
-/// themes and the window.
-@MainActor
-func mainMenu(themes: NSMenu) -> NSMenu {
-    let menu = NSMenu()
-    let appItem = NSMenuItem()
-    menu.addItem(appItem)
-    let appMenu = NSMenu()
-    appMenu.addItem(withTitle: "Hide PVEStats", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-    appMenu.addItem(.separator())
-    appMenu.addItem(withTitle: "Quit PVEStats", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-    appItem.submenu = appMenu
-    let themeItem = NSMenuItem()
-    menu.addItem(themeItem)
-    themeItem.submenu = themes
-    let windowItem = NSMenuItem()
-    menu.addItem(windowItem)
-    let windowMenu = NSMenu(title: "Window")
-    windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-    windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-    windowItem.submenu = windowMenu
-    return menu
 }
 
 MainActor.assumeIsolated {
