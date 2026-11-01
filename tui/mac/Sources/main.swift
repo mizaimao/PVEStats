@@ -29,8 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         terminal = TermView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         terminal.processDelegate = self
         // Its own font, the system's monospaced one; the dashboard paints
-        // every cell.
-        term = TermWindow(title: "PVEStats", terminal: terminal, look: GhosttyLook(), cols: openCols, rows: openRows,
+        // every cell. Full screen as Ghostty's settings have it, as in the
+        // other apps.
+        var look = GhosttyLook()
+        look.nonNativeFullScreen = GhosttyLook.load().nonNativeFullScreen
+        term = TermWindow(title: "PVEStats", terminal: terminal, look: look, cols: openCols, rows: openRows,
                           layout: .besideButtons)
         term.dragsFromAnywhere = true
         term.reportsShown = true
