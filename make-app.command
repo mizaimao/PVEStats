@@ -9,13 +9,12 @@ set -e
 REPO="$(cd "$(dirname "$0")" && pwd)"
 APP="$REPO/PVEStats.app"
 
-# Regenerate the icon if it is missing; otherwise reuse the committed one, so
-# building the app does not need Pillow. Settled before the old bundle goes:
-# a failure here used to leave no app at all.
+# The icon is the committed assets/AppIcon.icns, made by the moose-icons repo
+# (icons/pvestats; Frank's pick of 2026-11-01). Checked before the old bundle
+# goes: a failure here used to leave no app at all.
 if [ ! -f "$REPO/assets/AppIcon.icns" ]; then
-  "$REPO/tools/uv" run --group icon "$REPO/tools/render_icon.py" --icns || {
-    echo "No icon at assets/AppIcon.icns, and rendering one failed."
-    read -r -p "Press return to close."; exit 1; }
+  echo "No icon at assets/AppIcon.icns: copy ~/Projects/moose-icons/built/pvestats.icns there."
+  read -r -p "Press return to close."; exit 1
 fi
 
 rm -rf "$APP"
