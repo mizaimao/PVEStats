@@ -71,12 +71,18 @@ which Frank installs with sudo from a reviewed commit (MOO-200).
 `tui/make-mac-app` builds `PVEStats Terminal.app` in the repo root: the
 dashboard in a window of its own, a SwiftTerm terminal (tui/mac), so the
 Dock, the app switcher and the menu bar show PVEStats and its icon. The
+window is TermKit's, from the moose-term repo (`~/Projects/moose-term`,
+which tui/mac depends on by path), as every terminal app of Frank's is:
+frames capped at 60 a second, the View menu's text size and full screen,
+and reports of the window hidden or shown (CSI O, CSI I), on which the
+dashboard stops drawing until it shows again. The
 window has no title bar of its own: the dashboard's top row runs through
 it, level with the window's buttons, and leaves the columns under them bare
 (`--titlebar`). The dashboard takes no mouse input: no text selection,
 an arrow pointer, and a press anywhere moves the window. It redraws to
-fit when the window is resized; q, Esc or Cmd-Q closes it. The GPU (Metal)
-draws the grid, at about half the CPU's load (MOO-205);
+fit when the window is resized; q, Esc or Cmd-Q closes it. Each frame
+goes to the terminal in one write, inside synchronized output (mode 2026).
+The GPU (Metal) draws the grid, at about half the CPU's load (MOO-205);
 `open "PVEStats Terminal.app" --args -GPURendering NO` has the CPU draw it
 instead. It reads this
 repo's .env and config.yaml. The script builds both programs with their

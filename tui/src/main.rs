@@ -237,8 +237,50 @@ fn start(config: &Arc<Config>, shared: &Arc<Shared>, weather: bool) {
     }
 }
 
+/// Synchronized output: the terminal shows a frame only once it has all of
+/// it, so it draws once per frame rather than once per piece.
+const FRAME_BEGIN: &[u8] = b"\x1b[?2026h";
+const FRAME_END: &[u8] = b"\x1b[?2026l";
+
+/// Standard output through a 64 KiB buffer that goes out when a frame's
+/// end (FRAME_END) is written, and not before: ratatui flushes partway (to
+/// hide the cursor), which would split a frame in two writes.
+struct Out<W: Write>(io::BufWriter<W>);
+
+impl<W: Write> Write for Out<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let n = self.0.write(bytes)?;
+        if bytes == FRAME_END {
+            self.0.flush()?;
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// As ratatui::init, but writing through Out.
+fn open_tty() -> io::Result<Terminal<ratatui::backend::CrosstermBackend<Out<io::Stdout>>>> {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        ratatui::restore();
+        hook(info);
+    }));
+    ratatui::crossterm::terminal::enable_raw_mode()?;
+    ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::terminal::EnterAlternateScreen)?;
+    let out = Out(io::BufWriter::with_capacity(64 * 1024, io::stdout()));
+    Terminal::new(ratatui::backend::CrosstermBackend::new(out))
+}
+
 fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io::Result<()> {
-    let mut terminal = ratatui::init();
+    let mut terminal = open_tty()?;
+    // Whether the window shows: the Mac app reports it hidden (covered,
+    // minimised, the screen locked) or shown again as focus reports, CSI O
+    // and CSI I, and nothing is drawn meanwhile. The dashboard never asks a
+    // terminal for real ones (mode 1004), so a screen elsewhere sends none.
+    let mut shown = true;
     let mut power = Power::new(config);
     let mut touring = Touring::new(config.tour);
     let mut theme_file = ThemeFile::new(&config.root);
@@ -254,20 +296,36 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io
         let look = touring.look(chosen.as_ref().unwrap_or(base), screen);
         let wanted = set_background(look.p.plane).filter(|code| screen.corner > 0 && background.as_ref() != Some(code));
         if let Some(code) = wanted {
-            terminal.backend_mut().write_all(code.as_bytes())?;
-            terminal.backend_mut().flush()?;
+            print!("{code}");
+            io::stdout().flush()?;
             background = Some(code);
         }
-        terminal.draw(|frame| {
-            let area = frame.area();
-            screen.draw(frame.buffer_mut(), area, shared, config, look);
-        })?;
-        // Redraw every second, the agent's pace, or at once on a key or a
-        // resize. Only changed cells are sent, so an idle screen costs little.
+        if shown {
+            terminal.backend_mut().write_all(FRAME_BEGIN)?;
+            terminal.draw(|frame| {
+                let area = frame.area();
+                screen.draw(frame.buffer_mut(), area, shared, config, look);
+            })?;
+            terminal.backend_mut().write_all(FRAME_END)?;
+        }
+        // Redraw every second, the agent's pace, or at once on a key, a
+        // resize or the window shown. Only changed cells are sent, so an
+        // idle screen costs little.
         if !event::poll(Duration::from_secs(1))? {
             continue;
         }
-        let Event::Key(key) = event::read()? else { continue };
+        let key = match event::read()? {
+            Event::Key(key) => key,
+            Event::FocusLost => {
+                shown = false;
+                continue;
+            }
+            Event::FocusGained => {
+                shown = true;
+                continue;
+            }
+            _ => continue,
+        };
         if key.kind != KeyEventKind::Press {
             continue;
         }
@@ -474,6 +532,18 @@ fn outputs(text: &str) -> Vec<(&str, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_frame_goes_out_in_one_write() {
+        use std::io::Write;
+        let mut out = super::Out(std::io::BufWriter::new(Vec::new()));
+        out.write_all(super::FRAME_BEGIN).unwrap();
+        out.write_all(b"cells").unwrap();
+        out.flush().unwrap();
+        assert!(out.0.get_ref().is_empty(), "held through ratatui's flush");
+        out.write_all(super::FRAME_END).unwrap();
+        assert_eq!(out.0.get_ref().len(), super::FRAME_BEGIN.len() + 5 + super::FRAME_END.len());
+    }
+
     #[test]
     fn the_title_bar_background() {
         use ratatui::style::Color;
