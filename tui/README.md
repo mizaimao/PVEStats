@@ -74,6 +74,7 @@ Dock, the app switcher and the menu bar show PVEStats and its icon. The
 window is TermKit's, from the moose-term repo (`~/Projects/moose-term`,
 which tui/mac depends on by path), as every terminal app of Frank's is:
 frames capped at 60 a second, the View menu's text size and full screen,
+Settings… (Cmd-,) for the window's settings (`~/.config/pvestats-terminal/term.conf`),
 and reports of the window hidden or shown (CSI O, CSI I), on which the
 dashboard stops drawing until it shows again. The
 window has no title bar of its own: the dashboard's top row runs through

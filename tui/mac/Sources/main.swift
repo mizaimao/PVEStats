@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
         // other apps.
         var look = GhosttyLook()
         look.nonNativeFullScreen = GhosttyLook.load().nonNativeFullScreen
-        term = TermWindow(title: "PVEStats", terminal: terminal, look: look, cols: openCols, rows: openRows,
+        term = TermWindow(title: "PVEStats", project: "pvestats-terminal", terminal: terminal, look: look, cols: openCols, rows: openRows,
                           layout: .besideButtons)
         term.dragsFromAnywhere = true
         term.reportsShown = true
