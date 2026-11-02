@@ -16,7 +16,7 @@ import TermKit
 let openCols = 190
 let openRows = 50
 
-final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, LocalProcessTerminalViewDelegate {
     private var term: TermWindow!
     private var terminal: TermView!
     private let dashboard = (Bundle.main.resourceURL ?? URL(fileURLWithPath: "."))
@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
                           layout: .besideButtons)
         term.dragsFromAnywhere = true
         term.reportsShown = true
+        // The settings panel (Cmd-,): the dashboard's theme, in the repo's
+        // ui.json, shared with the browser version, where the Theme menu
+        // saves it too.
+        term.appFileElsewhere = URL(fileURLWithPath: root).appendingPathComponent("ui.json")
+        term.appFields = ["app|theme|Theme|dropdown:" + themes().map(\.name).joined(separator: ",")]
         term.show(saveAs: "PVEStats dashboard")
 
         // 24-bit colour, which SwiftTerm draws: the dashboard picks its
@@ -119,10 +124,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalVi
             NSSound.beep()
             return
         }
-        for item in sender.menu?.items ?? [] {
-            item.state = item === sender ? .on : .off
-        }
         term.followBackgroundSoon()
+    }
+
+    /// The Theme menu's tick, from ui.json each time the menu shows, as the
+    /// settings panel or the browser version may have changed it.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(chooseTheme(_:)) {
+            let file = URL(fileURLWithPath: root).appendingPathComponent("ui.json")
+            let saved = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            item.state = item.representedObject as? String == saved?["theme"] as? String ? .on : .off
+        }
+        return true
     }
 }
 
