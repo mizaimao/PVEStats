@@ -11,8 +11,11 @@ __pycache__/
 .venv/
 venv/
 
-# Generated app bundle — build it with make-app.command
+# The Mac app — build it with app/make-app
 PVEStats.app/
+# Its window's build output and cargo cache
+app/target/
+app/.cargo-home/
 # The terminal dashboard as a Mac app — build it with tui/make-mac-app
 PVEStats Terminal.app/
 

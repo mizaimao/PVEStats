@@ -15,7 +15,7 @@ hypervisor.
     tui/           the dashboard program (Rust): polls every source, and draws
                    in a terminal or, with --serve, serves the page below
     static/        the page: the Mac app's window shows it
-    app.py         the Mac app's window
+    app/           the Mac app's window (Rust), PVEStats.app
     probe.py       dump raw source responses to captures/ (run this first)
     config.yaml    which guest gets which panel set
     .env           credentials, git-ignored
@@ -26,57 +26,30 @@ hypervisor.
 Prerequisites are performed by the operator, not the build — see spec §6 for
 the PVE token and TrueNAS API key.
 
-Python and every package come from `tools/uv`, which keeps uv, the Python it
-manages and its cache in `.tools/` (git-ignored). Nothing depends on pyenv,
-Homebrew or the system Python. `uv.lock` pins every installed package by
-hash; one of them, proxy-tools, ships only as source and is built on first
-install with a pinned setuptools. `.python-version` picks 3.13.
-
-    tools/uv sync             # fetches uv, Python and packages on first run
     cp .env.example .env      # then fill it in
 
-Add or change a dependency in `pyproject.toml`, then `tools/uv lock` and
-commit `uv.lock` with it. Never pip.
+Python is only for `probe.py` (below) and redrawing the icon. It comes from
+`tools/uv`, which keeps uv, the Python it manages and its cache in `.tools/`
+(git-ignored). Nothing depends on pyenv, Homebrew or the system Python.
+`uv.lock` pins every installed package by hash; `.python-version` picks
+3.13. Add or change a dependency in `pyproject.toml`, then `tools/uv lock`
+and commit `uv.lock` with it. Never pip.
 
 ## Running it
 
-The window shows the page that the dashboard program serves, so build that
-first, on a Mac: `tui/make-mac-app` (macserver, or the laptop with Frank's OK).
+**macOS.** Build `PVEStats.app` in this folder on a Mac, macserver (or the
+laptop with Frank's OK), then double-click it here or drag it to the Dock:
 
-    .venv/bin/python app.py
+    app/make-app
 
-Opens the dashboard in a native window and stops the dashboard program when
-you close it. Not a launch agent, not a daemon: nothing runs when the window
-is shut.
+It is one program, `app/` (Rust): it starts the dashboard program (`tui/`,
+inside the app) with `--serve` and shows the page it serves in a window,
+drawn by WKWebView, the web engine macOS already has. Closing the window or
+quitting ends the dashboard program too. Not a launch agent, not a daemon:
+nothing runs when the window is shut. The app reads `.env` and
+`config.yaml` from the folder it sits in, and writes nothing outside it.
 
-The window uses whatever webview the OS already provides — WKWebView on macOS,
-WebView2 on Windows, WebKitGTK on Linux. No browser engine is bundled and no
-particular browser needs to be installed.
-
-**macOS.** Double-click `launch.command`. Or run `make-app.command` once to
-build `PVEStats.app` in this folder, and double-click that instead — it is
-git-ignored and nothing is written outside the project. Re-run it if you move
-the repo.
-
-`tools/uv` pins the Apple silicon build of uv. Elsewhere, install uv your own
-way and run `uv sync`.
-
-**Windows.** `uv run app.py`. WebView2 ships with Windows 11 and current
-Windows 10; otherwise install the Evergreen runtime from Microsoft.
-
-**Linux.** Untested with the uv setup. The window needs the WebKitGTK
-bindings, which no package index supplies:
-
-    sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1   # Debian/Ubuntu
-    sudo dnf install python3-gobject webkit2gtk4.1                    # Fedora
-
-They belong to the system Python, where a uv-managed Python cannot see them,
-and `uv sync` here replaces any venv not built from a uv-managed Python. So
-on Linux serve to a browser instead (below), or build a venv by hand
-from the system Python with `--system-site-packages` and install the
-dependencies into it yourself.
-
-To serve to an ordinary browser instead of a window:
+**Elsewhere,** or to an ordinary browser instead of a window:
 
     tui/target/release/pvestats-tui --serve     # http://127.0.0.1:8080
 
