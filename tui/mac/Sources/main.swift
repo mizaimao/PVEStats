@@ -7,7 +7,8 @@
 // resized and draws nothing while the window can't be seen; quitting it (q
 // or Esc) quits the app, and quitting the app (Cmd-Q, or closing the window)
 // ends the dashboard. The Theme menu saves the chosen theme in the repo's
-// ui.json, where the dashboard takes it up within a second.
+// ui.json, where the dashboard takes it up within a second. The window is
+// see-through as Settings… (Cmd-,) says: the cards stay solid over it.
 
 import AppKit
 import TermKit
@@ -37,6 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                           layout: .besideButtons)
         term.dragsFromAnywhere = true
         term.reportsShown = true
+        // See-through as the settings panel's Opacity slider says, opaque
+        // until moved: the dashboard leaves its background to the terminal
+        // (--see-through) and the cards stay solid over what is beneath.
+        term.offersSeeThrough = true
+        // Its look is its own, not Ghostty's, but for full screen.
+        term.unsetLabel = "default"
         // The settings panel (Cmd-,): the dashboard's theme, in the repo's
         // ui.json, shared with the browser version, where the Theme menu
         // saves it too.
@@ -50,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         environment.append("COLORTERM=truecolor")
         terminal.startProcess(
             executable: dashboard,
-            args: ["--root", root, "--titlebar", String(term.corner)],
+            args: ["--root", root, "--titlebar", String(term.corner), "--see-through"],
             environment: environment,
             execName: "pvestats-tui"
         )

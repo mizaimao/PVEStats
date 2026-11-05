@@ -47,6 +47,9 @@ Reads .env and config.yaml from the PVEStats folder.
   --titlebar COLUMNS  under a see-through title bar: leave the top row's first
                       COLUMNS bare for the window's buttons, and give the
                       terminal the theme's background (OSC 11) for the bar
+  --see-through       leave the background unpainted, in the terminal's own
+                      colour, which is set to the theme's (OSC 11), so that a
+                      see-through window shows through; the cards keep their fill
   --serve             serve the web page on 127.0.0.1 (DASHBOARD_PORT, 8080) from
                       the same sources, instead of drawing here: the Mac app's window
 
@@ -64,11 +67,12 @@ struct Args {
     orbit: bool,
     themes: bool,
     titlebar: u16,
+    see_through: bool,
     serve: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false, themes: false, titlebar: 0, serve: false };
+    let mut args = Args { root: None, console: None, colors: None, snapshot: None, after: 12.0, focus: false, demo: false, orbit: false, themes: false, titlebar: 0, see_through: false, serve: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or(format!("{arg} needs a value"));
@@ -96,6 +100,7 @@ fn parse_args() -> Result<Args, String> {
             "--orbit" => args.orbit = true,
             "--themes" => args.themes = true,
             "--titlebar" => args.titlebar = value()?.parse().map_err(|_| "bad --titlebar")?,
+            "--see-through" => args.see_through = true,
             "--serve" => args.serve = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -148,6 +153,7 @@ fn main() {
         }
     });
     let look = Look::new(&config.theme, colors, args.console.unwrap_or(on_console));
+    let look = if args.see_through { look.see_through() } else { look };
     let mut screen = Screen::new();
     screen.focus = args.focus;
     // A snapshot is for checking a layout, which a step would shift.
@@ -286,7 +292,8 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io
     let mut theme_file = ThemeFile::new(&config.root);
     let mut chosen: Option<Look> = None;
     // Under a see-through title bar, the bar shows the terminal's own
-    // background: set to the theme's, and back to the terminal's on the way out.
+    // background, and so does all of a see-through window but the cards:
+    // set to the theme's, and back to the terminal's on the way out.
     let mut background: Option<String> = None;
     let result = (|| loop {
         power.tick();
@@ -294,7 +301,8 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io
             chosen = Some(base.retheme(&name));
         }
         let look = touring.look(chosen.as_ref().unwrap_or(base), screen);
-        let wanted = set_background(look.p.plane).filter(|code| screen.corner > 0 && background.as_ref() != Some(code));
+        let wanted = set_background(look.backdrop)
+            .filter(|code| (screen.corner > 0 || look.see_through) && background.as_ref() != Some(code));
         if let Some(code) = wanted {
             print!("{code}");
             io::stdout().flush()?;

@@ -42,6 +42,13 @@ pub struct Look {
     /// Only glyphs the console font has: charts in whole cells and shades.
     /// Otherwise charts are drawn in braille dots, btop style.
     pub console_glyphs: bool,
+    /// The theme's background, which the terminal is given as its own
+    /// (OSC 11) under a see-through title bar or window.
+    pub backdrop: Option<Color>,
+    /// The background left unpainted (`p.plane` None), in the terminal's
+    /// own colour, so that a see-through window shows through it; the
+    /// cards keep their fill.
+    pub see_through: bool,
     colors: Colors,
     /// The theme's tokens, for shading; None on the console.
     tokens: Option<[u32; 11]>,
@@ -50,12 +57,25 @@ pub struct Look {
 impl Look {
     pub fn new(theme: &str, colors: Colors, console_glyphs: bool) -> Look {
         let tokens = (colors != Colors::Console).then(|| theme_tokens(theme));
-        Look { p: palette(theme, colors), console_glyphs, colors, tokens }
+        let p = palette(theme, colors);
+        Look { p, console_glyphs, backdrop: p.plane, see_through: false, colors, tokens }
+    }
+
+    /// This look with its background left to the terminal (see_through).
+    pub fn see_through(mut self) -> Look {
+        self.p.plane = None;
+        self.see_through = true;
+        self
     }
 
     /// The same look in another theme.
     pub fn retheme(&self, theme: &str) -> Look {
-        Look::new(theme, self.colors, self.console_glyphs)
+        let look = Look::new(theme, self.colors, self.console_glyphs);
+        if self.see_through {
+            look.see_through()
+        } else {
+            look
+        }
     }
 
     /// Series 1 (0) or 2 (1).
@@ -194,5 +214,17 @@ mod tests {
         assert_eq!(xterm256(0xffffff), 231);
         assert_eq!(xterm256(0x0d0d0d), 232);
         assert_eq!(xterm256(0xff0000), 196);
+    }
+
+    #[test]
+    fn see_through_leaves_the_background_to_the_terminal() {
+        let solid = Look::new("ice", Colors::Rgb, false);
+        let clear = Look::new("ice", Colors::Rgb, false).see_through();
+        assert_eq!(clear.p.plane, None, "the background unpainted");
+        assert_eq!(clear.backdrop, solid.p.plane, "and given to the terminal instead");
+        assert_eq!(clear.p.surface, solid.p.surface, "the cards keep their fill");
+        let other = clear.retheme("vista");
+        assert!(other.see_through && other.p.plane.is_none(), "a new theme stays see-through");
+        assert_eq!(other.backdrop, Look::new("vista", Colors::Rgb, false).p.plane);
     }
 }
