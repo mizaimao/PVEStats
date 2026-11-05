@@ -35,6 +35,8 @@ cp "$repo/tui/mac/.build/release/PVEStatsTerminal" "$app/Contents/MacOS/PVEStats
 cp "$repo/tui/target/release/pvestats-tui" "$app/Contents/Resources/pvestats-tui"
 cp "$repo/assets/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp "$term/settings/target/release/term-settings" "$app/Contents/Resources/term-settings"
+# Nerd Font icons for a font without them (moose-term's kit/fonts).
+cp "$term/kit/fonts/SymbolsNerdFontMono-Regular.ttf" "$app/Contents/Resources/"
 
 # PVEStatsRoot: the repo whose .env and config.yaml the dashboard reads.
 cat > "$app/Contents/Info.plist" <<PLIST
