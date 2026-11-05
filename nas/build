@@ -10,25 +10,18 @@
 # it does no name lookups, the one thing static glibc does badly. A build
 # that came out dynamic is not copied.
 set -euo pipefail
-. "$(dirname "$0")/../tui/machines.sh"
+. "$(dirname "$0")/../tools/machines.sh"
 
 echo "== test and build on $BUILD_HOST"
-on_build "mkdir -p \"$B\""
-pack ./nas | on_build "tar -xf - -C \"$B\""
-on_build "cd \"$B/nas/agent\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
-    && cargo test --release --quiet \
-    && RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --quiet --target x86_64-unknown-linux-gnu"
+send_to_build ./nas
+remote_cargo nas/agent RUSTFLAGS='-C target-feature=+crt-static' --target x86_64-unknown-linux-gnu
 
-built="$B/nas/agent/target/x86_64-unknown-linux-gnu/release/pvestats-nas"
+built=nas/agent/target/x86_64-unknown-linux-gnu/release/pvestats-nas
 # Static or not copied: a dynamic one would not start on TrueNAS.
-kind=$(on_build "file -b \"$built\"")
+kind=$(on_build "file -b \"$B/$built\"")
 case "$kind" in
     *static*) ;;
     *) echo "== not static, not copied: $kind" >&2; exit 1 ;;
 esac
-
-mkdir -p "$repo/nas/bin"
-on_build "cat \"$built\"" >"$repo/nas/bin/pvestats-nas.new"
-chmod 755 "$repo/nas/bin/pvestats-nas.new"
-mv "$repo/nas/bin/pvestats-nas.new" "$repo/nas/bin/pvestats-nas"
-echo "== built nas/bin/pvestats-nas ($(wc -c <"$repo/nas/bin/pvestats-nas" | tr -d ' ') bytes), $(echo "$kind" | cut -d, -f1-2,4)"
+fetch_binary "$built" nas/bin/pvestats-nas
+echo "== $(echo "$kind" | cut -d, -f1-2,4)"

@@ -7,17 +7,10 @@
 # A plain glibc build: the build machine and Proxmox VE 9 are both Debian 13
 # (glibc 2.41); the last line says which glibc the program needs.
 set -euo pipefail
-. "$(dirname "$0")/../tui/machines.sh"
+. "$(dirname "$0")/../tools/machines.sh"
 
 echo "== test and build on $BUILD_HOST"
-on_build "mkdir -p \"$B\""
-pack ./pve | on_build "tar -xf - -C \"$B\""
-on_build "cd \"$B/pve/agent\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
-    && cargo test --release --quiet && cargo build --release --quiet"
-
-mkdir -p "$repo/pve/bin"
-on_build "cat \"$B/pve/agent/target/release/pvestats-pve\"" >"$repo/pve/bin/pvestats-pve.new"
-chmod 755 "$repo/pve/bin/pvestats-pve.new"
-mv "$repo/pve/bin/pvestats-pve.new" "$repo/pve/bin/pvestats-pve"
-echo "== built pve/bin/pvestats-pve ($(wc -c <"$repo/pve/bin/pvestats-pve" | tr -d ' ') bytes)"
-echo "== needs glibc $(on_build "objdump -T \"$B/pve/agent/target/release/pvestats-pve\" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1") or newer"
+send_to_build ./pve
+remote_cargo pve/agent
+fetch_binary pve/agent/target/release/pvestats-pve pve/bin/pvestats-pve
+echo "== needs glibc $(glibc_needed pve/agent/target/release/pvestats-pve) or newer"

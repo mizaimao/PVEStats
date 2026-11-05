@@ -24,7 +24,7 @@
 # It never uses sudo and never prints the contents of .env.
 
 set -euo pipefail
-. "$(cd "$(dirname "$0")" && pwd)/machines.sh"
+. "$(cd "$(dirname "$0")" && pwd)/../tools/machines.sh"
 
 # tui/kiosk-remote's tests run under a UTF-8 locale, as a client may set
 # one. moose-mcp's key runs a root-owned copy Frank installs from a reviewed
@@ -40,11 +40,9 @@ if [ "${1:-}" = "--check" ]; then
 fi
 
 echo "== test and build on $BUILD_HOST"
-on_build "mkdir -p \"$B\""
-pack ./tui ./certs | on_build "tar -xf - -C \"$B\""
-on_build "$gatekeeper_test \
-    && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
-    && cargo test --release --quiet && cargo build --release --quiet"
+send_to_build ./tui ./certs
+on_build "$gatekeeper_test"
+remote_cargo tui
 
 echo "== copy to $SCREEN_HOST"
 on_screen "mkdir -p \"$S/tui/bin\""
