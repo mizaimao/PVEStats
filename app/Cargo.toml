@@ -1,0 +1,18 @@
+# PVEStats.app's window: the dashboard's page in WKWebView, macOS's own
+# web engine. It starts the dashboard program (tui/, pvestats-tui --serve)
+# and shows the page it serves; closing the window ends both. Built into
+# PVEStats.app by app/make-app, on a Mac.
+[package]
+name = "pvestats-app"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libc = "0.2.191"
+muda = "0.21.2"
+tao = "0.37.2"
+wry = "0.57.1"
+
+[profile.release]
+strip = true

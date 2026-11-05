@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Builds PVEStats.app in the repo root: the dashboard's page in a window of
+# its own, with its name and icon in the Dock, the app switcher and the menu
+# bar. One program, app/ (Rust, macOS's own WKWebView), which starts the
+# dashboard program (tui/, pvestats-tui --serve) from the app's Resources
+# and shows the page it serves; closing the window ends both. No Python.
+#
+#   app/make-app
+#
+# Builds both programs for macOS first, at low priority, with their caches
+# inside the repo. That takes a Mac: macserver, not Frank's laptop, except
+# when he says so. The app reads .env and config.yaml from the folder it
+# sits in, this repo; it writes nothing anywhere else. Drag it to the Dock
+# from here to keep it. The first time it runs, macOS asks to let it reach
+# the local network, where the agents are.
+
+set -euo pipefail
+repo=$(cd "$(dirname "$0")/.." && pwd)
+app="$repo/PVEStats.app"
+
+echo "== the dashboard"
+(cd "$repo/tui" && CARGO_HOME="$PWD/.cargo-home" nice -n 15 cargo build --release -j 4 --quiet)
+echo "== the window"
+(cd "$repo/app" && CARGO_HOME="$PWD/.cargo-home" nice -n 15 cargo build --release -j 4 --quiet)
+
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$repo/app/target/release/pvestats-app" "$app/Contents/MacOS/PVEStats"
+cp "$repo/tui/target/release/pvestats-tui" "$app/Contents/Resources/pvestats-tui"
+cp "$repo/assets/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>PVEStats</string>
+  <key>CFBundleDisplayName</key><string>PVEStats</string>
+  <key>CFBundleIdentifier</key><string>net.local.pvestats</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>PVEStats</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <!-- App Nap would stall the dashboard's polling while the window is in
+       the background, and leave gaps in the charts. -->
+  <key>LSAppNapIsDisabled</key><true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>PVEStats reads its agents on the Proxmox host, ml60, TrueNAS and the router.</string>
+  <!-- The page comes from the dashboard program on 127.0.0.1, over http. -->
+  <key>NSAppTransportSecurity</key>
+  <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+</dict>
+</plist>
+PLIST
+
+chmod 755 "$app/Contents/MacOS/PVEStats" "$app/Contents/Resources/pvestats-tui"
+# Signed ad hoc as a whole, so macOS treats the bundle as one app.
+codesign --force --deep --sign - "$app" 2>/dev/null
+echo "built $app"
