@@ -17,7 +17,7 @@
 set -euo pipefail
 # The command's words are passed on as they are, never expanded as globs.
 set -f
-. "$(cd "$(dirname "$0")" && pwd)/machines.sh"
+. "$(cd "$(dirname "$0")" && pwd)/../tools/machines.sh"
 
 case "${1:-status}" in
     off | on) command="kiosk $1" ;;

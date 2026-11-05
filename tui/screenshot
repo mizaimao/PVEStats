@@ -10,13 +10,11 @@
 # Nothing is left behind on either machine but the build in BUILD_DIR.
 
 set -euo pipefail
-. "$(cd "$(dirname "$0")" && pwd)/machines.sh"
+. "$(cd "$(dirname "$0")" && pwd)/../tools/machines.sh"
 out=${1:-/tmp/pvestats-screen.png}
 
-on_build "mkdir -p \"$B\""
-pack ./tui/shot | on_build "tar -xf - -C \"$B\""
-on_build "cd \"$B/tui/shot\" && export CARGO_HOME=\"\$PWD/../.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
-    && cargo build --release --quiet"
+send_to_build ./tui/shot
+REMOTE_CARGO_TESTS=no remote_cargo tui/shot
 on_build "cat \"$B/tui/shot/target/release/pvestats-shot\"" \
     | on_screen "cat > /tmp/pvestats-shot && chmod 755 /tmp/pvestats-shot \
         && WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/\$(id -u) /tmp/pvestats-shot /tmp/pvestats-screen.png; \

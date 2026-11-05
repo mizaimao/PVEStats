@@ -9,17 +9,10 @@
 # least as new as the newest symbol version it uses; the last line says
 # which.
 set -euo pipefail
-. "$(dirname "$0")/../tui/machines.sh"
+. "$(dirname "$0")/../tools/machines.sh"
 
 echo "== test and build on $BUILD_HOST"
-on_build "mkdir -p \"$B\""
-pack ./agent/rust | on_build "tar -xf - -C \"$B\""
-on_build "cd \"$B/agent/rust\" && export CARGO_HOME=\"\$PWD/.cargo-home\" PATH=\"\$HOME/.cargo/bin:\$PATH\" \
-    && cargo test --release --quiet && cargo build --release --quiet"
-
-mkdir -p "$repo/agent/bin"
-on_build "cat \"$B/agent/rust/target/release/pvestats-agent\"" >"$repo/agent/bin/pvestats-agent.new"
-chmod 755 "$repo/agent/bin/pvestats-agent.new"
-mv "$repo/agent/bin/pvestats-agent.new" "$repo/agent/bin/pvestats-agent"
-echo "== built agent/bin/pvestats-agent ($(wc -c <"$repo/agent/bin/pvestats-agent" | tr -d ' ') bytes)"
-echo "== needs glibc $(on_build "objdump -T \"$B/agent/rust/target/release/pvestats-agent\" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1") or newer"
+send_to_build ./agent/rust
+remote_cargo agent/rust
+fetch_binary agent/rust/target/release/pvestats-agent agent/bin/pvestats-agent
+echo "== needs glibc $(glibc_needed agent/rust/target/release/pvestats-agent) or newer"
