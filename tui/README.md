@@ -79,7 +79,11 @@ and reports of the window hidden or shown (CSI O, CSI I), on which the
 dashboard stops drawing until it shows again. The
 window has no title bar of its own: the dashboard's top row runs through
 it, level with the window's buttons, and leaves the columns under them bare
-(`--titlebar`). The dashboard takes no mouse input: no text selection,
+(`--titlebar`). The window is see-through as the Opacity slider in
+Settings… says, opaque until it is moved: the dashboard leaves its
+background to the terminal, set to the theme's (`--see-through`, OSC 11),
+and the cards keep their fill, solid over what is beneath (MOO-206).
+The dashboard takes no mouse input: no text selection,
 an arrow pointer, and a press anywhere moves the window. It redraws to
 fit when the window is resized; q, Esc or Cmd-Q closes it. Each frame
 goes to the terminal in one write, inside synchronized output (mode 2026).
