@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Widget};
 
-use super::theme::Look;
+use super::theme::{Bars, Look};
 use crate::state::Series;
 
 pub struct Pen<'a> {
@@ -373,17 +373,52 @@ impl Meter {
     }
 }
 
-/// A horizontal bar as a line of `width` cells: a row of small squares,
-/// btop style, lit up to the ratio. Full blocks on a shaded track on the
-/// console, whose font has no small square worth the name.
+/// A horizontal bar as a line of `width` cells, lit up to the ratio, in the
+/// look's style (theme::Bars): small squares, btop style, unless the
+/// settings choose another. Full blocks on a shaded track on the console,
+/// whose font has no small square worth the name. The same as Moose
+/// Monitor's (moose-term).
 pub fn bar(look: &Look, ratio: Option<f64>, width: u16, color: Color) -> Line<'static> {
-    let lit = (ratio.unwrap_or(0.0).clamp(0.0, 1.0) * width as f64).round() as usize;
-    let rest = (width as usize).saturating_sub(lit);
-    let (on, off) = if look.console_glyphs { ("█", "░") } else { ("■", "■") };
-    Line::from(vec![
-        Span::styled(on.repeat(lit), Style::default().fg(color)),
-        Span::styled(off.repeat(rest), Style::default().fg(look.p.grid)),
-    ])
+    let width = width as usize;
+    let ratio = ratio.unwrap_or(0.0).clamp(0.0, 1.0);
+    let lit = (ratio * width as f64).round() as usize;
+    let on = Style::default().fg(color);
+    let track = Style::default().fg(look.p.grid);
+    let plain = |lit_glyph: &str, track_glyph: &str| {
+        Line::from(vec![Span::styled(lit_glyph.repeat(lit), on), Span::styled(track_glyph.repeat(width - lit), track)])
+    };
+    if look.console_glyphs {
+        return plain("█", "░");
+    }
+    match look.bars {
+        Bars::Squares => plain("■", "■"),
+        Bars::Line => plain("━", "─"),
+        Bars::Pills => plain("▰", "▱"),
+        Bars::Braille => plain("⣿", "⣀"),
+        Bars::Dots => plain("●", "·"),
+        Bars::GreenToRed => Line::from(
+            (0..width)
+                .map(|i| match i < lit {
+                    true => Span::styled("■", Style::default().fg(look.traffic((i as f64 + 0.5) / width as f64))),
+                    false => Span::styled("■", track),
+                })
+                .collect::<Vec<_>>(),
+        ),
+        Bars::Smooth => {
+            // Whole cells, then the last one's eighths, on a track of the
+            // grid's colour behind the whole width.
+            const EIGHTHS: [&str; 8] = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+            let eighths = (ratio * width as f64 * 8.0).round() as usize;
+            let (full, part) = (eighths / 8, eighths % 8);
+            let style = on.bg(look.p.grid);
+            let mut spans = vec![Span::styled("█".repeat(full), style)];
+            if full < width {
+                spans.push(Span::styled(EIGHTHS[part], style));
+                spans.push(Span::styled(" ".repeat(width - full - 1), style));
+            }
+            Line::from(spans)
+        }
+    }
 }
 
 // ----------------------------------------------------------------- charts
@@ -997,6 +1032,26 @@ impl Card {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every style draws exactly the bar's width, empty to full; the
+    /// console's whole blocks whatever the style.
+    #[test]
+    fn bars_in_every_style() {
+        use crate::ui::theme::Colors;
+        let mut look = Look::new("ice", Colors::Rgb, false);
+        for (name, style) in Bars::ALL {
+            look.bars = style;
+            assert_eq!(Bars::named(Some(name)), style);
+            for ratio in [None, Some(0.0), Some(0.04), Some(0.5), Some(0.97), Some(1.0), Some(1.5)] {
+                assert_eq!(bar(&look, ratio, 19, look.p.s1).width(), 19, "{name} at {ratio:?}");
+            }
+        }
+        assert_eq!(look.retheme("vista").bars, Bars::Dots, "a new theme keeps the bars");
+        assert_eq!(Bars::named(Some("no-such")), Bars::Squares);
+        let console = Look::new("ice", Colors::Console, true);
+        let text: String = bar(&console, Some(0.5), 10, console.p.s1).spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "█████░░░░░");
+    }
 
     #[test]
     fn columns_hold_the_newest_sample_right() {

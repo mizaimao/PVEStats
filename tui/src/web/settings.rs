@@ -18,6 +18,9 @@ fn defaults() -> Map<String, Value> {
     m.insert("scanlines".into(), json!(false));
     m.insert("grain".into(), json!(false));
     m.insert("aurora".into(), json!(false));
+    // The terminal's bars (ui::theme::Bars), set from the Mac app's
+    // settings panel; known here so a save from the page keeps it.
+    m.insert("bars".into(), json!("squares"));
     m
 }
 
@@ -125,6 +128,20 @@ mod tests {
         assert_eq!(settings.window(), 600.0);
         let file: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("ui.json")).unwrap()).unwrap();
         assert_eq!(file, json!({"theme": "amber", "window": 600}));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The bars the Mac app's settings panel saved outlive a save from the
+    /// page, which never sends them.
+    #[test]
+    fn a_page_save_keeps_the_bars() {
+        let dir = std::env::temp_dir().join(format!("pvestats-settings-bars-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ui.json"), r#"{"bars": "line"}"#).unwrap();
+        let settings = Settings::new(dir.clone(), &json!({}));
+        settings.save(&json!({"theme": "amber"})).unwrap();
+        let file: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("ui.json")).unwrap()).unwrap();
+        assert_eq!(file, json!({"theme": "amber", "bars": "line"}));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

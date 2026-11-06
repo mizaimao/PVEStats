@@ -25,7 +25,7 @@ use ratatui::Terminal;
 
 use config::Config;
 use sources::{agent::Agent, host::Host, lock, nas_agent::NasAgent, pve::Pve, router::Router, run_poller, weather::Weather, Shared};
-use ui::theme::{Colors, Look};
+use ui::theme::{Bars, Colors, Look};
 use ui::{Screen, Tour};
 
 const USAGE: &str = "\
@@ -152,7 +152,8 @@ fn main() {
             Colors::Indexed
         }
     });
-    let look = Look::new(&config.theme, colors, args.console.unwrap_or(on_console));
+    let mut look = Look::new(&config.theme, colors, args.console.unwrap_or(on_console));
+    look.bars = Bars::named(config.bars.as_deref());
     let look = if args.see_through { look.see_through() } else { look };
     let mut screen = Screen::new();
     screen.focus = args.focus;
@@ -291,14 +292,19 @@ fn run(screen: &mut Screen, shared: &Shared, config: &Config, base: &Look) -> io
     let mut touring = Touring::new(config.tour);
     let mut theme_file = ThemeFile::new(&config.root);
     let mut chosen: Option<Look> = None;
+    let mut theme = config.theme.clone();
     // Under a see-through title bar, the bar shows the terminal's own
     // background, and so does all of a see-through window but the cards:
     // set to the theme's, and back to the terminal's on the way out.
     let mut background: Option<String> = None;
     let result = (|| loop {
         power.tick();
-        if let Some(name) = theme_file.changed() {
-            chosen = Some(base.retheme(&name));
+        // A theme or bars saved in ui.json; bars it lacks are config.yaml's.
+        if let Some((name, bars)) = theme_file.changed() {
+            theme = name.unwrap_or(theme);
+            let mut look = base.retheme(&theme);
+            look.bars = Bars::named(bars.as_deref().or(config.bars.as_deref()));
+            chosen = Some(look);
         }
         let look = touring.look(chosen.as_ref().unwrap_or(base), screen);
         let wanted = set_background(look.backdrop)
@@ -395,10 +401,11 @@ impl Touring {
     }
 }
 
-/// The theme in ui.json, which the Mac app's Theme menu (tui/mac) and the
-/// browser app's settings panel write: looked at once a second, and taken
-/// up when the file changes, without a restart. The kiosk has no ui.json
-/// (deploys leave it behind), so there it never changes.
+/// The theme and the bars' style in ui.json, which the Mac app's Theme menu
+/// and settings panel (tui/mac) and the browser app's settings panel write:
+/// looked at once a second, and taken up when the file changes, without a
+/// restart. The kiosk has no ui.json (deploys leave it behind), so there it
+/// never changes.
 struct ThemeFile {
     path: PathBuf,
     modified: Option<SystemTime>,
@@ -411,16 +418,18 @@ impl ThemeFile {
         ThemeFile { path, modified }
     }
 
-    /// A theme newly saved, if one is and it is a known name.
-    fn changed(&mut self) -> Option<String> {
+    /// The theme and the bars' style when the file was saved since last
+    /// looked at: the theme if it is a known name, the bars as written.
+    fn changed(&mut self) -> Option<(Option<String>, Option<String>)> {
         let modified = std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
         if modified == self.modified {
             return None;
         }
         self.modified = modified;
         let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&self.path).ok()?).ok()?;
-        let name = saved.get("theme")?.as_str()?;
-        ui::theme::names().any(|n| n == name).then(|| name.to_string())
+        let text = |key: &str| saved.get(key).and_then(|v| v.as_str()).map(str::to_string);
+        let theme = text("theme").filter(|name| ui::theme::names().any(|n| n == name));
+        Some((theme, text("bars")))
     }
 }
 
@@ -575,10 +584,10 @@ mod tests {
             std::fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
         };
         save(r#"{"glow": 1, "theme": "vista"}"#, later);
-        assert_eq!(watch.changed().as_deref(), Some("vista"));
+        assert_eq!(watch.changed(), Some((Some("vista".into()), None)));
         assert_eq!(watch.changed(), None, "once");
-        save(r#"{"theme": "no-such-theme"}"#, later + std::time::Duration::from_secs(5));
-        assert_eq!(watch.changed(), None, "an unknown name is not taken up");
+        save(r#"{"theme": "no-such-theme", "bars": "line"}"#, later + std::time::Duration::from_secs(5));
+        assert_eq!(watch.changed(), Some((None, Some("line".into()))), "an unknown theme is not taken up");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
