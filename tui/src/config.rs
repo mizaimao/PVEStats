@@ -45,6 +45,9 @@ pub struct Config {
     pub weather_imperial: bool,
     pub hosts: BTreeMap<u64, Host>,
     pub theme: String,
+    /// How bars are drawn (ui::theme::Bars): ui.json's `bars`, else
+    /// config.yaml's `ui: bars`; small squares when unset.
+    pub bars: Option<String>,
     /// Seconds of history kept per source, and so the span of every chart.
     pub window: f64,
     /// Seconds between themes in a tour of all of them, for picking one;
@@ -105,6 +108,11 @@ impl Config {
             .or_else(|| ui.and_then(|u| u.get("theme")).and_then(|v| v.as_str()))
             .unwrap_or("ice")
             .to_string();
+        let bars = saved
+            .get("bars")
+            .and_then(|v| v.as_str())
+            .or_else(|| ui.and_then(|u| u.get("bars")).and_then(|v| v.as_str()))
+            .map(str::to_string);
         let window = saved
             .get("window")
             .and_then(|v| v.as_f64())
@@ -132,6 +140,7 @@ impl Config {
             weather_imperial: var("WEATHER_UNITS").eq_ignore_ascii_case("imperial"),
             hosts: hosts(&raw),
             theme,
+            bars,
             window,
             demo: raw.get("tui").and_then(|t| t.get("demo")).and_then(|v| v.as_bool()).unwrap_or(false),
             screen_off: raw

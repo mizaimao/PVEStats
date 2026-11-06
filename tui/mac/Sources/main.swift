@@ -46,9 +46,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         term.unsetLabel = "default"
         // The settings panel (Cmd-,): the dashboard's theme, in the repo's
         // ui.json, shared with the browser version, where the Theme menu
-        // saves it too.
+        // saves it too; and its bars' style (the dashboard's theme::Bars,
+        // as Moose Monitor's), each with a sample of its glyphs.
         term.appFileElsewhere = URL(fileURLWithPath: root).appendingPathComponent("ui.json")
-        term.appFields = ["app|theme|Theme|dropdown:" + themes().map(\.name).joined(separator: ",")]
+        term.appFields = [
+            "app|theme|Theme|dropdown:" + themes().map(\.name).joined(separator: ","),
+            "app|bars|Bars|dropdown:=small squares  ■■■■■■,green-to-red=green to red  ■■■■■■,smooth=smooth  █████▌,"
+                + "line=thin line  ━━━━━━──,pills=pills  ▰▰▰▰▱▱,braille=braille  ⣿⣿⣿⣿⣀⣀,dots=round dots  ●●●●··",
+        ]
         term.show(saveAs: "PVEStats dashboard")
 
         // 24-bit colour, which SwiftTerm draws: the dashboard picks its

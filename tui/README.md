@@ -30,8 +30,10 @@ quits.
 
 In a terminal that can (anything but the Linux text console) it draws
 graphs in braille dots shaded from foot to top, meters as rows of small
-squares, and big digits in box-drawing strokes, btop style, in the theme
-from `config.yaml` (or `ui.json`): true colour when `COLORTERM` says so,
+squares (or the style `bars` names: green-to-red, smooth, line, pills,
+braille or dots, chosen in the Mac app's settings panel), and big digits in
+box-drawing strokes, btop style, in the theme and bars from `config.yaml`'s
+`ui:` block (or `ui.json`): true colour when `COLORTERM` says so,
 256 colours otherwise. On the text console (`TERM=linux`) it keeps to the
 console font's glyphs (full block, two shades, box drawing) and 16 colours,
 and turns off console blanking. `--console`, `--unicode` and `--colors`

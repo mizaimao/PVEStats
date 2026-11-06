@@ -37,11 +37,50 @@ pub struct Palette {
     pub critical: Color,
 }
 
+/// How a bar is drawn (draw::bar), chosen in the settings (`bars` in
+/// ui.json or config.yaml's `ui:` block); Frank picked from these on
+/// 2026-11-06, as in Moose Monitor (moose-term). The console draws whole
+/// blocks whatever the choice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Bars {
+    /// Small squares, btop style.
+    #[default]
+    Squares,
+    /// Small squares, each lit one green to red by where it sits, as btop's.
+    GreenToRed,
+    /// Whole blocks and an eighth of a cell at the end, on a shaded track.
+    Smooth,
+    /// A heavy line on a light one.
+    Line,
+    Pills,
+    Braille,
+    Dots,
+}
+
+impl Bars {
+    /// Every style, under its name in the settings.
+    pub const ALL: [(&'static str, Bars); 7] = [
+        ("squares", Bars::Squares),
+        ("green-to-red", Bars::GreenToRed),
+        ("smooth", Bars::Smooth),
+        ("line", Bars::Line),
+        ("pills", Bars::Pills),
+        ("braille", Bars::Braille),
+        ("dots", Bars::Dots),
+    ];
+
+    /// The style a name means; the default for no name or an unknown one.
+    pub fn named(name: Option<&str>) -> Bars {
+        Bars::ALL.iter().find(|(n, _)| Some(*n) == name).map_or_else(Bars::default, |(_, b)| *b)
+    }
+}
+
 pub struct Look {
     pub p: Palette,
     /// Only glyphs the console font has: charts in whole cells and shades.
     /// Otherwise charts are drawn in braille dots, btop style.
     pub console_glyphs: bool,
+    pub bars: Bars,
     /// The theme's background, which the terminal is given as its own
     /// (OSC 11) under a see-through title bar or window.
     pub backdrop: Option<Color>,
@@ -58,7 +97,7 @@ impl Look {
     pub fn new(theme: &str, colors: Colors, console_glyphs: bool) -> Look {
         let tokens = (colors != Colors::Console).then(|| theme_tokens(theme));
         let p = palette(theme, colors);
-        Look { p, console_glyphs, backdrop: p.plane, see_through: false, colors, tokens }
+        Look { p, console_glyphs, bars: Bars::default(), backdrop: p.plane, see_through: false, colors, tokens }
     }
 
     /// This look with its background left to the terminal (see_through).
@@ -68,14 +107,26 @@ impl Look {
         self
     }
 
-    /// The same look in another theme.
+    /// The same look in another theme, its bars as they were.
     pub fn retheme(&self, theme: &str) -> Look {
-        let look = Look::new(theme, self.colors, self.console_glyphs);
+        let mut look = Look::new(theme, self.colors, self.console_glyphs);
+        look.bars = self.bars;
         if self.see_through {
             look.see_through()
         } else {
             look
         }
+    }
+
+    /// Green at t = 0, yellow at a half, red at 1: the theme's good,
+    /// warning and critical, blended. Thirds of each on the console.
+    pub fn traffic(&self, t: f64) -> Color {
+        let t = t.clamp(0.0, 1.0);
+        let Some(tokens) = self.tokens else {
+            return if t < 1.0 / 3.0 { self.p.good } else if t < 2.0 / 3.0 { self.p.warning } else { self.p.critical };
+        };
+        let rgb = if t < 0.5 { mix(tokens[8], tokens[9], t * 2.0) } else { mix(tokens[9], tokens[10], (t - 0.5) * 2.0) };
+        self.paint(rgb)
     }
 
     /// Series 1 (0) or 2 (1).
