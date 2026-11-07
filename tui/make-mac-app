@@ -23,6 +23,9 @@ echo "== the dashboard"
 (cd "$repo/tui" && CARGO_HOME="$PWD/.cargo-home" nice -n 15 cargo build --release -j 4 --quiet)
 echo "== the settings window (moose-term)"
 term=$(cd "$repo/../moose-term" && pwd)
+# The version and About's credits, from the day and this repo's commit
+# (moose-term's kit/version.sh).
+. "$term/kit/version.sh"
 (cd "$term/settings" && CARGO_HOME="$PWD/.cargo-home" nice -n 15 cargo build --release -j 4 --quiet)
 echo "== the window"
 (cd "$repo/tui/mac" && CLANG_MODULE_CACHE_PATH="$PWD/.build/module-cache" nice -n 15 swift build -c release -j 4 \
@@ -48,8 +51,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>PVEStats</string>
   <key>CFBundleDisplayName</key><string>PVEStats Terminal</string>
   <key>CFBundleIdentifier</key><string>net.local.pvestats.terminal</string>
-  <key>CFBundleVersion</key><string>1.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+$(version_plist "The homelab dashboard, in a window of its own.")
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>PVEStatsTerminal</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
