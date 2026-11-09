@@ -3,7 +3,7 @@
 // Mac, so the Dock, the app switcher and the menu bar show PVEStats and its
 // icon. The window is the one every terminal app of Frank's has: TermKit,
 // from the moose-term repo beside this one (~/Projects/moose-term), which
-// brings SwiftTerm and pins it. Built by tui/make-mac-app.
+// brings SwiftTerm, kept in its vendor/ with fixes. Built by tui/make-mac-app.
 import PackageDescription
 
 let package = Package(
