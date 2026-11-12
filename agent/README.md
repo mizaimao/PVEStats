@@ -20,9 +20,10 @@ router's is the second.
 
 ## The Rust agent
 
-`rust/` is the agent as a small Rust program, in place of `agent.py`, with
-the same replies (field for field, so the app and the dashboard need no
-change) and these differences:
+`rust/` is the agent as a small Rust program, in place of the Python agent
+this folder first held (`agent.py`, now in git history), with the same
+replies (field for field, so the app and the dashboard need no change) and
+these differences:
 
 - **It also reports ml60's own memory**, as `"ram": {"total", "available",
   "cache"}` in bytes from `/proc/meminfo` (null if unreadable), the way
@@ -47,20 +48,21 @@ change) and these differences:
 - **The GPU is read by one thread**, about once a second and only while
   someone has asked in the last 15 s; requests are served its latest
   reading. No client sets how often NVML is read, and the PCIe counters'
-  ~20 ms sampling windows (two of them, ~40 ms a request in `agent.py`) are
-  off the request path. NVML is shut down only after a device-level error,
-  and tried again no sooner than 30 s later.
-- **Ollama's list** is kept by one thread too, with `agent.py`'s cache: 30 s,
-  or 5 s while a stopped model is still listed or Ollama is down. A reply
-  that is not the expected shape counts as Ollama down instead of breaking
-  the whole answer.
+  ~20 ms sampling windows (two of them, ~40 ms a request in the Python agent)
+  are off the request path. NVML is shut down only after a device-level
+  error, and tried again after 1 s, then twice as long each time, up to 30 s.
+- **Ollama's list** is kept by one thread too, with the Python agent's
+  cache: 30 s, or 5 s while a stopped model is still listed or Ollama is
+  down. A reply that is not the expected shape counts as Ollama down
+  instead of breaking the whole answer.
 - **At most 16 connections**, more closed at once; each request read with a
   2 s deadline and a 16 KiB cap on its head, one request per connection.
 - **Unload**: the same checks in the same order and with the same answers,
   then more: one unload at a time (409), not the same model again within
   10 s of stopping it (429), only a model that is loaded (404, from the
-  cached list while it is fresh, so a loop of such requests never reaches
-  Ollama), and at most one request a second sent on to Ollama (429). A 200
+  cached list while it is under 5 s old; an older one is fetched again and
+  kept, so a loop of such requests reaches Ollama once in 5 s at most), and
+  at most one request a second sent on to Ollama (429). A 200
   that did not unload now says why in `error`, and a 502 carries Ollama's
   own reason.
 - **NVML trouble** shows as such: a reading that has not come for 2.5 s is
@@ -72,8 +74,10 @@ change) and these differences:
 - `procs[].name` is the last part of the path, as the dashboard shows it.
 - The `error` text reads `NVML: <reason>`.
 
-`agent.py` stays here as the way back until the Rust agent has run on ml60
-for a while.
+The Python agent (`agent.py`, `requirements.txt`) left this folder on
+2026-11-12; both files are in git history. Where it was installed, its copy
+and venv stay in `/opt/pvestats-agent/` on ml60 as the way back (below)
+until Frank removes them.
 
 ## Building
 
@@ -85,7 +89,7 @@ time, which needs a glibc build, so ml60 needs glibc 2.34 or newer (Ubuntu
 22.04, Debian 12 and later); the build's last line says which version the
 program asks for.
 
-## Installing on ml60, in place of agent.py (Frank, with sudo)
+## Installing on ml60 (Frank, with sudo)
 
 From the Mac, after `agent/build`:
 
@@ -102,9 +106,9 @@ Then on ml60:
     curl -s http://127.0.0.1:9836/ | head -c 300; echo
     rm /tmp/pvestats-agent /tmp/pvestats-agent.service
 
-A drop-in you made for `agent.py` (`User=`, `Environment=`) carries over
-unchanged. Back to `agent.py`, should it ever be needed: the venv and
-`agent.py` stay in `/opt/pvestats-agent/`, so a drop-in puts it back:
+A drop-in made for the Python agent (`User=`, `Environment=`) carries over
+unchanged. Back to the Python agent, should it ever be needed: its `agent.py`
+and venv stay in `/opt/pvestats-agent/` on ml60, so a drop-in puts it back:
 
     sudo systemctl edit pvestats-agent
     # [Service]
@@ -132,12 +136,13 @@ off switch) in a drop-in, which updates leave alone:
 
 A setting in the drop-in wins over the unit's own line.
 
-The first install of `agent.py`, for the record: copy `agent.py`,
-`requirements.txt` and `pvestats-agent.service` to `/opt/pvestats-agent/`,
-build the venv there with `sudo python3 -m venv /opt/pvestats-agent/.venv`
-(Debian and Ubuntu need `python3-venv` first) and
+The first install was the Python agent's, for the record: `agent.py`,
+`requirements.txt` (both in git history) and `pvestats-agent.service` copied
+to `/opt/pvestats-agent/`, a venv built there with
+`sudo python3 -m venv /opt/pvestats-agent/.venv` (Debian and Ubuntu need
+`python3-venv` first) and filled with
 `sudo /opt/pvestats-agent/.venv/bin/pip install -r /opt/pvestats-agent/requirements.txt`,
-then install the unit as above.
+then the unit installed as above.
 
 ## Before enabling: check the service user
 
@@ -192,7 +197,8 @@ the port.
 
 `warning: NVML unavailable at startup` means the driver's
 `libnvidia-ml.so.1` could not be loaded or initialised; the agent keeps
-serving the models and says why in `error`, and tries NVML again every 30 s.
+serving the models and says why in `error`, and tries NVML again after 1 s, then
+twice as long each time, up to 30 s.
 
 Empty `procs[]` with every other field populated means the unit's `User=` does
 not match Ollama's. NVML cannot see other users' compute processes.
@@ -252,4 +258,5 @@ the whole payload.
 Any other NVML error (a GPU lost from the bus, for instance) fails the read:
 the agent still serves `models`, reports the reason in a top-level `error`
 field so the dashboard can say why the GPU panel is empty, shuts NVML down,
-and initialises it afresh no sooner than 30 s later.
+and initialises it afresh after 1 s, then twice as long each time, up to
+30 s.

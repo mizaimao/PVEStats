@@ -176,7 +176,10 @@ buffers + page cache + reclaimable slab, as `free` counts them.
 terminal dashboard's ml60 card takes its CPU, network, disk, uptime and
 address from the agent, once a second, and needs PVE only as a fallback.
 
-Agent requirements:
+Agent requirements (*update 2026-11-12:* written for the first agent, in
+Python. As built since 2026-10-26 it is a Rust program, `agent/rust`, which
+keeps to all of them but the first two, which are Python's; the Python one
+left the repo on 2026-11-12 and is in git history. See agent/README.md):
 - `pip install nvidia-ml-py` — the official binding. Not the abandoned `pynvml`
   package on PyPI.
 - Override `BaseHTTPRequestHandler.log_message` to a no-op. Without this, the
@@ -224,7 +227,9 @@ health exist only inside TrueNAS.
 own agent (`nas/` in this repo, `NAS_AGENT_URL`), which serves CPU, memory,
 address, uptime, NICs, disks and pools from the kernel and ZFS, every 2 s.
 The API cost TrueNAS 25 ms of CPU a request; the agent costs 0.41 ms
-(`nas/README.md`). The rest of this section is the API's history.
+(`nas/README.md`). The rest of this section is the API's history, the
+2026-10-21 update above included: `probe.py` has no `truenas` source any
+more.
 
 **Endpoint discovery is required.** TrueNAS's reporting endpoints have moved
 between releases. Do not hardcode a path from memory. Fetch the interactive API

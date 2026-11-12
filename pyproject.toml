@@ -1,8 +1,8 @@
 # Python here is only for probe.py, which needs nothing but the standard
 # library, and for redrawing the app icon (tools/render_icon.py, the icon
 # group). The Mac app (app/) and the dashboard (tui/) are Rust. Managed with
-# tools/uv; uv.lock pins every installed package by hash. The ml60 agent has
-# its own requirements in agent/, installed on ml60.
+# tools/uv; uv.lock pins every installed package by hash. The agents (agent/,
+# pve/, nas/, router/) are Rust too.
 [project]
 name = "pvestats"
 version = "1.0"
