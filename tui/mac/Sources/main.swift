@@ -91,9 +91,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, LocalP
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         if let code = exitCode, code != 0 {
             // What it printed, through the selection: SwiftTerm gives the
-            // window's text no other way.
+            // window's text no other way. Without the window's own reports
+            // of being shown or hidden (CSI I, CSI O), which the terminal
+            // echoes as text once nothing reads them.
             source.selectAll()
             let said = (source.getSelection() ?? "")
+                .replacingOccurrences(of: "^[[I", with: "")
+                .replacingOccurrences(of: "^[[O", with: "")
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
@@ -104,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, LocalP
             alert.alertStyle = .critical
             alert.messageText = "The dashboard stopped"
             alert.informativeText = said.isEmpty ? "pvestats-tui ended with exit code \(code)." : said
+            // On stderr too, for a start from a terminal, as PVEStats.app
+            // says its own.
+            FileHandle.standardError.write(Data("PVEStats Terminal: \(alert.messageText)\n\(alert.informativeText)\n".utf8))
             alert.runModal()
         }
         NSApp.terminate(nil)
