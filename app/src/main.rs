@@ -54,6 +54,12 @@ fn main() {
         .unwrap_or_else(|e| die(&format!("The window could not open: {e}")));
     let _webview = WebViewBuilder::new()
         .with_url(&url)
+        // A private window: WebKit keeps the page's data in memory alone.
+        // Its usual store is folders of the app's own under ~/Library
+        // (WebKit, Caches), and the app is to write nothing outside the
+        // repo. The page counts on nothing kept: its theme comes rendered
+        // into it from ui.json.
+        .with_incognito(true)
         .with_background_color(BACKGROUND)
         .build(&window)
         .unwrap_or_else(|e| die(&format!("The page could not open: {e}")));

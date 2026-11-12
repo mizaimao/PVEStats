@@ -5,10 +5,13 @@ workstation, binds `127.0.0.1` only.
 
 Design: [homelab-dashboard-spec.md](homelab-dashboard-spec.md).
 
-Nothing is installed on the PVE host, nothing goes over SSH, nothing is written
-to any homelab disk. Read-only credentials throughout. The one exception is an
-agent on `ml60`, whose GPU is PCIe passthrough and therefore invisible to the
-hypervisor.
+Nothing goes over SSH and nothing is written to any homelab disk. Read-only
+credentials throughout. Four small read-only agents (Rust) serve what
+Proxmox's API cannot tell, or tells at more cost: on `ml60`, whose GPU is PCIe
+passthrough and therefore invisible to the hypervisor, on the router, on the
+Proxmox host and on TrueNAS. Each one's README says what it may do and how
+to remove it completely. The one thing the dashboard changes anywhere: the
+page's Stop button asks ml60's agent to unload a model.
 
 ## Layout
 
@@ -16,6 +19,12 @@ hypervisor.
                    in a terminal or, with --serve, serves the page below
     static/        the page: the Mac app's window shows it
     app/           the Mac app's window (Rust), PVEStats.app
+    agent/         ml60's agent: GPU, loaded models, the machine's own figures
+    pve/           the Proxmox host's agent: the host's and VMs' live figures
+    nas/           TrueNAS's agent: interfaces, disks, pools
+    router/        the router's agent: WAN, ports, radios
+    tools/         uv for the Python tools, and the build scripts' helpers
+    certs/         the home CA's root, which ml60's agent is verified against
     probe.py       dump raw source responses to captures/ (run this first)
     config.yaml    which guest gets which panel set
     .env           credentials, git-ignored
@@ -24,7 +33,7 @@ hypervisor.
 ## Setup
 
 Prerequisites are performed by the operator, not the build — see spec §6 for
-the PVE token and TrueNAS API key.
+the PVE token. TrueNAS needs no credential: its own agent answers.
 
     cp .env.example .env      # then fill it in
 
@@ -47,7 +56,8 @@ inside the app) with `--serve` and shows the page it serves in a window,
 drawn by WKWebView, the web engine macOS already has. Closing the window or
 quitting ends the dashboard program too. Not a launch agent, not a daemon:
 nothing runs when the window is shut. The app reads `.env` and
-`config.yaml` from the folder it sits in, and writes nothing outside it.
+`config.yaml` from the folder it sits in, and writes nothing outside it: its
+window is a private one, so WebKit keeps the page's data in memory.
 
 **Elsewhere,** or to an ordinary browser instead of a window:
 
@@ -58,10 +68,12 @@ nothing runs when the window is shut. The app reads `.env` and
 Parsing is written against real captured responses, not against field names in
 the spec. Where they disagree, the live response wins.
 
-    tools/uv run probe.py         # every source
-    tools/uv run probe.py pve     # one source
+    tools/uv run probe.py         # Proxmox's API and ml60's agent
+    tools/uv run probe.py pve     # one of the two
 
-It needs only the standard library.
+It needs only the standard library. The other agents (router, Proxmox host,
+TrueNAS) are not probed: each answers plain JSON to `curl` on its URL in
+`.env`.
 
 ## In a terminal
 
