@@ -19,8 +19,8 @@ fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-/// For PVE and TrueNAS, whose certificates are self-signed. Not a thing to
-/// fix (spec §3.1); the app skips verification for them too.
+/// For PVE, whose certificate is self-signed. Not a thing to fix (spec
+/// §3.1).
 pub fn self_signed_tls() -> Arc<ClientConfig> {
     let provider = provider();
     let config = ClientConfig::builder_with_provider(provider.clone())
@@ -87,7 +87,10 @@ pub fn resolve(netloc: &str) -> io::Result<Vec<std::net::SocketAddr>> {
 }
 
 /// A short reason for a failed request. Never includes the URL's query or
-/// any header, so no credential can end up on screen.
+/// any header, so no credential can end up on screen: ureq's own words are
+/// passed on only for the failures whose text is about the network or the
+/// reply. A request header it will not send (the PVE token with a character
+/// that is not plain ASCII in it) it quotes whole.
 pub fn describe(err: ureq::Error, started: Instant) -> String {
     match err {
         ureq::Error::Status(code, _) => format!("HTTP {code}"),
@@ -102,10 +105,14 @@ pub fn describe(err: ureq::Error, started: Instant) -> String {
             {
                 return timed_out(started);
             }
-            let detail = t
-                .message()
-                .map(str::to_string)
-                .or_else(|| t.source().map(|s| s.to_string()));
+            use ureq::ErrorKind::{BadHeader, BadStatus, ConnectionFailed, Dns, Io, UnknownScheme};
+            let detail = match t.kind() {
+                BadHeader => return "Bad Header (a stray character in the token in .env?)".to_string(),
+                Dns | ConnectionFailed | Io | BadStatus | UnknownScheme => {
+                    t.message().map(str::to_string).or_else(|| t.source().map(|s| s.to_string()))
+                }
+                _ => None,
+            };
             match detail {
                 Some(detail) => format!("{}: {detail}", t.kind()),
                 None => t.kind().to_string(),
@@ -176,5 +183,29 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(certs.len(), 1);
+    }
+
+    #[test]
+    fn a_header_that_cannot_be_sent_is_not_quoted() {
+        // A token pasted with a curly quote or a zero-width space: ureq
+        // refuses the request before any of it is sent.
+        let refused = || {
+            ureq::get("http://127.0.0.1:9/")
+                .set("Authorization", "PVEAPIToken=dash@pve!web=s\u{e9}cret\u{200b}")
+                .call()
+                .unwrap_err()
+        };
+        assert!(refused().to_string().contains("cret"), "ureq quotes the header: this is what must not be shown");
+        let said = describe(refused(), Instant::now());
+        assert!(!said.contains("cret") && !said.contains("dash@pve"), "{said}");
+    }
+
+    #[test]
+    fn a_failed_connection_still_says_why() {
+        // A port nothing listens on: one just given out and closed again.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let err = ureq::get(&format!("http://127.0.0.1:{port}/")).timeout(Duration::from_secs(2)).call().unwrap_err();
+        let said = describe(err, Instant::now());
+        assert!(said.starts_with("Connection Failed"), "{said}");
     }
 }
