@@ -96,6 +96,22 @@ fn next_wait(interval: f64, answered: bool, failures: u32) -> f64 {
     (FIRST_RETRY * 2f64.powi(failures.min(16) as i32 - 1)).min(interval)
 }
 
+/// One poll, whatever comes of it. A failure is kept for the card, and so
+/// is a panic (a reply in a shape no parser expected): left to unwind, it
+/// would end the thread, the source would never be asked again, and its
+/// card would go on showing its last figures as live.
+fn poll_once<T>(source: &Mutex<Source<T>>, poll: &mut impl FnMut() -> Result<(), String>) {
+    let error = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(poll)) {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(panic) => {
+            let why = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned());
+            format!("the poll crashed: {}", why.as_deref().unwrap_or("no reason given"))
+        }
+    };
+    lock(source).fail(error);
+}
+
 /// Call `poll` forever on a fixed interval, absorbing every failure.
 pub fn run_poller<T>(
     source: &Mutex<Source<T>>,
@@ -107,9 +123,7 @@ pub fn run_poller<T>(
         // Before new samples land, account for any that were missed: a stall
         // should read as a gap, not as compressed time.
         lock(source).note_poll();
-        if let Err(error) = poll() {
-            lock(source).fail(error);
-        }
+        poll_once(source, &mut poll);
         // One slot per series per poll, so a failed poll is drawn as a gap.
         lock(source).end_poll();
         let wait = {
@@ -495,7 +509,32 @@ pub struct Alert {
 
 #[cfg(test)]
 mod tests {
-    use super::next_wait;
+    use super::{lock, next_wait, poll_once};
+    use crate::state::Source;
+    use std::sync::Mutex;
+
+    #[test]
+    fn a_poll_that_panics_is_a_failed_poll_and_the_next_goes_ahead() {
+        let source: Mutex<Source<()>> = Mutex::new(Source::new(1.0, 60.0));
+        lock(&source).succeed(());
+        let mut calls = 0;
+        let mut poll = || -> Result<(), String> {
+            calls += 1;
+            if calls == 1 {
+                // As a parser does on a reply it did not expect.
+                let reply = String::from("0\u{e9}0");
+                return Err(reply[..2].to_string());
+            }
+            Ok(())
+        };
+        poll_once(&source, &mut poll);
+        let status = lock(&source).status();
+        assert!(!status.ok);
+        let error = status.error.unwrap_or_default();
+        assert!(error.starts_with("the poll crashed: ") && error.contains("char boundary"), "{error}");
+        poll_once(&source, &mut poll);
+        assert_eq!(calls, 2);
+    }
 
     #[test]
     fn a_source_not_yet_answering_retries_soon() {

@@ -336,7 +336,8 @@ fn utc_offset(time: &str) -> Option<i64> {
         b'-' => -1,
         _ => return None,
     };
-    Some(sign * (tail[1..3].parse::<i64>().ok()? * 60 + tail[4..6].parse::<i64>().ok()?))
+    // By `get`: the six bytes need not be six characters.
+    Some(sign * (tail.get(1..3)?.parse::<i64>().ok()? * 60 + tail.get(4..6)?.parse::<i64>().ok()?))
 }
 
 /// Sunrise and sunset on a date, local, by NOAA's approximation: good to a
@@ -522,6 +523,7 @@ mod tests {
         assert_eq!(nws_code("https://api.weather.gov/icons/land/day/tsra_hi,30?size=small"), Some(95));
         assert_eq!(top_speed("5 to 10 mph"), Some(10.0));
         assert_eq!(utc_offset("2026-10-25T21:00:00-04:00"), Some(-240));
+        assert_eq!(utc_offset("2026-10-25T21:00:00-0\u{e9}00"), None);
     }
 
     #[test]
