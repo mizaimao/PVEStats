@@ -10,8 +10,10 @@
 # Builds both programs for macOS first, at low priority: the dashboard
 # (cargo, in tui/) and the window (swift, in tui/mac), with their caches
 # inside the repo. That takes a Mac: macserver, not Frank's laptop, except
-# when he says so. The app reads .env and config.yaml from this repo; it
-# writes nothing anywhere else. Drag it to the Dock from here to keep it.
+# when he says so. The app reads .env and config.yaml from this repo. Beyond
+# the repo it keeps only its window's settings (~/.config/pvestats-terminal)
+# and its window's place, which macOS saves in the app's preferences
+# (~/Library/Preferences). Drag it to the Dock from here to keep it.
 # The first time it runs, macOS asks to let it reach the local network,
 # where the agents are.
 
