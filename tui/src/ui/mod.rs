@@ -178,10 +178,10 @@ impl Screen {
             of(View::Nas).map(|s| cards::nas(look, s, config.hosts.get(&s.vmid), &nas, &sn)).collect();
         nas_cards.extend(config.router_shown().then(|| cards::router(look, &router, &sr)));
         let basic: Vec<&Slot> = of(View::Basic).collect();
-        // Guest cards grey with the source their live figures come from.
+        let greyed_by = guest_status(live, &sh, &sp);
         let guests = Guests {
             slots: &basic,
-            status: if live { &sh } else { &sp },
+            status: &greyed_by,
             pve: &*pve,
             host: live.then_some(()).and(host_agent.data.as_ref()).map(|d| (&*host_agent as &dyn History, d)),
         };
@@ -262,6 +262,19 @@ impl Screen {
                 }
             }
         }
+    }
+}
+
+/// What the guest cards grey by: the source their live figures come from,
+/// the host agent while it answers (`live`) and PVE's API otherwise. With
+/// live figures and the API failing they grey too, with its error, as the
+/// page has it (web/page.rs): names, limits, memory and disks, and all of a
+/// container's figures, come only from the API and are going old.
+fn guest_status(live: bool, host: &Status, api: &Status) -> Status {
+    match (live, &api.error) {
+        (true, Some(error)) => Status { ok: false, error: Some(format!("API: {error}")), ..host.clone() },
+        (true, None) => host.clone(),
+        (false, _) => api.clone(),
     }
 }
 
@@ -689,5 +702,22 @@ mod tests {
         assert_eq!(seen(dot(&look, "ml60", &up)), (p.good, None));
         let long = Status { age: Some(600.0), ..down };
         assert_eq!(dot(&look, "router", &long).note.as_deref(), Some("10m ago"));
+    }
+
+    #[test]
+    fn guests_grey_when_the_api_fails_under_the_agents_live_figures() {
+        let up = Status { ok: true, error: None, age: Some(1.0), stale: false };
+        let down = Status { ok: false, error: Some("HTTP 401".into()), age: Some(90.0), stale: true };
+        let starting = Status { ok: false, error: None, age: None, stale: false };
+        let seen = |s: Status| (s.ok, s.error);
+        // The agent answers and so does the API: live.
+        assert_eq!(seen(guest_status(true, &up, &up)), (true, None));
+        // The agent answers, the API does not: its figures are going old.
+        assert_eq!(seen(guest_status(true, &up, &down)), (false, Some("API: HTTP 401".into())));
+        // The API still on its first call: nothing wrong yet.
+        assert_eq!(seen(guest_status(true, &up, &starting)), (true, None));
+        // No live agent: the API's own status, as it is.
+        assert_eq!(seen(guest_status(false, &down, &up)), (true, None));
+        assert_eq!(seen(guest_status(false, &up, &down)), (false, Some("HTTP 401".into())));
     }
 }
