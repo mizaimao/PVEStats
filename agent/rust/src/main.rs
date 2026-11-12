@@ -374,8 +374,9 @@ fn unload_one(s: &Shared, name: &str) -> (u16, Value) {
         }
     }
     // Whether it is loaded, from the cached list while that is a few
-    // seconds old at most: a loop of requests naming models that are not
-    // loaded must not reach Ollama, which logs each call to disk.
+    // seconds old at most; an older one is fetched again below and kept. So
+    // a loop of requests naming models that are not loaded reaches Ollama,
+    // which logs each call to disk, once in those few seconds at most.
     let cached = {
         let m = lock(&s.models);
         m.fetched.filter(|t| t.elapsed() < ollama::RECHECK_AFTER).map(|_| m.list.clone())
@@ -393,7 +394,13 @@ fn unload_one(s: &Shared, name: &str) -> (u16, Value) {
         *last = Some(Instant::now());
     }
     if cached.is_none() {
-        match ollama::fetch(&s.config.ollama) {
+        let outcome = ollama::fetch(&s.config.ollama);
+        // Kept as the cache thread keeps its own, so the next request finds
+        // a fresh list: without this, every one of a loop's requests that
+        // came a second apart was another call to Ollama.
+        lock(&s.models).take(outcome.clone(), Instant::now());
+        s.models_fresh.notify_all();
+        match outcome {
             Err(e) => return refuse(502, format!("Ollama: {e}")),
             Ok(list) if !listed(&list) => return refuse(404, format!("{name} is not loaded")),
             Ok(_) => {}
@@ -459,16 +466,20 @@ mod tests {
 
     const PS: &str = r#"{"models":[{"name":"qwen3:32b","model":"qwen3:32b","size":20000,"size_vram":20000,"expires_at":"2318-01-01T00:00:00Z","context_length":8192}]}"#;
 
-    /// The agent, serving on a free port, with a GPU reading that stays
-    /// fresh (no NVML on the build machine).
-    fn agent(ollama: &FakeOllama, allow_unload: bool) -> String {
-        let config = Config {
+    fn config_for(ollama: &FakeOllama, allow_unload: bool) -> Config {
+        Config {
             bind: "127.0.0.1:0".parse().unwrap(),
             gpu_index: 0,
             ollama: http::parse_url(&format!("{}/api/ps", ollama.url)).unwrap(),
             generate: http::parse_url(&format!("{}/api/generate", ollama.url)).unwrap(),
             allow_unload,
-        };
+        }
+    }
+
+    /// The agent, serving on a free port, with a GPU reading that stays
+    /// fresh (no NVML on the build machine).
+    fn agent(ollama: &FakeOllama, allow_unload: bool) -> String {
+        let config = config_for(ollama, allow_unload);
         let listener = TcpListener::bind(config.bind).unwrap();
         let addr = listener.local_addr().unwrap().to_string();
         let shared = Arc::new(Shared::new(config));
@@ -567,6 +578,27 @@ mod tests {
         assert_eq!((status, body["ok"].as_bool()), (200, Some(true)), "{body}");
         assert_eq!(post(&addr, JSON, model).0, 429, "not the same model again at once");
         assert_eq!(ollama.generate_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_loop_of_unloads_for_a_model_not_loaded_reaches_ollama_once() {
+        let ollama = fake_ollama(PS);
+        // No cache thread here: the list is as the dashboard's last poll
+        // left it, longer ago than it is trusted for.
+        let shared = Shared::new(config_for(&ollama, true));
+        let old = Instant::now() - ollama::RECHECK_AFTER - Duration::from_secs(1);
+        {
+            let mut models = lock(&shared.models);
+            models.take(Ok(Vec::new()), old);
+            assert_eq!(models.fetched, Some(old));
+        }
+        for _ in 0..5 {
+            assert_eq!(unload_one(&shared, "llama3:8b").0, 404);
+        }
+        assert_eq!(ollama.ps_calls.load(Ordering::SeqCst), 1, "the first asked Ollama, the rest the list it kept");
+        assert_eq!(ollama.generate_calls.load(Ordering::SeqCst), 0);
+        // And the list it kept is Ollama's own.
+        assert_eq!(lock(&shared.models).list[0]["name"], "qwen3:32b");
     }
 
     #[test]
