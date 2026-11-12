@@ -3,7 +3,6 @@
 //! to the next. With `tui: demo` and no router configured, made-up readings
 //! show what the card looks like.
 
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -12,22 +11,34 @@ use serde_json::Value;
 use super::{lock, Band, Port, RouterData, ROUTER_TIMEOUT};
 use crate::json::{int, list, num, text};
 use crate::net;
-use crate::state::Source;
+use crate::state::{RateTracker, Source};
 
 pub struct Router {
     /// None for made-up readings.
     url: Option<String>,
     http: ureq::Agent,
-    /// The last reading's counters, by name, and when it was taken.
-    last: Option<(Instant, HashMap<String, f64>)>,
+    /// Counters by name ("wan.rx", "port.eth0.tx"), timed by the router's
+    /// own uptime, which comes in the same reading: a slow reply does not
+    /// skew the rates, and neither does this computer sleeping between two
+    /// readings, when its own clock (Instant) stands still and the hours of
+    /// traffic would read as one second's.
+    rates: RateTracker,
     started: Instant,
+}
+
+/// Whether the agent has read what the router is set up with. Just started,
+/// it answers before that: no model, no ports, the WAN "down" at 0 bytes.
+/// Taken as a reading, the next real one would show all the traffic since
+/// the router's boot as one second's.
+fn settled(payload: &Value) -> bool {
+    !text(payload, "model").unwrap_or("").is_empty()
 }
 
 impl Router {
     pub fn new(url: Option<String>) -> Self {
         // Plain HTTP on the LAN; the TLS settings go unused.
         let http = net::http(net::home_ca_tls(), ROUTER_TIMEOUT);
-        Router { url, http, last: None, started: Instant::now() }
+        Router { url, http, rates: RateTracker::default(), started: Instant::now() }
     }
 
     pub fn poll(&mut self, source: &Mutex<Source<RouterData>>) -> Result<(), String> {
@@ -48,6 +59,9 @@ impl Router {
                             format!("unreadable reply: {e}")
                         }
                     })?;
+                if !settled(&payload) {
+                    return Err("its agent has not read the router yet".into());
+                }
                 self.read(&payload)
             }
         };
@@ -60,19 +74,12 @@ impl Router {
 
     /// One reading, with rates against the last one.
     fn read(&mut self, payload: &Value) -> RouterData {
-        let now = Instant::now();
-        let mut counters: HashMap<String, f64> = HashMap::new();
-        let last = self.last.take();
-        // Per second since the last reading; None for the first, or for a
-        // counter that went backwards (the router rebooted).
-        let mut rate = |key: String, value: Option<f64>| -> Option<f64> {
-            let value = value?;
-            counters.insert(key.clone(), value);
-            let (then, before) = last.as_ref()?;
-            let seconds = now.duration_since(*then).as_secs_f64();
-            let previous = *before.get(&key)?;
-            (seconds > 0.0 && value >= previous).then(|| (value - previous) / seconds)
-        };
+        let uptime = num(payload, "uptime");
+        let rates = &mut self.rates;
+        // Per second of the router's clock since the last reading; None
+        // without that clock, for the first reading, and for the first after
+        // a reboot (its uptime starts over).
+        let mut rate = |key: String, value: Option<f64>| uptime.and_then(|now| rates.rate(&key, value, now));
 
         let cpu = payload.get("cpu").cloned().unwrap_or_default();
         let busy = rate("cpu.busy".into(), num(&cpu, "busy"));
@@ -112,9 +119,9 @@ impl Router {
             .collect();
         let mem = payload.get("mem").cloned().unwrap_or_default();
         let mem_total = num(&mem, "total");
-        let data = RouterData {
+        RouterData {
             model: text(payload, "model").unwrap_or("").to_string(),
-            uptime: num(payload, "uptime"),
+            uptime,
             cpu_pct,
             mem_used: mem_total.zip(num(&mem, "available")).map(|(t, a)| (t - a).max(0.0)),
             mem_total,
@@ -126,9 +133,7 @@ impl Router {
             ports,
             wired_devices: int(payload, "wired_devices"),
             bands,
-        };
-        self.last = Some((now, counters));
-        data
+        }
     }
 }
 
@@ -167,9 +172,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn reading(rx: f64, busy: f64, total: f64) -> Value {
+    fn reading(uptime: f64, rx: f64, busy: f64, total: f64) -> Value {
         json!({
-            "model": "GT-BE98_PRO", "uptime": 10.0,
+            "model": "GT-BE98_PRO", "uptime": uptime,
             "cpu": {"busy": busy, "total": total},
             "mem": {"total": 2000.0, "available": 500.0},
             "temp": {"cpu": 69.7},
@@ -181,27 +186,38 @@ mod tests {
     }
 
     #[test]
-    fn rates_come_from_two_readings_and_not_across_a_reboot() {
+    fn rates_come_from_two_readings_by_the_routers_clock() {
         let mut r = Router::new(Some(String::new()));
-        let first = r.read(&reading(1000.0, 10.0, 100.0));
+        let first = r.read(&reading(100.0, 1000.0, 10.0, 100.0));
         assert_eq!(first.wan_down_bps, None);
         assert_eq!(first.cpu_pct, None);
         assert_eq!(first.mem_used, Some(1500.0));
         assert_eq!(first.bands[0].devices, None);
-        // Pretend the first reading was a second ago.
-        if let Some((then, _)) = r.last.as_mut() {
-            *then -= std::time::Duration::from_secs(1);
-        }
-        let second = r.read(&reading(3000.0, 30.0, 200.0));
-        let down = second.wan_down_bps.unwrap();
-        assert!((1900.0..=2000.0).contains(&down), "{down}");
+        // A second later on the router.
+        let second = r.read(&reading(101.0, 3000.0, 30.0, 200.0));
+        assert_eq!(second.wan_down_bps, Some(2000.0));
         assert!((second.cpu_pct.unwrap() - 20.0).abs() < 0.01);
         assert!(second.ports[0].down_bps.unwrap() > 0.0);
-        if let Some((then, _)) = r.last.as_mut() {
-            *then -= std::time::Duration::from_secs(1);
-        }
-        let rebooted = r.read(&reading(10.0, 1.0, 5.0));
+        // This computer slept an hour: the traffic of that hour is spread
+        // over the router's hour, not over the moment since the wake.
+        let woke = r.read(&reading(3701.0, 3000.0 + 3600.0 * 500.0, 40.0, 300.0));
+        assert_eq!(woke.wan_down_bps, Some(500.0));
+        // The router rebooted: its uptime starts over, and so do the rates.
+        let rebooted = r.read(&reading(5.0, 10.0, 1.0, 5.0));
         assert_eq!(rebooted.wan_down_bps, None);
         assert_eq!(rebooted.cpu_pct, None);
+    }
+
+    #[test]
+    fn an_agent_that_has_just_started_is_no_reading() {
+        // What router/agent answers before its first look at the router.
+        let starting = json!({
+            "model": "", "uptime": 500000.0,
+            "cpu": {"busy": 1, "total": 2}, "mem": {"total": 2000.0, "available": 500.0}, "temp": {"cpu": null},
+            "wan": {"up": false, "ip": "", "rx": 0, "tx": 0},
+            "ports": [], "wired_devices": null, "bands": [], "devices_age": null
+        });
+        assert!(!settled(&starting));
+        assert!(settled(&reading(500001.0, 9e12, 10.0, 100.0)));
     }
 }
