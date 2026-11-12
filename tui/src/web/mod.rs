@@ -1,6 +1,6 @@
 //! With --serve: the same sources as the terminal dashboard, served as the
 //! web page (static/) and its JSON instead of drawn here. The Mac app's
-//! window (app.py) shows the page; a browser on this computer can too.
+//! window (app/) shows the page; a browser on this computer can too.
 //!
 //! Binds 127.0.0.1 only. The one file it writes is ui.json, when the page's
 //! settings change.
@@ -49,7 +49,7 @@ pub fn run(config: Arc<Config>, shared: Arc<Shared>) -> ! {
         );
         exit(1);
     });
-    // Gone with whatever started it: app.py's window, or a terminal. A
+    // Gone with whatever started it: the app's window, or a terminal. A
     // force-quit app never runs its own clean-up, and a server left behind
     // would go on polling every source with no window, on a fanless Mac.
     // Its parent changing (to launchd) means that one is gone.
@@ -64,7 +64,7 @@ pub fn run(config: Arc<Config>, shared: Arc<Shared>) -> ! {
     let settings = Settings::new(config.root.clone(), &config.ui);
     let web = Arc::new(Web { config, shared, settings });
     web.set_history_window(web.settings.window());
-    // The first line app.py reads: where the page is.
+    // The first line the app (app/) reads: where the page is.
     eprintln!("dashboard  http://{address}");
     http::serve(listener, web)
 }

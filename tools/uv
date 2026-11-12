@@ -2,7 +2,7 @@
 # uv, confined to this repo. Use it for everything Python here:
 #
 #     tools/uv sync          # make .venv match uv.lock
-#     tools/uv run app.py
+#     tools/uv run probe.py
 #
 # uv lives in .tools/uv, the Python it manages in .tools/python and its
 # download cache in .tools/uv-cache, all git-ignored. Nothing here leans on
