@@ -3,16 +3,18 @@
 Suggested next steps, roughly by value. Nothing here is committed work — it is
 a list to pick from.
 
-## Built but unused
+## History
 
-**Card-expand history view.** `GET /api/history/{vmid}` has been serving PVE
-`rrddata` since the HTTP server was written and nothing calls it. Clicking a
-card could expand it to hour / day / week / month history, straight from PVE's
-own RRD files — no extra collection, no extra load. The response also carries
-PSI pressure metrics (`pressurecpusome`, `pressureiofull`, and the memory
-equivalents) that PVE exposes and the design spec never mentions.
+**Card-expand history view.** Clicking a card could expand it to hour / day /
+week / month history, straight from PVE's own RRD files (`rrddata`) — no
+extra collection, no extra load. PVE's reply also carries PSI pressure
+metrics (`pressurecpusome`, `pressureiofull`, and the memory equivalents)
+that the design spec never mentions.
 
-This is the largest capability currently sitting idle.
+Nothing serves it today. The Python server had `GET /api/history/{vmid}`
+for it, which nothing ever called, and it went with that server on
+2026-10-30 (`pvestats/server.py` in git history); the endpoint would be
+written again in `tui/src/web/`.
 
 ## Adds information
 

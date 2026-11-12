@@ -28,11 +28,12 @@ Per request, only files any user may read:
 Every 30 s, from a thread of its own: each pool's capacity from `zfs get
 used,available` (its root dataset: what the card shows as "used of
 usable"), TrueNAS's LAN address (a UDP socket connected towards the gateway,
-which sends nothing), and which pool TrueNAS runs from (the one mounted at
-`/`). Every 5 minutes: which disk is in which pool (`zpool list -v -H -P`),
-each disk's model and size. `/dev/zfs` is open to every user on TrueNAS, so
-`zpool` and `zfs` answer an ordinary user. Each run is killed after 5 s, and
-one that will not die stops any more from starting.
+which sends nothing), which pool TrueNAS runs from (the one mounted at
+`/`), and which disks there are, with each one's model and size. Every 5
+minutes: which disk is in which pool (`zpool list -v -H -P`). `/dev/zfs` is
+open to every user on TrueNAS, so `zpool` and `zfs` answer an ordinary user.
+Each run is killed after 5 s, and one that will not die stops any more from
+starting.
 
 Nothing is logged and nothing written. The server is the router agent's: one
 kept connection per client, at most 4 clients, answers at least 100 ms

@@ -222,11 +222,11 @@ fn handle(web: &Web, mut stream: TcpStream) {
     }
 }
 
-/// Refuses requests that did not come from this dashboard's own page, as
-/// server.py's middleware: Host must name this server; a browser's
-/// Sec-Fetch-Site must say same-origin (or a top-level navigation to the
-/// page); writes must come from this origin and carry JSON. A request with
-/// neither header is a local process, which could reach anything here anyway.
+/// Refuses requests that did not come from this dashboard's own page: Host
+/// must name this server; a browser's Sec-Fetch-Site must say same-origin
+/// (or a top-level navigation to the page); writes must come from this
+/// origin and carry JSON. A request with neither header is a local process,
+/// which could reach anything here anyway.
 fn own_page_only(port: u16, req: &Request) -> Option<Reply> {
     let mut hosts = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     if port == 80 {
@@ -274,8 +274,8 @@ fn route(c: &Web, req: &Request) -> Reply {
 }
 
 /// The page, with the saved appearance already on its <html> element, so
-/// the first paint is right with no client storage (pywebview's private
-/// mode wipes it at every launch).
+/// the first paint is right with no client storage (the app's window is a
+/// private one, with nothing kept from one launch to the next).
 fn index(c: &Web) -> Reply {
     let ui = c.settings.current();
     let theme = ui.get("theme").and_then(Value::as_str).unwrap_or("ice");
