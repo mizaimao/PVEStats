@@ -9,11 +9,11 @@
 const CACHE = "pvestats.appearance";
 const DEFAULTS = { theme: "ice", glow: 1, window: 180,
                    scanlines: false, grain: false, aurora: false };
-// Keyboard 1-8 map to these, in order. The rest are dropdown-only.
+// Keyboard 1-8 map to these, in order. The rest are picked from the chips.
 export const THEMES_ORDERED = ["ice", "midnight", "neon", "amber",
                                "synthwave", "matrix", "ember", "glass"];
 const THEMES = new Set([...THEMES_ORDERED,
-                        "vista", "win7", "snowleopard", "nord"]);
+                        "vista", "win7", "snowleopard"]);
 
 function cached() {
   try {
@@ -54,9 +54,10 @@ export function apply(settings) {
   return stored;
 }
 
-/* The saved appearance the server rendered onto <html> (handle_index). It
-   wins over the localStorage cache, which pywebview's private mode empties
-   at every launch: starting from it, the first paint is already right. */
+/* The saved appearance the server rendered onto <html> (index, in
+   tui/src/web/http.rs). It wins over the localStorage cache, which the app's
+   private window empties at every launch: starting from it, the first paint
+   is already right. */
 function rendered() {
   const root = document.documentElement;
   if (!root.dataset.theme) return {};
