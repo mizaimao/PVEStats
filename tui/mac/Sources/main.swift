@@ -6,9 +6,11 @@
 // press anywhere moves the window. It redraws itself whenever the window is
 // resized and draws nothing while the window can't be seen; quitting it (q
 // or Esc) quits the app, and quitting the app (Cmd-Q, or closing the window)
-// ends the dashboard. The Theme menu saves the chosen theme in the repo's
-// ui.json, where the dashboard takes it up within a second. The window is
-// see-through as Settings… (Cmd-,) says: the cards stay solid over it.
+// ends the dashboard; if the dashboard ends with a failure (a config.yaml it
+// cannot read), an alert shows what it said first. The Theme menu saves the
+// chosen theme in the repo's ui.json, where the dashboard takes it up within
+// a second. The window is see-through as Settings… (Cmd-,) says: the cards
+// stay solid over it.
 
 import AppKit
 import TermKit
@@ -17,12 +19,15 @@ import TermKit
 let openCols = 190
 let openRows = 50
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, LocalProcessTerminalViewDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, LocalProcessTerminalViewDelegate {
     private var term: TermWindow!
     private var terminal: TermView!
     private let dashboard = (Bundle.main.resourceURL ?? URL(fileURLWithPath: "."))
         .appendingPathComponent("pvestats-tui").path
-    private let root = Bundle.main.object(forInfoDictionaryKey: "PVEStatsRoot") as? String ?? ""
+    /// The repo whose .env and config.yaml the dashboard reads: the one the
+    /// app was built from, or PVESTATS_ROOT's, as PVEStats.app has it.
+    private let root = ProcessInfo.processInfo.environment["PVESTATS_ROOT"]
+        ?? (Bundle.main.object(forInfoDictionaryKey: "PVEStatsRoot") as? String ?? "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = mainMenu(app: "PVEStats", edit: [], menus: [themeMenu()])
@@ -78,7 +83,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal?.terminate()
     }
 
+    /// The dashboard has ended. On its own q or Esc (exit 0), or with this
+    /// app's quitting (a signal, so no exit code), the app goes with it. Any
+    /// other exit is a failure it said on its way out (a config.yaml it
+    /// cannot read, no .env, a panic): shown in an alert first, as the
+    /// window would otherwise close on it unread.
     func processTerminated(source: TerminalView, exitCode: Int32?) {
+        if let code = exitCode, code != 0 {
+            // What it printed, through the selection: SwiftTerm gives the
+            // window's text no other way.
+            source.selectAll()
+            let said = (source.getSelection() ?? "")
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .suffix(12)
+                .joined(separator: "\n")
+            source.selectNone()
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "The dashboard stopped"
+            alert.informativeText = said.isEmpty ? "pvestats-tui ended with exit code \(code)." : said
+            alert.runModal()
+        }
         NSApp.terminate(nil)
     }
 
@@ -108,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private func themeMenu() -> NSMenu {
         let menu = NSMenu(title: "Theme")
+        menu.delegate = self
         for theme in themes() {
             let item = NSMenuItem(title: theme.name, action: #selector(chooseTheme(_:)), keyEquivalent: "")
             item.target = self
@@ -139,15 +167,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         term.followBackgroundSoon()
     }
 
-    /// The Theme menu's tick, from ui.json each time the menu shows, as the
-    /// settings panel or the browser version may have changed it.
-    func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(chooseTheme(_:)) {
-            let file = URL(fileURLWithPath: root).appendingPathComponent("ui.json")
-            let saved = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-            item.state = item.representedObject as? String == saved?["theme"] as? String ? .on : .off
+    /// The Theme menu's tick, from the dashboard each time the menu shows:
+    /// ui.json's theme, as the settings panel or the browser version may
+    /// have changed it, or config.yaml's while ui.json names none.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let current = themes().first { $0.current }?.name
+        for item in menu.items where item.action == #selector(chooseTheme(_:)) {
+            item.state = item.representedObject as? String == current ? .on : .off
         }
-        return true
+    }
+
+    /// The Theme menu has no shortcuts. Without this answer AppKit brings
+    /// the menu up to date, which asks the dashboard for its themes, on
+    /// every key pressed with Cmd.
+    func menuHasKeyEquivalent(_ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>,
+                              action: UnsafeMutablePointer<Selector?>) -> Bool {
+        false
     }
 }
 
