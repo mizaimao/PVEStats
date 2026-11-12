@@ -53,7 +53,7 @@
    series, since they are not checked against the series hues.
 
    Every series pair below passes the CVD validator against its own surface:
-     midnight  ΔE 26.8   neon  ΔE 11.0   amber  ΔE 12.5   nord  ΔE 26.8
+     midnight  ΔE 26.8   neon  ΔE 11.0   amber  ΔE 12.5
    (worst adjacent pair, OKLab x100, protan/deutan; gate is 8.) */
 
 :root[data-theme="neon"] {
@@ -385,24 +385,6 @@
     radial-gradient(46vw 38vh at 76% 14%, rgba(77, 49, 115, 0.62), transparent 68%),
     radial-gradient(60vw 44vh at 40% 96%, rgba(51, 29, 90, 0.60), transparent 70%);
   background-attachment: fixed;
-}
-
-:root[data-theme="nord"] {
-  --good:       #a3be8c;
-  --warning:    #ebcb8b;
-  --critical:   #bf616a;
-  --surface-2:  #353c4a;
-  --panel-blur: 18px;
-  --plane:      #242933;
-  --surface:    #2e3440;
-  --ink:        #eceff4;
-  --ink-2:      #d8dee9;
-  --ink-muted:  #8f9bb0;
-  --grid:       #3b4252;
-  --baseline:   #4c566a;
-  --hairline:   rgba(216, 222, 233, 0.12);
-  --series-1:   #3987e5;
-  --series-2:   #d95926;
 }
 
 * { box-sizing: border-box; }

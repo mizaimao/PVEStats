@@ -59,7 +59,6 @@
       <button type="button" role="radio" value="vista" data-glow="glass">Vista</button>
       <button type="button" role="radio" value="win7" data-glow="glass">Windows 7</button>
       <button type="button" role="radio" value="snowleopard" data-glow="glass">Snow Leopard</button>
-      <button type="button" role="radio" value="nord">Nord</button>
     </div>
     <p>Changes surfaces, ink and the two series colors. Status colors
       (good / warning / critical) are tuned to each theme but keep their
@@ -104,11 +103,12 @@
     <b>1</b>–<b>8</b> switch the first eight themes. Theme, glow, texture
     and the history window below save to <code>ui.json</code> beside
     config.yaml; focus mode lasts for the session. The poll rates below are
-    fixed and shown for reference; each badge says whether its source could
-    honour a different rate.</p>
+    not set here and are shown for reference, as they are unless config.yaml
+    says otherwise; each badge says whether its source could honour a
+    different rate.</p>
 
   <div class="setting">
-    <label for="set-agent">ml60 GPU agent</label>
+    <label>ml60 GPU agent</label>
     <span class="derived">1s</span>
     <span class="applies ok">Would apply</span>
     <p>NVML reads take microseconds, so this is genuinely real-time and could
@@ -116,21 +116,24 @@
   </div>
 
   <div class="setting">
-    <label for="set-truenas">TrueNAS agent</label>
+    <label>TrueNAS agent</label>
     <span class="derived">2s</span>
-    <span class="applies ok">Would apply</span>
+    <span class="applies ok">config.yaml</span>
     <p>TrueNAS's own agent reads the kernel as it is asked, for 0.41 ms of
-      its CPU a poll, so this could be raised or lowered freely.</p>
+      its CPU a poll. <code>tui: nas_agent_every</code> in config.yaml sets
+      it, from 1 to 10 seconds.</p>
   </div>
 
   <div class="setting">
-    <label for="set-pve">Proxmox VE</label>
+    <label>Proxmox VE</label>
     <span class="derived">10s</span>
     <span class="applies capped">Floor 10s</span>
-    <p>Nothing faster would help. <code>pvestatd</code> recomputes guest
-      statistics on its own 10s cycle, so polling faster returns the same
-      numbers and only adds load and log lines. A hard property of PVE, not a
-      preference.</p>
+    <p>Nothing faster would help the API. <code>pvestatd</code> recomputes
+      guest statistics on its own 10s cycle, so asking faster returns the same
+      numbers and only adds load and log lines. With the Proxmox host agent
+      (<code>PVE_AGENT_URL</code>) the live figures come from the agent
+      instead, every 2s (<code>tui: pve_agent_every</code>, 1 to 10), and the
+      API is asked every 30s for what the agent cannot tell.</p>
   </div>
 
   <div class="setting">
