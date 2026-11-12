@@ -1,7 +1,8 @@
 //! PVEStats in a terminal: the app's collector and cards, for an always-on
 //! screen such as a Linux text console. With --serve, the same sources feed
 //! the web page instead (web/). Display only; it changes nothing on any
-//! machine it watches.
+//! machine it watches, but for the page's Stop button, which asks ml60's
+//! agent to unload a model (web/http.rs).
 
 mod config;
 mod format;
@@ -272,6 +273,13 @@ impl<W: Write> Write for Out<W> {
 fn open_tty() -> io::Result<Terminal<ratatui::backend::CrosstermBackend<Out<io::Stdout>>>> {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // Only the main thread's panic ends the screen. A poll's is caught
+        // by its poller and said on its card (sources::run_poller):
+        // restoring the terminal for it, or printing over the dashboard,
+        // would spoil a screen that goes on being drawn.
+        if thread::current().name() != Some("main") {
+            return;
+        }
         ratatui::restore();
         hook(info);
     }));

@@ -281,8 +281,10 @@ pub(crate) fn unix_seconds(ts: &str) -> Option<f64> {
             if digits.len() != 4 {
                 return None;
             }
-            let hours: i64 = digits[..2].parse().ok()?;
-            let minutes: i64 = digits[2..].parse().ok()?;
+            // By `get`: four bytes need not be four digits, and cutting
+            // inside a longer character would panic.
+            let hours: i64 = digits.get(..2)?.parse().ok()?;
+            let minutes: i64 = digits.get(2..)?.parse().ok()?;
             sign * (hours * 3600 + minutes * 60)
         }
     };
@@ -313,6 +315,9 @@ mod tests {
         assert_eq!(unix_seconds("2026-10-25T21:03:12"), unix_seconds("2026-10-25T21:03:12+00:00"));
         assert!(unix_seconds("2318-01-01T00:00:00Z").unwrap() > 1e10);
         assert_eq!(unix_seconds("yesterday"), None);
+        // An offset of the right length in bytes that is not four digits.
+        assert_eq!(unix_seconds("2026-10-25T14:03:12+0\u{e9}0"), None);
+        assert_eq!(unix_seconds("2026-10-25T14:03:1\u{e9}"), None);
     }
 
     #[test]
