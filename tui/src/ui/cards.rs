@@ -524,6 +524,19 @@ fn nic_role(name: &str, nic: &Nic, host: Option<&Host>) -> String {
     }
 }
 
+/// The width of the figures beside a NAS interface's graph: the longest is
+/// "peak 1023.9 MiB/s", and a saturated gigabit link is already past
+/// 100 MiB/s.
+const NAS_RATE_W: u16 = 17;
+
+/// The pool table's Status column: "● ONLINE" is 8 wide, and the column
+/// widens for a longer state on show (DEGRADED, FAULTED, SUSPENDED), the
+/// ones that must not be cut short. Never past the longest ZFS has.
+fn pool_status_w<'a>(states: impl Iterator<Item = Option<&'a str>>) -> u16 {
+    let longest = states.map(|s| s.map_or(1, |s| s.chars().count())).max().unwrap_or(0);
+    (2 + longest.min(9) as u16).max(8)
+}
+
 pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>, status: &Status) -> Card {
     let p = look.p;
     let data = nas.data.as_ref();
@@ -577,7 +590,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             up_value: nic.rx_bps.map_or(fmt::DASH.into(), fmt::rate_auto),
             down_value: nic.tx_bps.map_or(fmt::DASH.into(), fmt::rate_auto),
             label_w: 10,
-            value_w: 15,
+            value_w: NAS_RATE_W,
             capacity: nas.capacity(),
             floor: MIB,
             scale: None,
@@ -603,8 +616,8 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
             ]
         })
         .collect();
-    let pool_rows = data
-        .map_or(&[][..], |d| d.pools.as_slice())
+    let pools = data.map_or(&[][..], |d| d.pools.as_slice());
+    let pool_rows = pools
         .iter()
         .map(|pool| {
             // Usable space, from the root dataset: the raw zpool size counts
@@ -656,7 +669,7 @@ pub fn nas(look: &Look, slot: &Slot, host: Option<&Host>, nas: &Source<NasData>,
                 caption: None,
                 cols: vec![
                     Col { title: "Pool", width: 0, right: false, tint: None },
-                    Col { title: "Status", width: 8, right: false, tint: None },
+                    Col { title: "Status", width: pool_status_w(pools.iter().map(|p| p.status.as_deref())), right: false, tint: None },
                     // Wider bars, so Status sits nearer the names.
                     Col { title: "Capacity", width: 10, right: false, tint: None },
                     Col { title: "Used", width: 15, right: true, tint: None },
@@ -965,4 +978,35 @@ fn pct_chart(traces: Vec<Trace>, capacity: usize, interval: f64, caption: String
         weight: 1,
         sample_width,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_nas_interfaces_figures_fit_beside_its_graph() {
+        // Idle, a busy 100 Mbit link, a saturated gigabit one, the most
+        // that still reads in MiB/s, and 10 Gbit.
+        for rate in [0.0, 11.0 * MIB, 119.0 * MIB, 1023.94 * MIB, 1180.0 * MIB] {
+            for figure in [fmt::rate_auto(rate), format!("peak {}", fmt::rate_auto(rate))] {
+                assert!(figure.chars().count() <= NAS_RATE_W as usize, "{figure:?} is cut");
+            }
+        }
+    }
+
+    #[test]
+    fn a_pool_that_is_not_online_has_its_state_in_full() {
+        let width = |states: &[Option<&str>]| pool_status_w(states.iter().copied());
+        assert_eq!(width(&[]), 8);
+        assert_eq!(width(&[Some("ONLINE"), Some("ONLINE")]), 8);
+        assert_eq!(width(&[Some("ONLINE"), None]), 8);
+        for state in ["DEGRADED", "FAULTED", "OFFLINE", "UNAVAIL", "REMOVED", "SUSPENDED"] {
+            let cell = format!("● {state}");
+            assert!(width(&[Some("ONLINE"), Some(state)]) as usize >= cell.chars().count(), "{cell:?} is cut");
+        }
+        // Whatever an agent sends, the column stays a column.
+        let long = "X".repeat(300);
+        assert_eq!(width(&[Some(long.as_str())]), 11);
+    }
 }
