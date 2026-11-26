@@ -78,11 +78,13 @@ the running one), `systemctl restart pvestats-pve`.
 
 ## Removing it completely
 
-Everything it put on the host is the program, its unit and the unit's boot
-link; its user exists only while it runs and keeps no files.
+Everything it put on the host is the program, its unit, the unit's boot
+link and any drop-in made with `systemctl edit`; its user exists only
+while it runs and keeps no files.
 
     ssh root@pve.lan 'systemctl disable --now pvestats-pve
         rm -f /etc/systemd/system/pvestats-pve.service /usr/local/bin/pvestats-pve
+        rm -rf /etc/systemd/system/pvestats-pve.service.d
         systemctl daemon-reload
         systemctl status pvestats-pve 2>&1 | head -1; ls /usr/local/bin/pvestats-pve 2>&1'
 

@@ -86,7 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, LocalP
     /// The dashboard has ended. On its own q or Esc (exit 0), or with this
     /// app's quitting (a signal, so no exit code), the app goes with it. Any
     /// other exit is a failure it said on its way out (a config.yaml it
-    /// cannot read, no .env, a panic): shown in an alert first, as the
+    /// cannot read, a panic; a missing .env is no failure, only cards that
+    /// say what is not set up): shown in an alert first, as the
     /// window would otherwise close on it unread.
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         if let code = exitCode, code != 0 {

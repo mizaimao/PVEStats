@@ -133,7 +133,12 @@ Start it at boot from `/jffs/scripts/services-start`, adding one line and
 leaving any others (amtm's, AdGuard Home's) as they are:
 
     ssh router 'f=/jffs/scripts/services-start; [ -f $f ] || printf "#!/bin/sh\n" > $f;
+        [ -z "$(tail -c 1 $f)" ] || echo >> $f;
         grep -q pvestats $f || echo "/jffs/addons/pvestats/service.sh start" >> $f; chmod 755 $f'
+
+The middle line ends the file's last line first, if it has no newline, so
+the agent's line never joins another one (AdGuard Home's, say) that its
+removal would then take too.
 
 Start it now and check it from the LAN:
 
@@ -147,9 +152,19 @@ Everything it put on the router: `/jffs/addons/pvestats/` (the program and
 the admin account, the only one Merlin has, so no user is left behind. One
 login:
 
-    ssh router '/jffs/addons/pvestats/service.sh stop; sed -i "/pvestats/d" /jffs/scripts/services-start;
+    ssh router 'grep -n pvestats /jffs/scripts/services-start'
+
+That should print the one line, `/jffs/addons/pvestats/service.sh start`,
+alone. If anything else shares it (an install before 2026-11-25 did not
+check for a missing newline), take only the agent's part out by hand
+instead of the line. Then:
+
+    ssh router '/jffs/addons/pvestats/service.sh stop;
+        sed -i "/^\/jffs\/addons\/pvestats\/service\.sh start\$/d" /jffs/scripts/services-start;
         rm -r /jffs/addons/pvestats; ls /jffs/addons/pvestats 2>&1; grep -c pvestats /jffs/scripts/services-start'
 
-The last two lines should say the folder is gone and count 0. What it left
+The last two lines should say the folder is gone and count 0. If the
+install made `services-start` and nothing else is in it but `#!/bin/sh`,
+it can go too. What it left
 in `/tmp` (its lock and pid files) goes at the next reboot. Then empty
 `ROUTER_AGENT_URL` in `.env` and run `tui/deploy`: the router card goes.

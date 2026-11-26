@@ -97,9 +97,10 @@ From the Mac, after `agent/build`:
 
 Then on ml60:
 
-    sudo install -m 755 /tmp/pvestats-agent /opt/pvestats-agent/pvestats-agent
+    sudo install -D -m 755 /tmp/pvestats-agent /opt/pvestats-agent/pvestats-agent
     sudo cp /tmp/pvestats-agent.service /etc/systemd/system/
     sudo systemctl daemon-reload
+    sudo systemctl enable pvestats-agent
     sudo systemctl restart pvestats-agent
     sleep 1
     systemctl status pvestats-agent --no-pager | head -5

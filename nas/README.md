@@ -5,6 +5,11 @@ TrueNAS card shows as JSON over HTTP, read from the kernel and ZFS inside
 TrueNAS, instead of through TrueNAS's API (middlewared) and Proxmox's. Linear
 MOO-192. Installed 2026-10-26; the terminal dashboard reads it (NAS_AGENT_URL).
 
+Agents never ssh or scp to the NAS, not even read-only (Frank's rule,
+2026-11-24). Every step in this file that logs in to it (install, update,
+removal, a test run) is Frank's to run: hand him the commands. Agents only
+check it from the outside, with `curl` on its URL.
+
 ## Why
 
 Measured on TrueNAS on 2026-10-26 (2 min with only the kiosk polling, then 2
