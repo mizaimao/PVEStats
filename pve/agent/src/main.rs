@@ -17,8 +17,12 @@
 //! keep-alive). At most 4 clients at once; a connection with no request for
 //! 30 seconds is closed. Answers are at least 100 ms apart across all of
 //! them, each request's head is given at most 3 seconds once it has begun,
-//! and what a request asks is never looked at. The server is the router
-//! agent's (router/agent), as audited there.
+//! and of what a request asks only its Host is looked at: a request that
+//! names a host rather than an address is refused (403), so a web page
+//! that points a name of its own at this address (DNS rebinding) cannot
+//! read the VMs through a browser on the LAN. The server is the router
+//! agent's (router/agent), as audited there, with that check added
+//! (2026-11-25), which the router's does not have.
 //!
 //!     pvestats-pve --listen 10.10.10.100:9838
 //!     pvestats-pve --once      the JSON once, for trying it by hand
@@ -106,11 +110,18 @@ fn serve(listener: &TcpListener) -> ! {
 }
 
 /// One client's connection, answered request after request until it is
-/// idle for IDLE_LIMIT, asks to close, or sends anything unexpected. What a
-/// request asks is never looked at; every one gets the same answer.
+/// idle for IDLE_LIMIT, asks to close, or sends anything unexpected. Of what
+/// a request asks only its Host is looked at: one that names a host gets
+/// 403 and the connection closes; every other gets the same answer.
 fn client(mut stream: TcpStream, last: &Mutex<Option<Instant>>) {
     let mut buf: Vec<u8> = Vec::new();
     while let Some(head) = next_head(&mut stream, &mut buf) {
+        if !host_allowed(&head) {
+            let _ = stream.set_write_timeout(Some(REQUEST_LIMIT));
+            let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let _ = stream.shutdown(Shutdown::Write);
+            return;
+        }
         let keep = keep_alive(&head);
         // Answers at least MIN_GAP apart, across all clients.
         {
@@ -134,6 +145,22 @@ fn client(mut stream: TcpStream, last: &Mutex<Option<Instant>>) {
             return;
         }
     }
+}
+
+/// Whether a request names this agent by an address ("10.10.10.100:9838",
+/// "[fe80::1]:9838"), or names nothing. A browser sends the name in the
+/// page's address bar, so a page whose own name was pointed here sends that.
+fn host_allowed(head: &str) -> bool {
+    let host = head.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim().eq_ignore_ascii_case("host").then(|| value.trim())
+    });
+    let Some(host) = host else { return true };
+    let address = match host.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or("", |(ip, _)| ip),
+        None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+    };
+    address.parse::<std::net::IpAddr>().is_ok()
 }
 
 /// Where a request's head ends, and where what follows it starts: at its
@@ -416,6 +443,30 @@ mod tests {
         assert!(!keep_alive("POST / HTTP/1.1\r\nContent-Length: 5"), "a body is not read, so the connection goes");
     }
 
+    #[test]
+    fn only_an_address_as_the_host() {
+        for ok in ["10.10.10.100:9838", "10.10.10.100", "[fe80::1]:9838", "[::1]"] {
+            assert!(host_allowed(&format!("GET / HTTP/1.1\r\nHost: {ok}")), "{ok}");
+        }
+        assert!(host_allowed("GET / HTTP/1.0"), "no Host at all: curl by hand over HTTP/1.0");
+        for refused in ["evil.example:9838", "pve.lan", "10.10.10.100.nip.io:9838", "", "[evil]:9838"] {
+            assert!(!host_allowed(&format!("GET / HTTP/1.1\r\nhost: {refused}")), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_name_as_the_host_is_refused_and_closed() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || serve(&listener));
+        let mut stream = TcpStream::connect(addr).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        stream.write_all(b"GET / HTTP/1.1\r\nHost: evil.example:9838\r\n\r\nGET / HTTP/1.1\r\nHost: 10.10.10.100\r\n\r\n").unwrap();
+        let mut got = String::new();
+        let _ = stream.read_to_string(&mut got);
+        assert!(got.starts_with("HTTP/1.1 403 Forbidden") && !got.contains("200 OK"), "{got}");
+    }
+
     /// Many requests over one connection, pipelined ones too, and a client
     /// past the limit closed at once.
     #[test]
@@ -426,8 +477,8 @@ mod tests {
         let mut stream = TcpStream::connect(addr).unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let mut got = Vec::new();
-        stream.write_all(b"GET / HTTP/1.1\r\nHost: r\r\n\r\nGET / HTTP/1.1\r\nHost: r\r\n\r\n").unwrap();
-        stream.write_all(b"GET / HTTP/1.1\r\nHost: r\r\nConnection: close\r\n\r\n").unwrap();
+        stream.write_all(b"GET / HTTP/1.1\r\nHost: 10.10.10.100:9838\r\n\r\nGET / HTTP/1.1\r\nHost: 10.10.10.100\r\n\r\n").unwrap();
+        stream.write_all(b"GET / HTTP/1.1\r\nHost: 10.10.10.100:9838\r\nConnection: close\r\n\r\n").unwrap();
         let mut chunk = [0u8; 4096];
         while let Ok(n) = stream.read(&mut chunk) {
             if n == 0 {

@@ -38,7 +38,12 @@ www-data only.
 
 There is no authentication, as with the router's agent: anyone on the LAN can
 read these counters, and four clients that keep asking can hold every slot,
-which denies the agent to others but does not load the host.
+which denies the agent to others but does not load the host. A request must
+name the agent by its address (`Host: 10.10.10.100:9838`), as the dashboard
+and `curl http://10.10.10.100:9838/` do; one that names a host instead gets
+403 (since 2026-11-25). That stops a web page anyone on the LAN opens from
+pointing a name of its own at this address (DNS rebinding) and reading the
+VM list through their browser.
 
 ## Building
 
@@ -105,7 +110,8 @@ kill %1; rm /tmp/pvestats-pve
 
 The server is the router agent's (`router/agent`): one kept connection per
 client, at most 4 clients, answers at least 100 ms apart, idle connections
-closed after 30 s.
+closed after 30 s, and (since 2026-11-25, unlike the router's) a request that
+names a host rather than the address refused with 403.
 
 ## Measured against the API (2026-10-26)
 
