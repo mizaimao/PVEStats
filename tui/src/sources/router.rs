@@ -13,6 +13,9 @@ use crate::json::{int, list, num, text};
 use crate::net;
 use crate::state::{RateTracker, Source};
 
+/// Seconds after which the router's device counts are too old to show.
+const DEVICES_OLD: f64 = 120.0;
+
 pub struct Router {
     /// None for made-up readings.
     url: Option<String>,
@@ -104,13 +107,18 @@ impl Router {
                 }
             })
             .collect();
+        // The device counts come from the agent's slow round, every 30 s. A
+        // `wl` that keeps failing, or one stuck in the driver, leaves them as
+        // they last were, and the agent says how old: past four rounds they
+        // are unknown rather than shown as current.
+        let counted = num(payload, "devices_age").is_none_or(|age| age <= DEVICES_OLD);
         let bands = list(payload, "bands")
             .iter()
             .map(|b| {
                 let name = text(b, "name").unwrap_or("?").to_string();
                 Band {
                     on: b.get("on").and_then(Value::as_bool).unwrap_or(false),
-                    devices: int(b, "devices"),
+                    devices: int(b, "devices").filter(|_| counted),
                     down_bps: rate(format!("band.{name}.tx"), num(b, "tx")),
                     up_bps: rate(format!("band.{name}.rx"), num(b, "rx")),
                     name,
@@ -131,7 +139,7 @@ impl Router {
             wan_down_bps,
             wan_up_bps,
             ports,
-            wired_devices: int(payload, "wired_devices"),
+            wired_devices: int(payload, "wired_devices").filter(|_| counted),
             bands,
         }
     }
@@ -206,6 +214,21 @@ mod tests {
         let rebooted = r.read(&reading(5.0, 10.0, 1.0, 5.0));
         assert_eq!(rebooted.wan_down_bps, None);
         assert_eq!(rebooted.cpu_pct, None);
+    }
+
+    #[test]
+    fn device_counts_the_agent_has_not_renewed_are_unknown() {
+        let mut r = Router::new(Some(String::new()));
+        let mut counted = reading(100.0, 1000.0, 10.0, 100.0);
+        counted["bands"][0]["devices"] = json!(6);
+        counted["wired_devices"] = json!(11);
+        counted["devices_age"] = json!(25);
+        let fresh = r.read(&counted);
+        assert_eq!((fresh.bands[0].devices, fresh.wired_devices), (Some(6), Some(11)));
+        // `wl` stuck for ten minutes: the same counts, no longer current.
+        counted["devices_age"] = json!(600);
+        let old = r.read(&counted);
+        assert_eq!((old.bands[0].devices, old.wired_devices), (None, None));
     }
 
     #[test]
