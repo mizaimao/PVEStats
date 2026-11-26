@@ -42,6 +42,8 @@ Frank's rules for this project are in his knowledgebase
   reviewed commit, so a change reaches it only through review and him. A deploy turns
   it back on, so check `tui/kiosk status` before deploying while Frank has
   it off, and ask him (Frank, 2026-10-26: he turns it off to measure power).
+  `tui/deploy` checks too: it stops while the dashboard is paused or
+  stopped, and `--force` deploys anyway, only with his OK.
 - `tui: demo: true` in the screen machine's copy of config.yaml puts
   made-up models and GPU processes on ml60's card; the next deploy, which
   copies config.yaml over, takes it off again.

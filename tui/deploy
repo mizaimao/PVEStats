@@ -4,6 +4,8 @@
 #
 #   tui/deploy           test, build, copy, restart
 #   tui/deploy --check   show the machines it would use and test the logins
+#   tui/deploy --force   the same, even while the kiosk's dashboard is
+#                        paused or stopped (only with Frank's OK)
 #
 # The machines come from tui/deploy.conf, which is git-ignored: copy
 # tui/deploy.conf.example and fill it in. Nothing about them is written here.
@@ -39,6 +41,20 @@ if [ "${1:-}" = "--check" ]; then
     on_screen true && echo "screen login ok"
     exit 0
 fi
+
+# Frank pauses the kiosk (tui/kiosk off) to measure power, or leaves it
+# stopped; a deploy would turn it back on, or copy a version with nothing
+# to start it. So it stops here first and says so, unless --force. A
+# screen machine that cannot say (no kiosk-remote there yet) goes ahead.
+state=$(on_screen "\"$S/tui/kiosk-remote\" status" 2>/dev/null || true)
+dashboard=$(printf '%s' "$state" | sed -n 's/.*"dashboard":"\([a-z]*\)".*/\1/p')
+case $dashboard in
+    paused | stopped)
+        if [ "${1:-}" != "--force" ]; then
+            echo "the kiosk's dashboard is $dashboard: ask Frank before deploying (tui/deploy --force to go ahead)" >&2
+            exit 2
+        fi ;;
+esac
 
 echo "== test and build on $BUILD_HOST"
 send_to_build ./tui ./certs
