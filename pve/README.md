@@ -133,6 +133,14 @@ network counters to the megabyte (the API up to 10 s behind), host memory
 exactly. On a 24-thread host both costs are negligible; the agent's gain is
 figures every second, not CPU.
 
+Measured again on 2026-11-25, after the Host check went in: 600 requests
+over one kept connection from the build machine cost the installed agent
+431 ms of CPU, 0.72 ms a request. The check itself takes 75 ns a request
+(timed alone, a million calls), about 3 ms of CPU a day at the
+dashboard's pace; old and new builds side by side on the build machine
+came out within the noise of each other (154 and 159 µs a request,
+three rounds each, spread 141 to 175).
+
 ## The answer
 
 ```

@@ -265,6 +265,15 @@ journal data in `/run` (tmpfs) rather than on disk. That affects every service
 on ml60, not just this one, so it is your call rather than something the unit
 should assume.
 
+## Measured (2026-11-25)
+
+On ml60, over the same 3 minutes at one request a second, as the dashboard
+asks: the build before 2026-11-25 (ca713d9) used 820 ms of CPU, the new
+build 770 ms, both run by hand without the unit, and the installed one,
+new and under the unit's added limits, 770 ms. About 0.4% of one core,
+the GPU's background readings included; the limits cost nothing that
+shows.
+
 ## Notes
 
 If Ollama runs in Docker, its PIDs are namespaced, so `procs[].name` will not
