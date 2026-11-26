@@ -138,13 +138,19 @@ impl<T> Source<T> {
     /// Charts place samples one interval apart, so a failed poll that added
     /// nothing would draw an outage as a continuous line and misdate every
     /// older sample. Each series that got no value this poll gets a gap.
+    ///
+    /// A series with nothing in its whole window (a guest that has stopped,
+    /// an interface that has gone) is dropped; a value creates it again.
     pub fn end_poll(&mut self) {
         let maxlen = self.maxlen;
-        for (key, buf) in &mut self.series {
-            if !self.filled.contains(key) {
-                append(buf, None, maxlen);
+        let filled = &self.filled;
+        self.series.retain(|key, buf| {
+            if filled.contains(key) {
+                return true;
             }
-        }
+            append(buf, None, maxlen);
+            buf.len() < maxlen || buf.iter().any(Option::is_some)
+        });
         self.filled.clear();
     }
 
@@ -273,11 +279,15 @@ mod tests {
         s.push("a", Some(3.0));
         s.end_poll(); // b missed this poll
         assert_eq!(s.series("b").unwrap(), &[Some(2.0), None]);
-        for _ in 0..5 {
+        for _ in 0..3 {
             s.end_poll();
         }
-        assert_eq!(s.series("a").unwrap().len(), 4);
-        assert!(s.series("a").unwrap().iter().all(Option::is_none));
+        assert_eq!(s.series("a").unwrap(), &[Some(3.0), None, None, None]);
+        // A whole window with nothing: gone, until a value comes again.
+        s.end_poll();
+        assert!(s.series("a").is_none());
+        s.push("a", Some(4.0));
+        assert_eq!(s.series("a").unwrap(), &[Some(4.0)]);
     }
 
     #[test]
