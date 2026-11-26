@@ -67,20 +67,25 @@ alone.
   and no admin role.
 - **Capabilities:** none (`CapabilityBoundingSet=` empty, `NoNewPrivileges`).
 - **Files:** the whole filesystem is read-only (`ProtectSystem=strict`), with
-  a private empty `/tmp`. `/home`, `/root` and `/run/user` are hidden, and
-  the kernel's tunables, modules and cgroups are read-only.
+  a `/tmp` and `/var/tmp` of its own in memory, 16 MB each
+  (`TemporaryFileSystem`), for `zpool` and `zfs`. `/home`, `/root` and `/run/user` are hidden, and the
+  kernel's tunables, modules and cgroups are read-only. (Until 2026-11-25 it
+  had `PrivateTmp`, which makes folders in the host's `/tmp` and `/var/tmp`
+  at each start, on disk.)
 - **Devices:** it can open any device every user may open. That includes
   `/dev/zfs`, which `zpool` and `zfs` need. So `PrivateDevices` stays off,
   and so does `ProtectClock`, because it quietly closes every device except
   the clock's.
 - **Network:** IPv4 and IPv6 sockets only. It listens on 10.10.10.2:9839.
 - **Bounds:** 64 open files, 16 tasks, no core files. A start that fails is
-  retried every 30 s, and it gives up after 10 starts within 10 minutes. 10
-  starts 30 s apart fit inside that window, so it gives up after about 5
-  minutes. That is long enough for the network to come up at boot, and
-  limits a crash loop to a few dozen journal lines. Its own error line,
-  such as "cannot listen on …", goes to the journal; nothing per request
-  does.
+  retried every 2 minutes, for good (since 2026-11-25; before, it gave up
+  after about 5 minutes and stayed down until someone reset it, which a
+  network slow at boot could cause). The same 2 minutes follow a crash of a
+  running agent, the NAS card empty meanwhile. A crash loop is then about
+  six journal lines every 2 minutes (its own error and systemd's lines for
+  the exit, the scheduled restart and the start), some 4,000 a day, until
+  someone notices the card empty. Its own error line, such as "cannot
+  listen on …", goes to the journal; nothing per request does.
 - **Shutdown:** it is stopped before its dataset is unmounted
   (`RequiresMountsFor`). While it runs, it keeps that dataset busy. Before
   exporting the pool or locking the dataset, run
@@ -97,6 +102,11 @@ Checked on TrueNAS, as `pvestats`, in user-level units (2026-10-26):
   user namespace that a user-level unit needs. The system service runs
   outside such a namespace.
 
+The command's changes of 2026-11-25 (`TemporaryFileSystem`, capped at
+16 MB each, and `StartLimitIntervalSec=0`) were not run on TrueNAS before
+Frank's change: `systemd-run` on the build machine (systemd 257) accepts
+them. Step 3 of "To change the command" is the check on TrueNAS itself.
+
 ## Installing (done 2026-10-26; only with Frank's go-ahead)
 
 1. From the repo, after `nas/build`, copy the program into pvestats's home:
@@ -112,7 +122,7 @@ Checked on TrueNAS, as `pvestats`, in user-level units (2026-10-26):
    - Timeout: 10
    - Command (one line):
 
-         systemd-run --unit=pvestats-nas --uid=pvestats -p Restart=always -p RestartSec=30 -p StartLimitIntervalSec=600 -p StartLimitBurst=10 -p StandardOutput=null -p StandardError=journal -p RequiresMountsFor=/mnt/CompoundZ2FS/NAS/pvestats -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes -p ProtectHostname=yes -p RestrictAddressFamilies="AF_INET AF_INET6" -p RestrictNamespaces=yes -p LockPersonality=yes -p MemoryDenyWriteExecute=yes -p RestrictRealtime=yes -p SystemCallArchitectures=native -p CapabilityBoundingSet= -p LimitNOFILE=64 -p TasksMax=16 -p LimitCORE=0 /mnt/CompoundZ2FS/NAS/pvestats/pvestats-nas --listen 10.10.10.2:9839
+         systemd-run --unit=pvestats-nas --uid=pvestats -p Restart=always -p RestartSec=120 -p StartLimitIntervalSec=0 -p StandardOutput=null -p StandardError=journal -p RequiresMountsFor=/mnt/CompoundZ2FS/NAS/pvestats -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=yes -p TemporaryFileSystem="/tmp:mode=1777,size=16M /var/tmp:mode=1777,size=16M" -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes -p ProtectHostname=yes -p RestrictAddressFamilies="AF_INET AF_INET6" -p RestrictNamespaces=yes -p LockPersonality=yes -p MemoryDenyWriteExecute=yes -p RestrictRealtime=yes -p SystemCallArchitectures=native -p CapabilityBoundingSet= -p LimitNOFILE=64 -p TasksMax=16 -p LimitCORE=0 /mnt/CompoundZ2FS/NAS/pvestats/pvestats-nas --listen 10.10.10.2:9839
 
 3. To start it now without a reboot, go to System › Shell and run the same
    command with `sudo` in front. systemd refuses the name while an earlier
@@ -136,8 +146,21 @@ To update:
    place.
 4. In TrueNAS's shell, run `sudo systemctl restart pvestats-nas`.
 
-If it gave up after failed starts, run `sudo systemctl reset-failed
-pvestats-nas` first; until then, `systemctl status` shows it as failed.
+If it gave up after failed starts (only the command from before
+2026-11-25 does), run `sudo systemctl reset-failed pvestats-nas` first;
+until then, `systemctl status` shows it as failed.
+
+To change the command (as on 2026-11-25), Frank:
+
+1. In TrueNAS's web UI, System › Advanced Settings › Init/Shutdown Scripts,
+   edit the PVEStats entry and paste the new Command from step 2 of
+   Installing.
+2. In System › Shell, run
+   `sudo systemctl stop pvestats-nas; sudo systemctl reset-failed pvestats-nas`,
+   then the same command with `sudo` in front, to start it now.
+3. An agent then checks it from the outside: `curl -s http://10.10.10.2:9839/`
+   must list the interfaces, disks and pools (pools come from `zpool`, so
+   they show its `/tmp` works).
 
 ## Removing it completely
 
