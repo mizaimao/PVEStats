@@ -109,6 +109,16 @@ fn reason(status: u16) -> &'static str {
     }
 }
 
+/// A connection's place in the count, given back however its thread ends:
+/// a handler that panicked would otherwise keep it for good.
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub fn serve(listener: TcpListener, web: Arc<Web>) -> ! {
     let active = Arc::new(AtomicUsize::new(0));
     loop {
@@ -118,14 +128,13 @@ pub fn serve(listener: TcpListener, web: Arc<Web>) -> ! {
                     continue; // closed at once, unread
                 }
                 active.fetch_add(1, Ordering::SeqCst);
-                let (c, a) = (Arc::clone(&web), Arc::clone(&active));
-                let spawned = thread::Builder::new().stack_size(512 * 1024).spawn(move || {
+                let (c, slot) = (Arc::clone(&web), Slot(Arc::clone(&active)));
+                // A thread the system refuses drops its closure, and the
+                // slot with it.
+                let _ = thread::Builder::new().stack_size(512 * 1024).spawn(move || {
+                    let _slot = slot;
                     handle(&c, stream);
-                    a.fetch_sub(1, Ordering::SeqCst);
                 });
-                if spawned.is_err() {
-                    active.fetch_sub(1, Ordering::SeqCst);
-                }
             }
             // Out of file descriptors, say: wait rather than spin.
             Err(_) => thread::sleep(Duration::from_millis(100)),

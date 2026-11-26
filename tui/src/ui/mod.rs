@@ -325,7 +325,7 @@ impl Guests<'_> {
         let mut best: Option<(usize, u16)> = None;
         for rows in 1..=n {
             let across = self.counts(rows)[0] as u16;
-            let card_w = (width + 1) / across - 1;
+            let card_w = ((width + 1) / across).saturating_sub(1);
             let card_h = height / rows as u16;
             if card_w < GUEST_NARROWEST || card_h < 4 {
                 continue;
@@ -395,7 +395,7 @@ impl Guests<'_> {
             let h = area.height / rows as u16 + u16::from((r as u16) < area.height % rows as u16);
             let k = row.len() as u16;
             let spare = area.width + 1 - k * ((area.width + 1) / k);
-            let width = |i: usize| (area.width + 1) / k - 1 + u16::from((i as u16) < spare);
+            let width = |i: usize| ((area.width + 1) / k).saturating_sub(1) + u16::from((i as u16) < spare);
             // One chart height for the whole row, so its cards' lines stay
             // level: the rows the fullest card leaves over.
             let chart = row
@@ -680,6 +680,9 @@ mod tests {
         assert_eq!(rows, vec![vec![102, 103, 211], vec![107, 108]]);
         // Too little room for CPU and memory on a card: the one-line list.
         assert_eq!(g.rows(57, 3), None);
+        // Narrower than one column per guest: no row fits, rather than a
+        // card width that wraps around.
+        assert_eq!(g.rows(3, 12), None);
     }
 
     #[test]
