@@ -257,7 +257,7 @@ export function gpuCard(guest) {
         pcieLink.setLabel(pcie.max_gen ? `PCIe · max ${pcie.max_gen}.0` : "PCIe");
         // One decimal: the link idles well under 1 MiB/s, which rounded to "1".
         pcieRate.set(pcie.rx_kbps == null ? "–"
-          : `${(pcie.rx_kbps / 1024).toFixed(1)} / ${(pcie.tx_kbps / 1024).toFixed(1)}`);
+          : `${(pcie.rx_kbps / 1024).toFixed(1)} / ${pcie.tx_kbps == null ? "–" : (pcie.tx_kbps / 1024).toFixed(1)}`);
         // The same models update in place, each Stop keeping its node, so a
         // press or keyboard focus survives the tick; the table used to be
         // rebuilt every second, which could swallow a first click. Only a
@@ -292,7 +292,7 @@ export function gpuCard(guest) {
           models.setCaption(note ? `Loaded models · ${note}` : "Loaded models");
         }
         procs.set((gpu.procs || []).map(p => [
-          p.name || "?", String(p.pid), p.vram == null ? "–" : `${fmt.gib(p.vram)} GiB`,
+          p.name || "?", p.pid == null ? "–" : String(p.pid), p.vram == null ? "–" : `${fmt.gib(p.vram)} GiB`,
         ]));
         spark.update(history.agent, g.gpu_status && g.gpu_status.capacity);
       } else {
@@ -651,7 +651,10 @@ export const nodeCard = (() => {
     }
     // Trim pve-manager's build hash — it is noise at a glance.
     const version = (node.pveversion || "").split("/").slice(0, 2).join(" ");
-    built.sub.textContent = `${node.cores} cores / ${node.cpus} threads · ${version}`;
+    // Either count may be missing from PVE's reply: left out, not "null".
+    const counts = [node.cores != null && `${node.cores} cores`,
+                    node.cpus != null && `${node.cpus} threads`].filter(Boolean).join(" / ");
+    built.sub.textContent = [counts, version].filter(Boolean).join(" · ");
     built.load.set((node.loadavg || []).map(v => v.toFixed(2)).join(" / "));
     built.up.set(fmt.uptime(node.uptime));
     built.guests.set(`${node.guests_running} / ${node.guests_total}`);
