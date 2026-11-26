@@ -3,47 +3,21 @@
 Suggested next steps, roughly by value. Nothing here is committed work — it is
 a list to pick from.
 
-## From the audit of 2026-11-25
+## Left from the audit of 2026-11-25
 
-Checked against the code; not done, because each needs Frank's call or an
-install on a homelab machine (two audits first, then his yes).
+The rest of that audit was done and installed the same day (MOO-325,
+MOO-326). Each of these would mean a new agent on that machine: two
+audits first, then Frank's yes.
 
-**Agents**
-- ml60's unit (`agent/pvestats-agent.service`) has four sandboxing lines
-  where pve's has a dozen. It runs as `ollama` and is reachable through
-  Caddy. Worth adding `CapabilityBoundingSet=`, `ProtectKernel*`,
-  `RestrictNamespaces`, `RestrictAddressFamilies`, `IPAddressDeny=any` with
-  loopback allowed, and `InaccessiblePaths=-/usr/share/ollama/.ollama`,
-  tested on ml60 for what NVML tolerates.
-- The pve agent answers any Host header, so a web page someone on the LAN
-  opens could read the VM list by DNS rebinding. Refuse a Host other than
-  its own address.
-- NAS: `PrivateTmp=yes` has systemd make folders under /tmp and /var/tmp at
-  each start, for an agent that never writes; it can go. And
-  `StartLimitBurst=10` in 600 s gives up for good after about 5 minutes of
-  failed starts (the network late after boot, say).
+- The NAS and router agents answer any Host header, as the Proxmox agent
+  did until 2026-11-25, so a web page someone on the LAN opens could read
+  their figures by DNS rebinding. The Proxmox agent's check
+  (`host_allowed`) would carry over.
 - Router agent: reads every port's link speed every 30 s, which nothing
   shows; sends 0 rather than null when `/proc/net/dev` cannot be read,
   which the next good reading turns into one huge spike; two 5 GHz radios
-  would share one name (not on the GT-BE98 Pro).
-- ml60 agent: an IPv6 `OLLAMA_URL` gets a Host header without brackets; an
-  unload while Ollama is down answers "not loaded" for 5 s instead of 502.
-
-**Dashboard**
-- The page's ml60 card shows Proxmox's CPU, network, disk, address and
-  uptime where the terminal shows ml60's own: `web/page.rs` never sends the
-  agent's `inside` readings.
-- `/api/state` sends every series every second, most of them never drawn
-  (`ram.*`, `gpu.power`, `cpu.<vmid>`, ...), and a stopped guest's series
-  stay as nulls for good. Send only what the page draws.
-- The page polls with `setInterval` and no timeout, so a stalled server
-  piles up requests that can land out of order. Chain `setTimeout` instead.
-- A failed settings save (`/api/ui`) looks saved.
-- `tui/deploy` does not check `tui/kiosk status` itself.
-- PVEStats Terminal closes with no alert when the dashboard dies by a
-  signal.
-- `send_to_build` never deletes on the build machine a file removed here,
-  so a deleted test or `build.rs` is still built there.
+  would share one name (not on the GT-BE98 Pro). Skipped by Frank's choice
+  on 2026-11-25.
 
 ## History
 
