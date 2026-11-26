@@ -16,8 +16,8 @@ audits first, then Frank's yes.
 - Router agent: reads every port's link speed every 30 s, which nothing
   shows; sends 0 rather than null when `/proc/net/dev` cannot be read,
   which the next good reading turns into one huge spike; two 5 GHz radios
-  would share one name (not on the GT-BE98 Pro). Skipped by Frank's choice
-  on 2026-11-25.
+  would share one name (not on the GT-BE98 Pro). Logged only: Frank will
+  not fix these (2026-11-25).
 
 ## History
 
