@@ -55,6 +55,18 @@ pub fn http(tls: Arc<ClientConfig>, timeout: Duration) -> ureq::Agent {
 const DNS_FRESH: Duration = Duration::from_secs(600);
 /// How long old addresses still serve when DNS does not answer.
 const DNS_STALE_OK: Duration = Duration::from_secs(3600);
+/// How long after a failed lookup the old addresses serve without asking
+/// again: a resolver that times out rather than refuses would otherwise
+/// hold up every new connection by its timeout, which ureq's does not cover.
+const DNS_RETRY: Duration = Duration::from_secs(60);
+
+/// A name's addresses, when DNS gave them, and when it last failed to.
+#[derive(Clone)]
+struct Lookup {
+    at: Instant,
+    addrs: Vec<std::net::SocketAddr>,
+    failed: Option<Instant>,
+}
 
 /// Host names looked up once and kept for ten minutes. ureq asks the
 /// system on every new connection, and some sources open one per poll: a
@@ -64,23 +76,30 @@ pub fn resolve(netloc: &str) -> io::Result<Vec<std::net::SocketAddr>> {
     use std::collections::HashMap;
     use std::net::ToSocketAddrs;
     use std::sync::{Mutex, OnceLock};
-    type Cache = Mutex<HashMap<String, (Instant, Vec<std::net::SocketAddr>)>>;
-    static CACHE: OnceLock<Cache> = OnceLock::new();
-    let cache = CACHE.get_or_init(Cache::default);
+    static CACHE: OnceLock<Mutex<HashMap<String, Lookup>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Mutex::default);
+    let store = |netloc: &str, lookup: Lookup| {
+        cache.lock().unwrap_or_else(|e| e.into_inner()).insert(netloc.to_string(), lookup);
+    };
     let cached = cache.lock().unwrap_or_else(|e| e.into_inner()).get(netloc).cloned();
-    if let Some((at, addrs)) = &cached {
-        if at.elapsed() < DNS_FRESH {
-            return Ok(addrs.clone());
+    if let Some(c) = &cached {
+        let retry_later = c.failed.is_some_and(|f| f.elapsed() < DNS_RETRY) && c.at.elapsed() < DNS_STALE_OK;
+        if c.at.elapsed() < DNS_FRESH || retry_later {
+            return Ok(c.addrs.clone());
         }
     }
     match netloc.to_socket_addrs().map(Iterator::collect::<Vec<_>>) {
         Ok(addrs) if !addrs.is_empty() => {
-            cache.lock().unwrap_or_else(|e| e.into_inner()).insert(netloc.to_string(), (Instant::now(), addrs.clone()));
+            store(netloc, Lookup { at: Instant::now(), addrs: addrs.clone(), failed: None });
             Ok(addrs)
         }
         // DNS down for a moment: the last answer, while it is not too old.
         failed => match cached {
-            Some((at, addrs)) if at.elapsed() < DNS_STALE_OK => Ok(addrs),
+            Some(c) if c.at.elapsed() < DNS_STALE_OK => {
+                let addrs = c.addrs.clone();
+                store(netloc, Lookup { failed: Some(Instant::now()), ..c });
+                Ok(addrs)
+            }
             _ => failed,
         },
     }
