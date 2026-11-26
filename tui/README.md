@@ -80,8 +80,8 @@ Settings… (Cmd-,) for the window's settings (`~/.config/pvestats-terminal/term
 and reports of the window hidden or shown (CSI O, CSI I), on which the
 dashboard stops drawing until it shows again. macOS keeps the window's
 place in the app's preferences (`~/Library/Preferences`). If the dashboard
-ends with a failure (a config.yaml it cannot read, a panic), an alert shows
-what it said before the app quits. The
+ends with a failure (a config.yaml it cannot read, a panic) or is killed,
+an alert shows what it said, or that it was stopped, before the app quits. The
 window has no title bar of its own: the dashboard's top row runs through
 it, level with the window's buttons, and leaves the columns under them bare
 (`--titlebar`). The window is see-through as the Opacity slider in

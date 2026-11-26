@@ -79,36 +79,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, LocalP
         true
     }
 
+    /// Set once the app is on its way out (Cmd-Q, the window closed, a
+    /// logout), before it signals the dashboard: a signal after that is its
+    /// own, one before it came from elsewhere.
+    private var quitting = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        quitting = true
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        quitting = true
         terminal?.terminate()
     }
 
     /// The dashboard has ended. On its own q or Esc (exit 0), or with this
     /// app's quitting (a signal, so no exit code), the app goes with it. Any
-    /// other exit is a failure it said on its way out (a config.yaml it
-    /// cannot read, a panic; a missing .env is no failure, only cards that
-    /// say what is not set up): shown in an alert first, as the
-    /// window would otherwise close on it unread.
+    /// other end is a failure: an exit it said on its way out (a config.yaml
+    /// it cannot read, a panic; a missing .env is no failure, only cards
+    /// that say what is not set up), or a signal from elsewhere (a kill, a
+    /// crash). It is shown in an alert first, as the window would otherwise
+    /// close on it unread.
     func processTerminated(source: TerminalView, exitCode: Int32?) {
-        if let code = exitCode, code != 0 {
+        if exitCode != 0 && !(exitCode == nil && quitting) {
             // What it printed, through the selection: SwiftTerm gives the
             // window's text no other way. Without the window's own reports
             // of being shown or hidden (CSI I, CSI O), which the terminal
-            // echoes as text once nothing reads them.
-            source.selectAll()
-            let said = (source.getSelection() ?? "")
-                .replacingOccurrences(of: "^[[I", with: "")
-                .replacingOccurrences(of: "^[[O", with: "")
-                .split(separator: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-                .suffix(12)
-                .joined(separator: "\n")
-            source.selectNone()
+            // echoes as text once nothing reads them. A dashboard killed by
+            // a signal never left its screen, so the window holds only its
+            // last frame: nothing said.
+            var said = ""
+            if exitCode != nil {
+                source.selectAll()
+                said = (source.getSelection() ?? "")
+                    .replacingOccurrences(of: "^[[I", with: "")
+                    .replacingOccurrences(of: "^[[O", with: "")
+                    .split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .suffix(12)
+                    .joined(separator: "\n")
+                source.selectNone()
+            }
             let alert = NSAlert()
             alert.alertStyle = .critical
             alert.messageText = "The dashboard stopped"
-            alert.informativeText = said.isEmpty ? "pvestats-tui ended with exit code \(code)." : said
+            let how = exitCode.map { "ended with exit code \($0)" } ?? "was stopped by a signal (killed, or it crashed)"
+            alert.informativeText = said.isEmpty ? "pvestats-tui \(how)." : said
             // On stderr too, for a start from a terminal, as PVEStats.app
             // says its own.
             FileHandle.standardError.write(Data("PVEStats Terminal: \(alert.messageText)\n\(alert.informativeText)\n".utf8))
