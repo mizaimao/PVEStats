@@ -199,6 +199,9 @@ fn nws(hourly: &Value, forecast: &Value, observed: Option<&Value>, place: String
         .collect();
     // The UTC offset the forecast's times carry, "-04:00", in minutes.
     let offset = text(&hourly[0], "startTime").and_then(utc_offset).unwrap_or(0);
+    // When this hour began, to tell a station's latest reading from one it
+    // took before it went quiet.
+    let this_hour = text(&hourly[0], "startTime").and_then(unix_seconds);
 
     // Day and night periods, joined by the date they start on: "Tonight"
     // belongs to today, "Monday Night" to Monday.
@@ -207,7 +210,10 @@ fn nws(hourly: &Value, forecast: &Value, observed: Option<&Value>, place: String
         let date = text(&p, "startTime").and_then(|t| t.get(..10)).unwrap_or("").to_string();
         let daytime = p.get("isDaytime").and_then(Value::as_bool).unwrap_or(true);
         if days.last().map_or(true, |d| d.date != date) {
-            let (sunrise, sunset) = sun_times(&date, lat, lon, offset);
+            // Each day by its own offset: a week can cross a change of
+            // daylight saving time.
+            let here = text(&p, "startTime").and_then(utc_offset).unwrap_or(offset);
+            let (sunrise, sunset) = sun_times(&date, lat, lon, here);
             days.push(Day { date: date.clone(), sunrise, sunset, ..Day::default() });
         }
         let day = days.last_mut().expect("pushed just above");
@@ -245,7 +251,13 @@ fn nws(hourly: &Value, forecast: &Value, observed: Option<&Value>, place: String
         text: first.text.clone(),
         day: first.day,
     };
-    if let Some(o) = observed.and_then(|o| o.get("properties")) {
+    // The latest reading stays the latest after a station stops sending:
+    // one over two hours older than this hour is left to the forecast.
+    let recent = |o: &&Value| match (text(o, "timestamp").and_then(unix_seconds), this_hour) {
+        (Some(at), Some(hour)) => at >= hour - 2.0 * 3600.0,
+        _ => true,
+    };
+    if let Some(o) = observed.and_then(|o| o.get("properties")).filter(recent) {
         let reading = |key: &str| o.get(key).and_then(|v| num(v, "value"));
         let temp = |c: f64| if imperial { c * 9.0 / 5.0 + 32.0 } else { c };
         let speed = |kmh: f64| if imperial { kmh / 1.609_344 } else { kmh };
@@ -547,6 +559,29 @@ mod tests {
         assert_eq!(w.days[1].text.as_deref(), Some("Sunny"));
         assert_eq!(w.now.temp, Some(48.0));
         assert_eq!(w.source, "NWS");
+    }
+
+    #[test]
+    fn nws_across_a_clock_change_and_from_a_quiet_station() {
+        let period = |start: &str, day: bool| json!({
+            "startTime": start, "isDaytime": day, "temperature": 48.0, "shortForecast": "Clear"
+        });
+        let hourly = json!({"properties": {"periods": [period("2026-10-31T21:00:00-04:00", false)]}});
+        // Daylight saving time ends on 1 November.
+        let forecast = json!({"properties": {"periods": [
+            period("2026-10-31T18:00:00-04:00", false),
+            period("2026-11-01T06:00:00-05:00", true),
+        ]}});
+        let here = (39.04, -77.12);
+        let reading = |at: &str| json!({"properties": {"temperature": {"value": 20.0}, "timestamp": at}});
+        // 20:45 EDT, a quarter of an hour before this hour: now.
+        let w = nws(&hourly, &forecast, Some(&reading("2026-11-01T00:45:00+00:00")), "Here".into(), true, here).unwrap();
+        assert_eq!(w.now.temp, Some(68.0));
+        assert_eq!(w.days[0].sunrise, sun_times("2026-10-31", here.0, here.1, -240).0);
+        assert_eq!(w.days[1].sunrise, sun_times("2026-11-01", here.0, here.1, -300).0);
+        // 13:00 EDT, eight hours before: the station has gone quiet.
+        let w = nws(&hourly, &forecast, Some(&reading("2026-10-31T17:00:00+00:00")), "Here".into(), true, here).unwrap();
+        assert_eq!(w.now.temp, Some(48.0));
     }
 
     #[test]
