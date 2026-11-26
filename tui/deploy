@@ -16,8 +16,9 @@
 #      so the screen machine needs nothing but ssh. That includes .env and
 #      config.yaml, which the dashboard reads. Build output, caches and the
 #      app's local settings (ui.json) stay behind.
-#   3. Streams the binary from the build machine to SCREEN_DIR/tui/bin and
-#      swaps it in with a rename, so the running copy is never overwritten.
+#   3. Streams the binary from the build machine to SCREEN_DIR/tui/bin and,
+#      once its checksum matches the build's, swaps it in with a rename, so
+#      the running copy is never overwritten.
 #   4. Stops the running dashboard, paused or not. Its service (systemd,
 #      Restart=always) starts the new one two seconds later.
 #
@@ -47,9 +48,15 @@ remote_cargo tui
 echo "== copy to $SCREEN_HOST"
 on_screen "mkdir -p \"$S/tui/bin\""
 pack . | on_screen "tar -xf - -C \"$S\""
+# Swapped in only once its checksum matches the build's: a copy cut short
+# (the build machine's ssh dropping) ends the screen side's input as if it
+# were whole, and would be renamed over the working binary.
+sum=$(on_build "sha256sum \"$B/tui/target/release/pvestats-tui\"" | cut -d' ' -f1)
+[[ $sum =~ ^[0-9a-f]{64}$ ]] || { echo "no checksum of the build" >&2; exit 1; }
 on_build "cat \"$B/tui/target/release/pvestats-tui\"" \
-    | on_screen "cd \"$S/tui/bin\" && cat > pvestats-tui.new && chmod 755 pvestats-tui.new \
-        && mv pvestats-tui.new pvestats-tui"
+    | on_screen "cd \"$S/tui/bin\" && cat > pvestats-tui.new \
+        && { echo '$sum  pvestats-tui.new' | sha256sum -c --quiet - || { rm -f pvestats-tui.new; exit 1; }; } \
+        && chmod 755 pvestats-tui.new && mv pvestats-tui.new pvestats-tui"
 
 echo "== restart"
 # A dashboard paused by `tui/kiosk off` holds the TERM until it is continued,
