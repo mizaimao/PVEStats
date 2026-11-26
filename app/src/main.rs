@@ -13,7 +13,7 @@
 //! the one this folder is in. PVESTATS_ROOT names another.
 
 use std::env;
-use std::io::{BufRead, BufReader, IsTerminal, Read};
+use std::io::{BufRead, BufReader, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::{exit, Child, Command, Stdio};
 use std::thread;
@@ -117,24 +117,35 @@ impl Dashboard {
             .spawn()
             .map_err(|e| format!("{} could not start: {e}", program.display()))?;
         let mut stderr = BufReader::new(child.stderr.take().ok_or("no stderr")?);
-        let mut first = String::new();
-        let _ = stderr.read_line(&mut first);
-        let first = first.trim().to_string();
-        if let Some(address) = first.strip_prefix("dashboard ").and_then(|rest| rest.split_whitespace().last()) {
-            let url = format!("{address}/");
-            // Read on, so that what it says later never fills the pipe and
-            // stalls it; passed on to this program's stderr.
-            thread::spawn(move || {
-                for line in stderr.lines().map_while(Result::ok) {
-                    eprintln!("{line}");
+        // Up to the address, which need not come first: a poll that starts
+        // before the server binds may say something (a panic) ahead of it,
+        // and waiting for the end of stderr then would hang with no window.
+        let mut said: Vec<String> = Vec::new();
+        loop {
+            let mut line = String::new();
+            if !matches!(stderr.read_line(&mut line), Ok(n) if n > 0) {
+                break; // it has stopped
+            }
+            let line = line.trim();
+            if let Some(address) = line.strip_prefix("dashboard ").and_then(|rest| rest.split_whitespace().last()) {
+                let url = format!("{address}/");
+                for earlier in &said {
+                    eprintln!("{earlier}");
                 }
-            });
-            return Ok((Dashboard { child }, url));
+                // Read on, so that what it says later never fills the pipe
+                // and stalls it; passed on to this program's stderr.
+                thread::spawn(move || {
+                    for line in stderr.lines().map_while(Result::ok) {
+                        eprintln!("{line}");
+                    }
+                });
+                return Ok((Dashboard { child }, url));
+            }
+            if !line.is_empty() {
+                said.push(line.to_string());
+            }
         }
-        let mut rest = String::new();
-        let _ = stderr.read_to_string(&mut rest);
         let status = child.wait().map(|s| s.to_string()).unwrap_or_default();
-        let said: Vec<&str> = [first.as_str(), rest.trim()].into_iter().filter(|s| !s.is_empty()).collect();
         Err(if said.is_empty() { format!("pvestats-tui stopped: {status}") } else { said.join("\n") })
     }
 
