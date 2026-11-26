@@ -64,10 +64,25 @@ pack() {
 }
 
 # Copies the paths given (from the repo's root, e.g. ./pve) to BUILD_DIR on
-# the build machine.
+# the build machine. A file there under those paths that was not sent (one
+# removed or renamed here: a test, a build.rs that cargo would still find)
+# is moved out to a folder of its own in the build machine's /tmp, and
+# said; build output and caches are left as they are.
 send_to_build() {
+    local list
     on_build "mkdir -p \"$B\""
     pack "$@" | on_build "tar -xf - -C \"$B\""
+    list=$(pack "$@" | tar -tf - | grep -v '/$')
+    # shellcheck disable=SC2016
+    printf '%s\n' "$list" | on_build "cd \"$B\" && sort > /tmp/pvestats-sent.\$\$ \
+        && find $(printf '%q ' "$@") \\( -name target -o -name .cargo-home -o -name .build -o -name .swiftpm \
+            -o -path './*/bin' \\) -prune -o -type f -print | sort | comm -13 /tmp/pvestats-sent.\$\$ - \
+            > /tmp/pvestats-stale.\$\$; \
+        if [ -s /tmp/pvestats-stale.\$\$ ]; then \
+            away=\$(mktemp -d /tmp/pvestats-removed.XXXXXX) \
+            && while IFS= read -r f; do mkdir -p \"\$away/\${f%/*}\" && mv \"\$f\" \"\$away/\$f\"; done < /tmp/pvestats-stale.\$\$ \
+            && echo \"== moved \$(wc -l < /tmp/pvestats-stale.\$\$) file(s) no longer in the repo to \$away on the build machine\"; \
+        fi; rm -f /tmp/pvestats-sent.\$\$ /tmp/pvestats-stale.\$\$"
 }
 
 # remote_cargo DIR [NAME=VALUE...] [ARG...]
