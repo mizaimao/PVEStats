@@ -87,14 +87,23 @@ async function save(change) {
   Object.assign(changedHere, change);
   current = { ...current, ...change };
   apply(current);
+  // Applied here either way; a change the dashboard did not save says so,
+  // since it lasts only until the window closes.
+  const note = document.getElementById("save-failed");
+  let failure = null;
   try {
-    await fetch("/api/ui", {
+    const response = await fetch("/api/ui", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(change),
     });
+    if (!response.ok) failure = `the dashboard answered ${response.status}`;
   } catch {
-    // Already applied locally; it will simply not persist.
+    failure = "no answer from the dashboard";
+  }
+  if (note) {
+    note.hidden = !failure;
+    note.textContent = failure ? `Not saved (${failure}): this window only, until it closes.` : "";
   }
 }
 

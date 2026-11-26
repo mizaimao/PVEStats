@@ -811,6 +811,7 @@ table.data .name { color: var(--ink); }
   color: var(--ink-muted);
   margin: 6px 0 14px;
 }
+.panel-note.save-failed { color: var(--warning); }
 .icon-btn {
   background: transparent;
   border: 0;
