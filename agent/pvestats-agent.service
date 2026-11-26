@@ -66,8 +66,35 @@ ProtectHome=true
 # /tmp and /var/tmp of its own, each a fresh tmpfs: memory-backed, never the
 # disk. PrivateTmp=true would not do this: it keeps the private dirs inside
 # the host's /tmp and /var/tmp, and /var/tmp is on disk. Needs systemd 238+.
-TemporaryFileSystem=/tmp:mode=1777 /var/tmp:mode=1777
-# PrivateDevices is NOT set — NVML needs /dev/nvidia*.
+TemporaryFileSystem=/tmp:mode=1777,size=16M /var/tmp:mode=1777,size=16M
+# PrivateDevices is NOT set — NVML needs /dev/nvidia*. Nor is ProtectClock:
+# it implies DeviceAllow=char-rtc, which closes every other device, the
+# GPU's with them. Nor MemoryDenyWriteExecute, for NVIDIA's library, nor
+# ProtectProc: the GPU's processes of other users are named from /proc.
+
+# --- what a fault in the agent or in NVIDIA's library could reach ---
+# It runs as ollama, so without these it could read Ollama's own files
+# (its key and models, under its home) and talk to anything on the network.
+# It talks only on loopback: Caddy in front, Ollama behind. Finding its
+# own address connects a UDP socket, which sends nothing.
+InaccessiblePaths=-/usr/share/ollama/.ollama
+IPAddressDeny=any
+IPAddressAllow=localhost
+# AF_UNIX for nvidia-persistenced's socket, which NVML may use; AF_NETLINK
+# for glibc's look-ups, should a drop-in give OLLAMA_URL a name.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+# A drop-in that binds the agent to a LAN address (PVESTATS_AGENT_BIND)
+# must allow its clients too, e.g. IPAddressAllow=10.10.10.0/24.
 
 [Install]
 WantedBy=multi-user.target

@@ -60,7 +60,8 @@ these differences:
 - **Unload**: the same checks in the same order and with the same answers,
   then more: one unload at a time (409), not the same model again within
   10 s of stopping it (429), only a model that is loaded (404, from the
-  cached list while it is under 5 s old; an older one is fetched again and
+  cached list while it is under 5 s old, or 502 while that list is a failed
+  fetch, Ollama being down; an older one is fetched again and
   kept, so a loop of such requests reaches Ollama once in 5 s at most), and
   at most one request a second sent on to Ollama (429). A 200
   that did not unload now says why in `error`, and a 502 carries Ollama's
@@ -220,7 +221,7 @@ edit pvestats-agent`, under `[Service]`), so an update keeps them:
 | `PVESTATS_GPU_INDEX` | `0` |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/ps` (http only: Ollama is on loopback) |
 | `PVESTATS_AGENT_ALLOW_UNLOAD` | `1`; `0`, `false`, `no` or `off` refuse `POST /unload` |
-| `OLLAMA_GENERATE_URL` | `OLLAMA_URL` with `/api/ps` swapped for `/api/generate` |
+| `OLLAMA_GENERATE_URL` | `OLLAMA_URL` up to its `/api/`, then `/api/generate`; `http://127.0.0.1:11434/api/generate` if it has no `/api/` |
 
 ## Disk writes
 
@@ -234,11 +235,30 @@ left is incidental, and the unit closes it:
 | stdout | `StandardOutput=null` — both startup messages go to stderr, so nothing is lost |
 | stderr | kept: two lines per start |
 | Core files | `LimitCORE=0` — a crash loop would otherwise write one each time |
-| `/tmp`, `/var/tmp` | `TemporaryFileSystem=` — a fresh tmpfs each, memory-backed (`PrivateTmp=true` would keep them in the host's on-disk `/var/tmp`) |
+| `/tmp`, `/var/tmp` | `TemporaryFileSystem=` — a fresh tmpfs each, memory-backed and 16 MB at most (`PrivateTmp=true` would keep them in the host's on-disk `/var/tmp`) |
 | Anything else | `ProtectSystem=strict` makes the filesystem read-only to the unit |
 
 For zero journal writes, set `StandardError=null` too — the cost is that a
 crash becomes silent apart from the exit code in `systemctl status`.
+
+## What else the unit closes off
+
+The agent runs as `ollama` and is reachable from the LAN through Caddy, so
+the unit (since 2026-11-25) limits what a fault in it, or in NVIDIA's
+library, could reach:
+
+| What | How |
+|---|---|
+| Ollama's own files (its key, its models) | `InaccessiblePaths=-/usr/share/ollama/.ollama` |
+| The network beyond loopback | `IPAddressDeny=any`, `IPAddressAllow=localhost`: Caddy and Ollama are both on loopback. A drop-in that binds the agent to a LAN address must allow its clients too. |
+| Socket kinds | `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK` |
+| The kernel's settings, modules, log and cgroups | `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups` |
+| The rest | `ProtectHostname`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`, `SystemCallArchitectures=native` |
+
+Left out on purpose: `PrivateDevices` (NVML needs `/dev/nvidia*`),
+`ProtectClock` (it closes every device but the clock),
+`MemoryDenyWriteExecute` (NVIDIA's library) and `ProtectProc` (other
+users' GPU processes are named from `/proc`).
 
 System-wide, `Storage=volatile` in `/etc/systemd/journald.conf` keeps *all*
 journal data in `/run` (tmpfs) rather than on disk. That affects every service

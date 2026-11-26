@@ -160,6 +160,19 @@ pub fn parse_url(url: &str) -> Option<Url> {
     Some(Url { host: host.to_string(), port, path: path.to_string() })
 }
 
+impl Url {
+    /// Host and port as a Host header carries them, an IPv6 address back in
+    /// its brackets: "[::1]:11434", which Ollama's check of the Host can
+    /// read, where "::1:11434" it cannot.
+    pub fn authority(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
 /// A body sent with chunked transfer encoding, put back together.
 pub fn dechunk(mut data: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
@@ -208,8 +221,9 @@ pub fn call(url: &Url, method: &str, body: Option<&[u8]>, deadline: Instant, cap
     }
     let mut stream = stream.ok_or(why)?;
     let mut request = format!(
-        "{method} {} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: pvestats-agent\r\nAccept: application/json\r\nConnection: close\r\n",
-        url.path, url.host, url.port
+        "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: pvestats-agent\r\nAccept: application/json\r\nConnection: close\r\n",
+        url.path,
+        url.authority()
     );
     if let Some(body) = body {
         request.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n", body.len()));
@@ -313,6 +327,10 @@ mod tests {
         );
         assert_eq!(parse_url("http://ollama/api/ps").map(|u| u.port), Some(80));
         assert_eq!(parse_url("https://127.0.0.1/api/ps"), None);
+        // The Host header: an IPv6 address keeps its brackets.
+        let v6 = parse_url("http://[::1]:11434/api/ps").unwrap();
+        assert_eq!((v6.host.as_str(), v6.authority()), ("::1", "[::1]:11434".to_string()));
+        assert_eq!(parse_url("http://127.0.0.1:11434/").unwrap().authority(), "127.0.0.1:11434");
     }
 
     #[test]

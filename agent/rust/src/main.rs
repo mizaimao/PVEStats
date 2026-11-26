@@ -377,13 +377,20 @@ fn unload_one(s: &Shared, name: &str) -> (u16, Value) {
     // seconds old at most; an older one is fetched again below and kept. So
     // a loop of requests naming models that are not loaded reaches Ollama,
     // which logs each call to disk, once in those few seconds at most.
+    // A fetch that failed left an empty list: that is Ollama down (502), not
+    // the model not loaded.
     let cached = {
         let m = lock(&s.models);
-        m.fetched.filter(|t| t.elapsed() < ollama::RECHECK_AFTER).map(|_| m.list.clone())
+        m.fetched.filter(|t| t.elapsed() < ollama::RECHECK_AFTER).map(|_| match &m.failed {
+            Some(e) => Err(e.clone()),
+            None => Ok(m.list.clone()),
+        })
     };
     let listed = |list: &[Value]| list.iter().any(|m| m["name"].as_str() == Some(name));
-    if cached.as_deref().is_some_and(|list| !listed(list)) {
-        return refuse(404, format!("{name} is not loaded"));
+    match &cached {
+        Some(Err(e)) => return refuse(502, format!("Ollama: {e}")),
+        Some(Ok(list)) if !listed(list) => return refuse(404, format!("{name} is not loaded")),
+        _ => {}
     }
     // From here on Ollama is asked: once a second at most.
     {
@@ -599,6 +606,17 @@ mod tests {
         assert_eq!(ollama.generate_calls.load(Ordering::SeqCst), 0);
         // And the list it kept is Ollama's own.
         assert_eq!(lock(&shared.models).list[0]["name"], "qwen3:32b");
+    }
+
+    #[test]
+    fn an_unload_while_ollama_is_down_says_so() {
+        let ollama = fake_ollama(PS);
+        let shared = Shared::new(config_for(&ollama, true));
+        // The cache thread's last fetch failed a moment ago.
+        lock(&shared.models).take(Err("cannot connect: refused".into()), Instant::now());
+        let (status, body) = unload_one(&shared, "qwen3:32b");
+        assert_eq!((status, body["error"].as_str()), (502, Some("Ollama: cannot connect: refused")));
+        assert_eq!(ollama.ps_calls.load(Ordering::SeqCst) + ollama.generate_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

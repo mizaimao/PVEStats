@@ -65,6 +65,8 @@ pub struct Models {
     pub expires: Option<Instant>,
     /// When the last fetch finished, whatever came of it.
     pub fetched: Option<Instant>,
+    /// Why the last fetch failed; None when it gave a list.
+    pub failed: Option<String>,
     /// Models stopped from the dashboard, watched until gone.
     stopping: HashMap<String, Instant>,
 }
@@ -79,6 +81,7 @@ impl Models {
     /// empty list, rechecked after 5 s.
     pub fn take(&mut self, outcome: Result<Vec<Value>, String>, now: Instant) {
         self.fetched = Some(now);
+        self.failed = outcome.as_ref().err().cloned();
         match outcome {
             Ok(list) => {
                 let listed: Vec<&str> = list.iter().filter_map(|m| m["name"].as_str()).collect();
@@ -168,5 +171,8 @@ mod tests {
         assert_eq!(m.expires, Some(now + CACHE_FOR), "gone: back to the long cache");
         m.take(Err("down".into()), now);
         assert_eq!((m.list.len(), m.expires), (0, Some(now + RECHECK_AFTER)));
+        assert_eq!(m.failed.as_deref(), Some("down"));
+        m.take(Ok(vec![]), now);
+        assert_eq!(m.failed, None);
     }
 }
