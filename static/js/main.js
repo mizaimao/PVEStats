@@ -157,14 +157,18 @@ function render(state) {
   }
 }
 
+/* How long a request may take before it counts as lost: a server that
+   stalls would otherwise leave it waiting for good. */
+const FETCH_TIMEOUT_MS = 5000;
+
 async function tick() {
   const offline = document.getElementById("offline");
+  let state;
   try {
-    const response = await fetch("/api/state", { cache: "no-store" });
+    const response = await fetch("/api/state",
+      { cache: "no-store", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    render(await response.json());
-    offline.hidden = true;
-    document.body.style.opacity = "";
+    state = await response.json();
   } catch (err) {
     // Hold the previous render rather than flashing an empty page.
     offline.hidden = false;
@@ -176,7 +180,24 @@ async function tick() {
       standby.done = true;
       standby.el.hidden = true;
     }
+    return;
   }
+  offline.hidden = true;
+  document.body.style.opacity = "";
+  // A fault in drawing is this page's, not lost contact with the collector:
+  // said in the console, and the next tick draws again.
+  try {
+    render(state);
+  } catch (err) {
+    console.error("render failed:", err);
+  }
+}
+
+/* One request at a time, the next a second after the last one ends, so a
+   slow reply never has others piling up behind it to land out of order. */
+async function poll() {
+  await tick();
+  setTimeout(poll, POLL_MS);
 }
 
 initAppearance();
@@ -304,5 +325,4 @@ initSettings();
 /* Polls regardless of focus. Pausing while hidden saved a little CPU but the
    window is meant to be glanceable from across the room, and coming back to a
    chart that stopped moving is worse than the saving is worth. */
-tick();
-setInterval(tick, POLL_MS);
+poll();
