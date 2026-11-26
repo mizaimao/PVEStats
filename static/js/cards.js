@@ -219,7 +219,9 @@ export function gpuCard(guest) {
         mem.set(g.mem, g.maxmem, `${fmt.gib(g.mem)} / ${fmt.gib(g.maxmem)} GiB`);
       }
       io.update(g);
-      markPve([cpu.el, io.el], status);
+      // CPU, network, disk usage, address and uptime from inside ml60
+      // (g.live), as the terminal's card has them: live from the agent too.
+      markPve([cpu.el, io.el], g.live ? { ok: true } : status);
       markPve([mem.el], ram ? { ok: true } : status);
 
       const gpu = g.gpu;

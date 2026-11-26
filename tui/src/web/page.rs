@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use crate::config::{Config, View};
-use crate::sources::{lock, AgentData, Guest, NasData, Node, RouterData, Shared};
+use crate::sources::{lock, AgentData, Guest, Inside, NasData, Node, RouterData, Shared};
 use crate::state::{clock, Source};
 use crate::ui::overlay;
 
@@ -24,9 +24,12 @@ pub fn status<T>(s: &Source<T>) -> Value {
     })
 }
 
-/// Every series of a source, to four decimals; gaps are null.
-pub fn history<T>(s: &Source<T>) -> Value {
+/// The series of a source that the page draws, to four decimals; gaps are
+/// null. The rest (the terminal's own charts) stay out of a reply that goes
+/// out every second.
+pub fn history<T>(s: &Source<T>, drawn: impl Fn(&str) -> bool) -> Value {
     s.all_series()
+        .filter(|(key, _)| drawn(key))
         .map(|(key, buf)| (key.clone(), buf.iter().map(|v| json!(v.map(|x| (x * 1e4).round() / 1e4))).collect()))
         .collect::<Map<String, Value>>()
         .into()
@@ -53,7 +56,9 @@ pub fn snapshot(config: &Config, shared: &Shared) -> Value {
     let hs = host.status();
     let live = config.host_configured() && hs.ok && !hs.stale;
     let data = pve.data.as_ref().map(|d| if live { overlay(d, host.data.as_ref()) } else { d.clone() });
-    let (mut pve_status, pve_history) = if live { (status(&*host), history(&*host)) } else { (status(&*pve), history(&*pve)) };
+    let node_chart = |k: &str| k == "node.cpu";
+    let (mut pve_status, pve_history) =
+        if live { (status(&*host), history(&*host, node_chart)) } else { (status(&*pve), history(&*pve, node_chart)) };
     // Live figures with the API failing: names and limits are going old.
     if let (true, Some(error)) = (live, pve.status().error) {
         pve_status["ok"] = json!(false);
@@ -93,6 +98,9 @@ pub fn snapshot(config: &Config, shared: &Shared) -> Value {
                     if let Some(r) = a.ram.as_ref().filter(|r| clock() - r.at <= agent.interval * 3.0) {
                         g.insert("ram".into(), json!({"total": r.total, "available": r.available, "cache": r.cache}));
                     }
+                    if let Some(i) = a.inside.as_ref().filter(|i| clock() - i.at <= agent.interval * 3.0) {
+                        inside(g, i);
+                    }
                 }
             }
             View::Nas => {
@@ -110,12 +118,12 @@ pub fn snapshot(config: &Config, shared: &Shared) -> Value {
     sources.insert("pve".into(), pve_status);
     charts.insert("pve".into(), pve_history);
     sources.insert("agent".into(), status(&*agent));
-    charts.insert("agent".into(), history(&*agent));
+    charts.insert("agent".into(), history(&*agent, |k| matches!(k, "gpu.util" | "gpu.vram_pct")));
     sources.insert("truenas".into(), status(&*nas));
-    charts.insert("truenas".into(), history(&*nas));
+    charts.insert("truenas".into(), history(&*nas, |k| k.starts_with("if.")));
     let router_data = if config.router_shown() {
         sources.insert("router".into(), status(&*router));
-        charts.insert("router".into(), history(&*router));
+        charts.insert("router".into(), history(&*router, |k| matches!(k, "wan.down" | "wan.up")));
         // Last known good, like every other card's: a failing router keeps
         // its numbers, greyed, rather than blanking.
         router.data.as_ref().map_or(Value::Null, gateway)
@@ -151,6 +159,37 @@ fn guest(vmid: u64, g: &Guest, config: &Config) -> Map<String, Value> {
         "disk_write_bps": g.disk_write_bps,
     });
     value.as_object().cloned().unwrap_or_default()
+}
+
+/// ml60's CPU, network, disk usage, address and uptime as ml60 itself
+/// reads them, every second, over PVE's (10 s, and blind to its passed-
+/// through disk), as the terminal's card has them; each of PVE's stays
+/// where the agent has none. `live` tells the page they are not PVE's, so
+/// they are not greyed with it.
+fn inside(g: &mut Map<String, Value>, i: &Inside) {
+    if let Some(cpu) = i.cpu_pct {
+        g.insert("cpu_pct".into(), json!(cpu));
+    }
+    if let Some(rate) = i.net_in_bps {
+        g.insert("net_in_bps".into(), json!(rate));
+    }
+    if let Some(rate) = i.net_out_bps {
+        g.insert("net_out_bps".into(), json!(rate));
+    }
+    if let (Some(used), Some(total)) = (i.disk_used, i.disk_total) {
+        g.insert("filesystem".into(), json!({"used": used, "total": total}));
+    }
+    if let Some(up) = i.uptime {
+        g.insert("uptime".into(), json!(up));
+    }
+    if let Some(ip) = &i.ip {
+        let mut addresses = vec![json!(ip)];
+        if let Some(Value::Array(pve)) = g.get("addresses") {
+            addresses.extend(pve.iter().filter(|a| a.as_str() != Some(ip)).cloned());
+        }
+        g.insert("addresses".into(), Value::Array(addresses));
+    }
+    g.insert("live".into(), json!(true));
 }
 
 fn node(n: &Node) -> Value {
@@ -255,4 +294,39 @@ fn gateway(r: &RouterData) -> Value {
         "wired_devices": r.wired_devices,
         "bands": r.bands.iter().map(|b| json!({"name": b.name, "on": b.on, "devices": b.devices, "down_bps": b.down_bps, "up_bps": b.up_bps})).collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ml60s_own_figures_over_pves() {
+        let mut g = json!({
+            "cpu_pct": 3.0, "net_in_bps": 10.0, "net_out_bps": 20.0, "uptime": 50.0,
+            "filesystem": {"used": 1.0, "total": 2.0}, "addresses": ["10.0.0.9", "10.0.0.5"]
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        // The first reading: no rates yet, so PVE's stay.
+        let i = Inside {
+            cpu_pct: None,
+            net_in_bps: None,
+            net_out_bps: Some(7.0),
+            disk_used: Some(30.0),
+            disk_total: Some(100.0),
+            uptime: Some(60.0),
+            ip: Some("10.0.0.5".into()),
+            at: 0.0,
+        };
+        inside(&mut g, &i);
+        assert_eq!(g["cpu_pct"], json!(3.0));
+        assert_eq!(g["net_in_bps"], json!(10.0));
+        assert_eq!(g["net_out_bps"], json!(7.0));
+        assert_eq!(g["filesystem"], json!({"used": 30.0, "total": 100.0}));
+        assert_eq!(g["uptime"], json!(60.0));
+        assert_eq!(g["addresses"], json!(["10.0.0.5", "10.0.0.9"]));
+        assert_eq!(g["live"], json!(true));
+    }
 }
